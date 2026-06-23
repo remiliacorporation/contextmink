@@ -37,10 +37,17 @@ tool:
    directories, vendored dependencies, caches, exported reports, large binary
    asset trees, and tool output directories.
 
-4. Add the agent instruction snippet from `templates/AGENTS.contextmink.md`.
+4. Add the agent instruction snippet for the agent surface the target repository
+   uses:
 
-   Put it in the repository's `AGENTS.md`, `CLAUDE.md`, or equivalent agent
-   guidance file.
+   - Codex: copy `templates/AGENTS.contextmink.md` into the repository's
+     `AGENTS.md` or equivalent Codex guidance file.
+   - Claude: copy `templates/CLAUDE.contextmink.md` into the repository's
+     `CLAUDE.md` or equivalent Claude guidance file.
+
+   The two snippets are intentionally equivalent in policy. Keep any
+   repository-specific shell or path guidance in the target repository, not in
+   these templates.
 
 5. Verify the integration from the target repository root:
 
@@ -88,18 +95,18 @@ the local policy clearer for future maintainers.
 
 ## Agent Rule
 
-Use this rule in the target repository:
+Do not copy prose from this setup guide by hand. Use the maintained templates:
 
-```md
-Use `scripts/contextmink` for broad or uncertain file/text/JSON reconnaissance before opening raw files or command output in the transcript. Start with `files` or `grep`, use `grep-terms` for shell-fragile multi-token searches, use `slice` for exact line windows, and use `json-find` for sidecars, reports, manifests, logs, or other structured command output. Treat a `CONTEXTMINK_RECEIPT` with `"truncated": true` as incomplete evidence and narrow the query.
+- `templates/AGENTS.contextmink.md` for Codex-facing guidance.
+- `templates/CLAUDE.contextmink.md` for Claude-facing guidance.
 
-`contextmink` is only a generic transcript guard. Prefer project-native tools for domain-specific parsing, validation, indexing, diagnostics, or synchronization.
-```
+The template files are intentionally kept equivalent by tests so behavior does
+not drift between agent surfaces.
 
 ## Operational Notes
 
-- Prefer `grep-terms` when a phrase contains shell-fragile punctuation or
-  spaces.
+- Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
+  punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.
 - Prefer `json-find` over opening whole JSON reports.
 - Treat capped receipts as incomplete. Narrow and rerun.

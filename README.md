@@ -11,8 +11,9 @@ diagnostics, and synchronization should stay in project-native tools.
 
 - `files`: list candidate files with hard caps and configured excludes.
 - `grep`: count matches first, then print a bounded file/sample summary.
-- `grep-terms`: match lines containing all `--term` values, useful when shell
-  quoting or regex punctuation would make a phrase fragile.
+- `grep-terms`: match lines containing all `--term` values by default, or any
+  term with `--mode any`. Use `--term-file <file>` for phrase lists when shell
+  quoting or regex punctuation would make inline arguments fragile.
 - `slice`: print bounded line windows, or character windows for very long
   single-line files and pasted attachments.
 - `json-find`: query JSON by key, path, or summarized value without opening the

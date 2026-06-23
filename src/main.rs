@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use regex::Regex;
@@ -77,8 +77,12 @@ enum Command {
     },
     #[command(name = "grep-terms")]
     GrepTerms {
-        #[arg(long = "term", required = true)]
+        #[arg(long = "term")]
         terms: Vec<String>,
+        #[arg(long = "term-file", value_name = "FILE")]
+        term_files: Vec<PathBuf>,
+        #[arg(long = "mode", value_enum, default_value_t = TermMode::All)]
+        mode: TermMode,
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
         #[arg(long = "path", value_name = "PATH")]
@@ -153,7 +157,13 @@ struct ContextConfig {
 enum TextMatcher {
     Literal(String),
     Regex(Regex),
-    Terms(Vec<String>),
+    Terms { terms: Vec<String>, mode: TermMode },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TermMode {
+    All,
+    Any,
 }
 
 impl TextMatcher {
@@ -171,7 +181,10 @@ impl TextMatcher {
         match self {
             Self::Literal(pattern) => text.contains(pattern),
             Self::Regex(pattern) => pattern.is_match(text),
-            Self::Terms(terms) => terms.iter().all(|term| text.contains(term)),
+            Self::Terms { terms, mode } => match mode {
+                TermMode::All => terms.iter().all(|term| text.contains(term)),
+                TermMode::Any => terms.iter().any(|term| text.contains(term)),
+            },
         }
     }
 
@@ -185,7 +198,7 @@ impl TextMatcher {
                 }
             }
             Self::Regex(pattern) => pattern.find_iter(text).count(),
-            Self::Terms(_) => text.lines().filter(|line| self.is_match(line)).count(),
+            Self::Terms { .. } => text.lines().filter(|line| self.is_match(line)).count(),
         }
     }
 
@@ -193,7 +206,10 @@ impl TextMatcher {
         match self {
             Self::Literal(pattern) => format!("{pattern:?}"),
             Self::Regex(pattern) => format!("{:?}", pattern.as_str()),
-            Self::Terms(terms) => format!("all_terms({})", terms.join(",")),
+            Self::Terms { terms, mode } => match mode {
+                TermMode::All => format!("all_terms({})", terms.join(",")),
+                TermMode::Any => format!("any_terms({})", terms.join(",")),
+            },
         }
     }
 }
@@ -253,6 +269,8 @@ fn main() -> Result<()> {
         ),
         Command::GrepTerms {
             terms,
+            term_files,
+            mode,
             paths,
             path,
             include_noisy,
@@ -263,21 +281,24 @@ fn main() -> Result<()> {
             max_line_chars,
             max_scan_files,
             max_file_bytes,
-        } => command_grep_with_matcher(
-            &cli,
-            &config,
-            "grep-terms",
-            TextMatcher::Terms(terms.clone()),
-            &merged_paths(paths, path),
-            *include_noisy,
-            *max_count_files,
-            *max_files,
-            *lines_per_file,
-            *max_sample_lines,
-            *max_line_chars,
-            *max_scan_files,
-            *max_file_bytes,
-        ),
+        } => {
+            let terms = collect_terms(terms, term_files)?;
+            command_grep_with_matcher(
+                &cli,
+                &config,
+                "grep-terms",
+                TextMatcher::Terms { terms, mode: *mode },
+                &merged_paths(paths, path),
+                *include_noisy,
+                *max_count_files,
+                *max_files,
+                *lines_per_file,
+                *max_sample_lines,
+                *max_line_chars,
+                *max_scan_files,
+                *max_file_bytes,
+            )
+        }
         Command::Slice {
             file,
             range,
@@ -333,6 +354,26 @@ fn merged_paths(positional: &[PathBuf], named: &[PathBuf]) -> Vec<PathBuf> {
         paths.push(PathBuf::from("."));
     }
     paths
+}
+
+fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>> {
+    let mut collected = terms.to_vec();
+    for file in term_files {
+        let text = fs::read_to_string(file)
+            .with_context(|| format!("failed to read term file {}", file.display()))?;
+        for line in text.lines() {
+            let line = line.trim_end_matches('\r');
+            if !line.is_empty() {
+                collected.push(line.to_owned());
+            }
+        }
+    }
+    if collected.is_empty() {
+        return Err(anyhow!(
+            "grep-terms requires at least one --term or --term-file entry"
+        ));
+    }
+    Ok(collected)
 }
 
 fn parse_line_range(range: &str) -> Result<(usize, Option<usize>)> {
@@ -742,11 +783,17 @@ fn command_slice(
             rendered.push((number, clamp_text(line, max_line_chars)));
         }
     }
-    let truncated = requested_end > capped_end || capped_end < min(requested_end, total_lines);
+    let last_available = min(requested_end, total_lines);
+    let truncated = start <= total_lines && last_available > capped_end;
     let shown = if start > total_lines {
         0
     } else {
         min(capped_end, total_lines).saturating_sub(start) + 1
+    };
+    let displayed_end = if shown == 0 {
+        start.saturating_sub(1)
+    } else {
+        min(capped_end, total_lines)
     };
     let cap_reason = if truncated { Some("max_lines") } else { None };
     if cli.json {
@@ -762,7 +809,7 @@ fn command_slice(
         map.insert("path".to_string(), json!(display_path(file)));
         map.insert("mode".to_string(), json!("lines"));
         map.insert("start".to_string(), json!(start));
-        map.insert("end".to_string(), json!(capped_end));
+        map.insert("end".to_string(), json!(displayed_end));
         map.insert("total_lines".to_string(), json!(total_lines));
         map.insert(
             "lines".to_string(),

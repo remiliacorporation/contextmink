@@ -98,7 +98,7 @@ fn grep_terms_reports_public_command_name() {
             "alpha",
             "--term",
             "beta",
-            ".",
+            "sample.txt",
         ],
     );
     assert_envelope(&json, "grep-terms", "files");
@@ -116,4 +116,85 @@ fn grep_terms_reports_public_command_name() {
         .unwrap();
     let receipt: Value = serde_json::from_str(receipt).unwrap();
     assert_envelope(&receipt, "grep-terms", "files");
+}
+
+#[test]
+fn grep_terms_supports_any_mode_and_term_files() {
+    let root = fixture_root("grep-terms-any");
+    fs::write(root.join("phrases.txt"), "alpha beta\nmissing phrase\n").unwrap();
+
+    let default_all = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--term",
+            "alpha",
+            "--term",
+            "beta",
+            "sample.txt",
+        ],
+    );
+    assert_envelope(&default_all, "grep-terms", "files");
+    assert_eq!(default_all["pattern"], "all_terms(alpha,beta)");
+    assert_eq!(default_all["total_matches"], 1);
+
+    let any = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--mode",
+            "any",
+            "--term",
+            "alpha",
+            "--term",
+            "beta",
+            "sample.txt",
+        ],
+    );
+    assert_envelope(&any, "grep-terms", "files");
+    assert_eq!(any["pattern"], "any_terms(alpha,beta)");
+    assert_eq!(any["total_matches"], 3);
+
+    let term_file = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--mode",
+            "any",
+            "--term-file",
+            "phrases.txt",
+            "sample.txt",
+        ],
+    );
+    assert_envelope(&term_file, "grep-terms", "files");
+    assert_eq!(term_file["pattern"], "any_terms(alpha beta,missing phrase)");
+    assert_eq!(term_file["total_matches"], 1);
+}
+
+#[test]
+fn slice_past_eof_is_complete_when_every_available_line_is_shown() {
+    let root = fixture_root("slice-past-eof");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "slice",
+            "sample.txt",
+            "--start",
+            "1",
+            "--end",
+            "260",
+        ],
+    );
+    assert_envelope(&json, "slice", "lines");
+    assert_eq!(json["shown"], 3);
+    assert_eq!(json["total"], 3);
+    assert_eq!(json["end"], 3);
+    assert_eq!(json["truncated"], false);
+    assert_eq!(json["complete"], true);
+    assert!(json["cap_reason"].is_null());
 }
