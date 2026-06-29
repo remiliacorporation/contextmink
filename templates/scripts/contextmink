@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Thin launcher for the contextmink transcript guard. It execs a prebuilt
-# release binary so repeated agent invocations do not pay cargo's per-call
-# overhead, and rebuilds only when the binary is missing or older than sources.
+# Thin launcher for the contextmink transcript guard. It works both from a
+# standalone contextmink clone and from a repository that vendors the crate at
+# tools/contextmink. Build chatter goes to stderr so stdout remains parseable.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tool="$root/tools/contextmink"
+
+if [[ -f "$root/Cargo.toml" ]] && grep -q '^name = "contextmink"$' "$root/Cargo.toml"; then
+  tool="$root"
+else
+  tool="$root/tools/contextmink"
+fi
 
 if [[ ! -f "$tool/Cargo.toml" ]]; then
   echo "contextmink Cargo.toml not found at $tool" >&2
