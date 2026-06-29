@@ -105,6 +105,12 @@ Do not copy prose from this setup guide by hand. Use the maintained templates:
 The template files are intentionally kept equivalent by tests so behavior does
 not drift between agent surfaces.
 
+Do not create a separate contextmink skill or slash command by default.
+Context-output hygiene needs to be always visible before reconnaissance starts;
+an on-demand skill is easier to miss and adds another agent surface to keep in
+sync. Use the short Codex/Claude snippets above unless a host agent requires a
+different integration mechanism.
+
 ## Operational Notes
 
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
