@@ -4,9 +4,9 @@ This guide is written for coding agents and maintainers adding `contextmink` to
 an existing repository.
 
 `contextmink` is a transcript guard. Use it before broad file, text, line-slice,
-JSON, or read-only SQLite reconnaissance when the output cardinality is unknown
-or host-shell quoting would become the task. It is not a replacement for
-project-native tools.
+JSON, read-only SQLite, or unknown-size command-output reconnaissance when the
+output cardinality is unknown or host-shell quoting would become the task. It is
+not a replacement for project-native tools.
 
 ## Prerequisites
 
@@ -126,6 +126,12 @@ different integration mechanism.
   databases.
 - Prefer `sqlite --sql-file <file>` for read-only SQL containing shell-fragile
   operators or quotes.
+- Prefer a domain command's native compact/projection/limit flags first. Use
+  `capture -- <command> ...` only when output size is uncertain and no better
+  native bound exists; read the child `exit_code`/`success` fields in the
+  receipt. On Windows, the Bash launcher lets `capture` retry extensionless
+  shell scripts through the current Bash interpreter without shell-string
+  parsing.
 - Treat capped receipts as incomplete. When `cap_reason` is `scan` or
   `candidate_files_total_is_lower_bound` is true, totals and no-match results
   only describe the scanned subset; narrow and rerun.

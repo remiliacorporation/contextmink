@@ -86,6 +86,68 @@ fn json_commands_share_receipt_envelope() {
 }
 
 #[test]
+fn capture_caps_child_stdout_and_reports_exit_status() {
+    let root = fixture_root("capture-stdout");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "1",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:3",
+        ],
+    );
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["success"], true);
+    assert_eq!(json["exit_code"], 0);
+    assert_eq!(json["stdout"]["shown_lines"], 1);
+    assert!(json["stdout"]["total_lines"].as_u64().unwrap() > 1);
+    assert_eq!(json["truncated"], true);
+    assert_eq!(json["cap_reason"], "lines");
+    assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
+}
+
+#[test]
+fn capture_keeps_nonzero_child_status_in_receipt() {
+    let root = fixture_root("capture-nonzero");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "missing.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["success"], false);
+    assert_ne!(json["exit_code"], 0);
+    assert!(json["stderr"]["total_bytes"].as_u64().unwrap() > 0);
+    assert!(
+        json["stderr_text"]
+            .as_str()
+            .unwrap()
+            .contains("missing.txt")
+    );
+}
+
+#[test]
 fn files_scan_cap_marks_incomplete_evidence() {
     let root = fixture_root("files-scan-cap");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();

@@ -1,9 +1,9 @@
 # contextmink
 
 `contextmink` is a transcript guard for coding agents. It gives agents bounded
-ways to list files, search text, read line windows, inspect JSON, and run
-bounded read-only SQLite queries without dumping large unknown outputs into the
-conversation.
+ways to list files, search text, read line windows, inspect JSON, run bounded
+read-only SQLite queries, and capture unknown-size command output without
+dumping large outputs into the conversation.
 
 It is deliberately generic. Project-specific parsing, validation, indexing,
 diagnostics, and synchronization should stay in project-native tools.
@@ -29,6 +29,9 @@ diagnostics, and synchronization should stay in project-native tools.
   caps and receipt metadata.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
   from SQLite metadata without hand-written PRAGMA queries.
+- `capture`: execute argv directly and print capped stdout/stderr summaries
+  with exit status. Use it only when a command's output cardinality is unknown
+  and the command lacks a better native filter or projection.
 
 Use `--json` when another script or tool should consume the result directly.
 
@@ -57,6 +60,7 @@ scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
+scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 ```
 
 ## Receipts
@@ -85,6 +89,15 @@ When `cap_reason` is `"scan"` or `candidate_files_total_is_lower_bound` is
 true, candidate totals and no-match results only describe the scanned subset.
 Narrow the path/glob/query before treating the result as complete evidence.
 
+For `capture`, `shown` and `total` are stdout plus stderr line counts. The
+receipt records the child command's `exit_code` and `success`; `contextmink`
+itself exits successfully when capture succeeds, even if the child command
+failed. `capture` is not a shell, sandbox, retry layer, or read-only guard. On
+Windows through the Bash launcher, extensionless shell scripts that fail direct
+spawn with "not a Win32 application" are retried through the current Bash
+interpreter as argv, not as a shell string; receipts include `spawn_fallback`
+and `effective_argv` when that happens.
+
 ## Configuration
 
 `contextmink` searches upward from the current directory for
@@ -108,9 +121,10 @@ binary.
 
 Add to this tool only when the failure mode is generic transcript overflow or
 host-shell friction from file enumeration, text search, line slicing, JSON
-inspection, or read-only SQLite inspection/schema summarization. If behavior
-needs domain knowledge, a schema beyond the data being selected, a compiler, an
-indexer, a runtime, or a specialized parser, extend that domain tool instead.
+inspection, read-only SQLite inspection/schema summarization, or bounded capture
+of otherwise unknown command output. If behavior needs domain knowledge, a
+schema beyond the data being selected, a compiler, an indexer, a runtime, or a
+specialized parser, extend that domain tool instead.
 
 ## License
 

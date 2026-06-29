@@ -56,6 +56,13 @@ fi
 
 case "${OS:-}:$(uname -s 2>/dev/null || true)" in
   Windows_NT:* | *:MINGW* | *:MSYS* | *:CYGWIN*)
+    if command -v bash >/dev/null 2>&1; then
+      bash_path="$(command -v bash)"
+      if command -v cygpath >/dev/null 2>&1; then
+        bash_path="$(cygpath -w "$bash_path")"
+      fi
+      export CONTEXTMINK_BASH="$bash_path"
+    fi
     # JSON Pointer selectors begin with '/', which MSYS would otherwise
     # rewrite as Windows paths when launching the native contextmink.exe.
     conv_excl=()
