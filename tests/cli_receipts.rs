@@ -230,6 +230,32 @@ fn grep_terms_supports_any_mode_and_term_files() {
 }
 
 #[test]
+fn grep_json_honors_global_sample_cap() {
+    let root = fixture_root("grep-json-sample-cap");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "alpha",
+            "sample.txt",
+            "--lines-per-file",
+            "3",
+            "--max-sample-lines",
+            "1",
+        ],
+    );
+    assert_envelope(&json, "grep", "files");
+    assert_eq!(json["shown"], 1);
+    assert_eq!(json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(json["files"][0]["samples"].as_array().unwrap().len(), 1);
+    assert_eq!(json["sample_lines_shown"], 1);
+    assert_eq!(json["cap_reason"], "samples");
+    assert_eq!(json["truncated"], true);
+}
+
+#[test]
 fn grep_supports_pattern_files_for_shell_fragile_regex() {
     let root = fixture_root("grep-pattern-file");
     fs::write(root.join("pattern.txt"), "\u{feff}alpha|beta\n").unwrap();

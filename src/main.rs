@@ -802,14 +802,38 @@ fn command_grep_with_matcher(
     }
     let count_shown = min(matches.len(), max_count_files);
     let files_shown = min(count_shown, max_files);
-    let cap_reason = if scan_truncated {
-        Some("scan")
-    } else if files_shown < matches.len() {
-        Some("files")
-    } else {
-        None
-    };
     if cli.json {
+        let mut sample_lines_shown = 0usize;
+        let mut sample_capped = false;
+        let mut files_json = Vec::new();
+        for row in matches.iter().take(files_shown) {
+            let mut samples = Vec::new();
+            for (line, text) in &row.samples {
+                if sample_lines_shown >= max_sample_lines {
+                    sample_capped = true;
+                    break;
+                }
+                sample_lines_shown += 1;
+                samples.push(json!({
+                    "line": line,
+                    "text": text,
+                }));
+            }
+            files_json.push(json!({
+                "path": display_path(&row.path),
+                "count": row.count,
+                "samples": samples,
+            }));
+        }
+        let cap_reason = if scan_truncated {
+            Some("scan")
+        } else if files_shown < matches.len() {
+            Some("files")
+        } else if sample_capped {
+            Some("samples")
+        } else {
+            None
+        };
         let mut map = base_receipt(
             command_name,
             config.profile.as_deref(),
@@ -823,6 +847,7 @@ fn command_grep_with_matcher(
         map.insert("matched_files_total".to_string(), json!(matches.len()));
         map.insert("matched_files_shown".to_string(), json!(files_shown));
         map.insert("total_matches".to_string(), json!(total_matches));
+        map.insert("sample_lines_shown".to_string(), json!(sample_lines_shown));
         map.insert(
             "candidate_files_total".to_string(),
             json!(total_candidate_files),
@@ -839,25 +864,7 @@ fn command_grep_with_matcher(
             "skipped_large_or_binary".to_string(),
             json!(skipped_large_or_binary),
         );
-        map.insert(
-            "files".to_string(),
-            json!(
-                matches
-                    .iter()
-                    .take(files_shown)
-                    .map(|row| {
-                        json!({
-                            "path": display_path(&row.path),
-                            "count": row.count,
-                            "samples": row.samples.iter().map(|(line, text)| json!({
-                                "line": line,
-                                "text": text,
-                            })).collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            ),
-        );
+        map.insert("files".to_string(), json!(files_json));
         emit_json(Value::Object(map))
     } else {
         let mut stdout = io::stdout();
@@ -1531,8 +1538,8 @@ fn command_sqlite_schema(
     for (schema, name, kind, column_count_declared, without_rowid, strict) in
         table_rows.into_iter().take(shown_tables)
     {
-        let all_columns = sqlite_schema_columns(&conn, &name)?;
-        let all_indexes = sqlite_schema_indexes(&conn, &name)?;
+        let all_columns = sqlite_schema_columns(&conn, &schema, &name)?;
+        let all_indexes = sqlite_schema_indexes(&conn, &schema, &name)?;
         let all_columns_len = all_columns.len();
         let all_indexes_len = all_indexes.len();
         columns_total += all_columns_len;
@@ -1653,13 +1660,17 @@ fn command_sqlite_schema(
     write_receipt(map)
 }
 
-fn sqlite_schema_columns(conn: &Connection, table_name: &str) -> Result<Vec<SqliteColumnSummary>> {
+fn sqlite_schema_columns(
+    conn: &Connection,
+    schema_name: &str,
+    table_name: &str,
+) -> Result<Vec<SqliteColumnSummary>> {
     let mut fks = HashMap::new();
     let mut fk_stmt = conn
-        .prepare("SELECT \"from\", \"table\", \"to\" FROM pragma_foreign_key_list(?)")
+        .prepare("SELECT \"from\", \"table\", \"to\" FROM pragma_foreign_key_list(?, ?)")
         .context("failed to prepare sqlite foreign-key query")?;
     let fk_rows = fk_stmt
-        .query_map([table_name], |row| {
+        .query_map([table_name, schema_name], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 SqliteForeignKeySummary {
@@ -1678,11 +1689,11 @@ fn sqlite_schema_columns(conn: &Connection, table_name: &str) -> Result<Vec<Sqli
     let mut stmt = conn
         .prepare(
             "SELECT name, lower(type), \"notnull\", dflt_value, pk, hidden \
-             FROM pragma_table_xinfo(?) \
+             FROM pragma_table_xinfo(?, ?) \
              ORDER BY cid",
         )
         .context("failed to prepare sqlite column query")?;
-    stmt.query_map([table_name], |row| {
+    stmt.query_map([table_name, schema_name], |row| {
         let name = row.get::<_, String>(0)?;
         Ok(SqliteColumnSummary {
             foreign_key: fks.get(&name).cloned(),
@@ -1699,13 +1710,19 @@ fn sqlite_schema_columns(conn: &Connection, table_name: &str) -> Result<Vec<Sqli
     .with_context(|| format!("failed to read columns for {table_name}"))
 }
 
-fn sqlite_schema_indexes(conn: &Connection, table_name: &str) -> Result<Vec<SqliteIndexSummary>> {
+fn sqlite_schema_indexes(
+    conn: &Connection,
+    schema_name: &str,
+    table_name: &str,
+) -> Result<Vec<SqliteIndexSummary>> {
     let mut stmt = conn
-        .prepare("SELECT name, \"unique\", origin, partial FROM pragma_index_list(?) ORDER BY seq")
+        .prepare(
+            "SELECT name, \"unique\", origin, partial FROM pragma_index_list(?, ?) ORDER BY seq",
+        )
         .context("failed to prepare sqlite index query")?;
     let mut indexes = Vec::new();
     for row in stmt
-        .query_map([table_name], |row| {
+        .query_map([table_name, schema_name], |row| {
             Ok(SqliteIndexSummary {
                 name: row.get::<_, String>(0)?,
                 unique: row.get::<_, i64>(1)? != 0,
@@ -1718,10 +1735,10 @@ fn sqlite_schema_indexes(conn: &Connection, table_name: &str) -> Result<Vec<Sqli
     {
         let mut index = row.with_context(|| format!("failed to read index for {table_name}"))?;
         let mut col_stmt = conn
-            .prepare("SELECT cid, name FROM pragma_index_xinfo(?) WHERE key != 0 ORDER BY seqno")
+            .prepare("SELECT cid, name FROM pragma_index_xinfo(?, ?) WHERE key != 0 ORDER BY seqno")
             .with_context(|| format!("failed to prepare index-column query for {}", index.name))?;
         index.columns = col_stmt
-            .query_map([index.name.as_str()], |row| {
+            .query_map([index.name.as_str(), schema_name], |row| {
                 let cid = row.get::<_, i64>(0)?;
                 let name = row.get::<_, Option<String>>(1)?;
                 Ok(name.unwrap_or_else(|| match cid {
