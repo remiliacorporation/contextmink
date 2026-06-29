@@ -4,8 +4,9 @@ This guide is written for coding agents and maintainers adding `contextmink` to
 an existing repository.
 
 `contextmink` is a transcript guard. Use it before broad file, text, line-slice,
-or JSON reconnaissance when the output cardinality is unknown. It is not a
-replacement for project-native tools.
+JSON, or read-only SQLite reconnaissance when the output cardinality is unknown
+or host-shell quoting would become the task. It is not a replacement for
+project-native tools.
 
 ## Prerequisites
 
@@ -57,7 +58,8 @@ tool:
    ```
 
    The first run may build the release binary. Build output is sent to stderr
-   so stdout remains parseable.
+   so stdout remains parseable. Release builds include bundled SQLite support
+   so read-only DB inspection works without a system SQLite install.
 
 ## Standalone Install
 
@@ -105,11 +107,22 @@ not drift between agent surfaces.
 
 ## Operational Notes
 
+- Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.
-- Prefer `json-find` over opening whole JSON reports.
-- Treat capped receipts as incomplete. Narrow and rerun.
+- Prefer `json-find` over opening whole JSON reports, and `json-select` for
+  bounded row/field projection from JSON arrays.
+- On Git Bash/Windows, use the `scripts/contextmink` launcher for
+  `json-select`; it preserves slash-leading JSON Pointer selectors while still
+  leaving normal file path handling to the shell/runtime boundary.
+- Prefer `sqlite-schema <db>` before ad hoc SQLite queries against unfamiliar
+  databases.
+- Prefer `sqlite --sql-file <file>` for read-only SQL containing shell-fragile
+  operators or quotes.
+- Treat capped receipts as incomplete. When `cap_reason` is `scan` or
+  `candidate_files_total_is_lower_bound` is true, totals and no-match results
+  only describe the scanned subset; narrow and rerun.
 - Keep repository-specific policy in `.contextmink.toml` and agent guidance,
   not in `contextmink` source code.
 

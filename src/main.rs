@@ -1,6 +1,7 @@
 use std::cmp::min;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -8,11 +9,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use regex::Regex;
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 const CONFIG_NAME: &str = ".contextmink.toml";
 const RECEIPT_PREFIX: &str = "CONTEXTMINK_RECEIPT ";
+const JSON_SMALL_NODE_LIMIT: usize = 80;
+const JSON_SMALL_STRING_CHAR_LIMIT: usize = 4096;
 
 const BUILTIN_EXCLUDES: &[&str] = &[
     ".git/**",
@@ -40,6 +44,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// List candidate files with configured excludes and a display cap.
     Files {
         #[arg(default_value = ".")]
         path: Vec<PathBuf>,
@@ -51,11 +56,21 @@ enum Command {
         max: usize,
         #[arg(long, default_value_t = 220)]
         max_line_chars: usize,
+        #[arg(long, default_value_t = 50_000)]
+        max_scan_files: usize,
     },
+    /// Search text and report bounded file counts plus sample lines.
+    ///
+    /// Without --pattern-file, the first positional is PATTERN and the rest are
+    /// paths. With --pattern-file, every positional is a path.
     Grep {
-        pattern: String,
-        #[arg(default_value = ".")]
-        path: Vec<PathBuf>,
+        #[arg(
+            value_name = "PATTERN_OR_PATH",
+            help = "PATTERN followed by optional PATHs, or only PATHs with --pattern-file"
+        )]
+        args: Vec<String>,
+        #[arg(long = "pattern-file", value_name = "FILE")]
+        pattern_file: Option<PathBuf>,
         #[arg(long)]
         literal: bool,
         #[arg(long)]
@@ -75,6 +90,7 @@ enum Command {
         #[arg(long, default_value_t = 2_000_000)]
         max_file_bytes: u64,
     },
+    /// Search for literal terms without regex or shell-fragile pattern syntax.
     #[command(name = "grep-terms")]
     GrepTerms {
         #[arg(long = "term")]
@@ -104,6 +120,7 @@ enum Command {
         #[arg(long, default_value_t = 2_000_000)]
         max_file_bytes: u64,
     },
+    /// Print a bounded line or character window from one text file.
     Slice {
         file: PathBuf,
         #[arg(long)]
@@ -123,6 +140,7 @@ enum Command {
         #[arg(long, default_value_t = 4000)]
         chars: usize,
     },
+    /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
         file: PathBuf,
         #[arg(long)]
@@ -139,6 +157,54 @@ enum Command {
         max: usize,
         #[arg(long, default_value_t = 260)]
         max_value_chars: usize,
+    },
+    /// Project JSON root or array rows to bounded field summaries.
+    #[command(name = "json-select")]
+    JsonSelect {
+        file: PathBuf,
+        #[arg(long, value_name = "POINTER")]
+        array: Option<String>,
+        #[arg(long = "field", value_name = "KEY_OR_POINTER")]
+        fields: Vec<String>,
+        #[arg(long, default_value_t = 40)]
+        max: usize,
+        #[arg(long, default_value_t = 260)]
+        max_value_chars: usize,
+    },
+    /// Run a read-only SQLite query with bounded row output.
+    Sqlite {
+        db: PathBuf,
+        #[arg(long)]
+        sql: Option<String>,
+        #[arg(long = "sql-file", value_name = "FILE")]
+        sql_file: Option<PathBuf>,
+        #[arg(long, default_value_t = 40)]
+        max_rows: usize,
+        #[arg(long, default_value_t = 5000)]
+        max_scan_rows: usize,
+        #[arg(long, default_value_t = 260)]
+        max_value_chars: usize,
+    },
+    /// Summarize SQLite tables, columns, indexes, and foreign keys.
+    #[command(name = "sqlite-schema")]
+    SqliteSchema {
+        db: PathBuf,
+        #[arg(long = "table", value_name = "NAME")]
+        tables: Vec<String>,
+        #[arg(long = "name-contains", value_name = "TEXT")]
+        name_contains: Vec<String>,
+        #[arg(long)]
+        include_shadow: bool,
+        #[arg(long)]
+        include_system: bool,
+        #[arg(long, default_value_t = 40)]
+        max_tables: usize,
+        #[arg(long, default_value_t = 160)]
+        max_columns: usize,
+        #[arg(long, default_value_t = 120)]
+        max_indexes: usize,
+        #[arg(long, default_value_t = 320)]
+        max_line_chars: usize,
     },
 }
 
@@ -221,6 +287,53 @@ struct FileMatch {
     samples: Vec<(usize, String)>,
 }
 
+#[derive(Debug)]
+struct CollectedFiles {
+    files: Vec<PathBuf>,
+    total_seen: usize,
+    truncated: bool,
+}
+
+#[derive(Debug)]
+struct SqliteTableSummary {
+    schema: String,
+    name: String,
+    kind: String,
+    column_count_declared: i64,
+    without_rowid: bool,
+    strict: bool,
+    columns: Vec<SqliteColumnSummary>,
+    indexes: Vec<SqliteIndexSummary>,
+    columns_total: usize,
+    indexes_total: usize,
+}
+
+#[derive(Debug)]
+struct SqliteColumnSummary {
+    name: String,
+    type_name: String,
+    not_null: bool,
+    default_value: Option<String>,
+    primary_key_rank: i64,
+    hidden: i64,
+    foreign_key: Option<SqliteForeignKeySummary>,
+}
+
+#[derive(Clone, Debug)]
+struct SqliteForeignKeySummary {
+    table: String,
+    column: String,
+}
+
+#[derive(Debug)]
+struct SqliteIndexSummary {
+    name: String,
+    unique: bool,
+    origin: String,
+    partial: bool,
+    columns: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = load_context_config(cli.config.as_deref(), cli.no_config)?;
@@ -231,6 +344,7 @@ fn main() -> Result<()> {
             include_noisy,
             max,
             max_line_chars,
+            max_scan_files,
         } => command_files(
             &cli,
             &config,
@@ -239,10 +353,11 @@ fn main() -> Result<()> {
             *include_noisy,
             *max,
             *max_line_chars,
+            *max_scan_files,
         ),
         Command::Grep {
-            pattern,
-            path,
+            args,
+            pattern_file,
             literal,
             include_noisy,
             max_count_files,
@@ -255,8 +370,8 @@ fn main() -> Result<()> {
         } => command_grep(
             &cli,
             &config,
-            pattern,
-            path,
+            args,
+            pattern_file.as_deref(),
             *literal,
             *include_noisy,
             *max_count_files,
@@ -343,6 +458,61 @@ fn main() -> Result<()> {
             *max,
             *max_value_chars,
         ),
+        Command::JsonSelect {
+            file,
+            array,
+            fields,
+            max,
+            max_value_chars,
+        } => command_json_select(
+            &cli,
+            &config,
+            file,
+            array.as_deref(),
+            fields,
+            *max,
+            *max_value_chars,
+        ),
+        Command::Sqlite {
+            db,
+            sql,
+            sql_file,
+            max_rows,
+            max_scan_rows,
+            max_value_chars,
+        } => command_sqlite(
+            &cli,
+            &config,
+            db,
+            sql.as_deref(),
+            sql_file.as_deref(),
+            *max_rows,
+            *max_scan_rows,
+            *max_value_chars,
+        ),
+        Command::SqliteSchema {
+            db,
+            tables,
+            name_contains,
+            include_shadow,
+            include_system,
+            max_tables,
+            max_columns,
+            max_indexes,
+            max_line_chars,
+        } => command_sqlite_schema(
+            &cli,
+            &config,
+            db,
+            tables,
+            name_contains,
+            *include_shadow,
+            *include_system,
+            *max_tables,
+            *max_columns,
+            *max_indexes,
+            *max_line_chars,
+        ),
     }
 }
 
@@ -361,6 +531,7 @@ fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>
     for file in term_files {
         let text = fs::read_to_string(file)
             .with_context(|| format!("failed to read term file {}", file.display()))?;
+        let text = strip_utf8_bom(&text);
         for line in text.lines() {
             let line = line.trim_end_matches('\r');
             if !line.is_empty() {
@@ -374,6 +545,47 @@ fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>
         ));
     }
     Ok(collected)
+}
+
+fn collect_single_text_source(
+    label: &str,
+    inline: Option<&str>,
+    file: Option<&Path>,
+    trim_terminal_newlines: bool,
+) -> Result<String> {
+    match (inline, file) {
+        (Some(_), Some(_)) => Err(anyhow!(
+            "{label} accepts either an inline value or a file, not both"
+        )),
+        (Some(value), None) => Ok(value.to_owned()),
+        (None, Some(path)) => {
+            let mut text = if path == Path::new("-") {
+                let mut text = String::new();
+                io::stdin()
+                    .read_to_string(&mut text)
+                    .with_context(|| format!("failed to read {label} from stdin"))?;
+                text
+            } else {
+                fs::read_to_string(path)
+                    .with_context(|| format!("failed to read {label} file {}", path.display()))?
+            };
+            if trim_terminal_newlines {
+                trim_trailing_line_endings(&mut text);
+            }
+            Ok(strip_utf8_bom(&text).to_owned())
+        }
+        (None, None) => Err(anyhow!("{label} requires an inline value or file")),
+    }
+}
+
+fn strip_utf8_bom(value: &str) -> &str {
+    value.strip_prefix('\u{feff}').unwrap_or(value)
+}
+
+fn trim_trailing_line_endings(value: &mut String) {
+    while value.ends_with('\n') || value.ends_with('\r') {
+        value.pop();
+    }
 }
 
 fn parse_line_range(range: &str) -> Result<(usize, Option<usize>)> {
@@ -400,6 +612,7 @@ fn parse_line_range(range: &str) -> Result<(usize, Option<usize>)> {
     Ok((start, Some(end)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn command_files(
     cli: &Cli,
     config: &ContextConfig,
@@ -408,20 +621,36 @@ fn command_files(
     include_noisy: bool,
     max: usize,
     max_line_chars: usize,
+    max_scan_files: usize,
 ) -> Result<()> {
-    let files = collect_files(paths, globs, config, include_noisy)?;
+    if max_scan_files == 0 {
+        return Err(anyhow!("files --max-scan-files must be greater than zero"));
+    }
+    let collected = collect_files(paths, globs, config, include_noisy, max_scan_files)?;
+    let files = collected.files;
     let shown = min(files.len(), max);
-    let truncated = shown < files.len();
-    let cap_reason = if truncated { Some("max") } else { None };
+    let truncated = collected.truncated || shown < files.len();
+    let cap_reason = if collected.truncated {
+        Some("scan")
+    } else if shown < files.len() {
+        Some("max")
+    } else {
+        None
+    };
     if cli.json {
         let mut map = base_receipt(
             "files",
             config.profile.as_deref(),
             "files",
             shown,
-            files.len(),
+            collected.total_seen,
             truncated,
             cap_reason,
+        );
+        map.insert("candidate_files_scanned".to_string(), json!(files.len()));
+        map.insert(
+            "candidate_files_total_is_lower_bound".to_string(),
+            json!(collected.truncated),
         );
         map.insert(
             "files".to_string(),
@@ -443,15 +672,27 @@ fn command_files(
                 clamp_text(&display_path(path), max_line_chars)
             )?;
         }
-        write_receipt(base_receipt(
+        if collected.truncated {
+            writeln!(
+                stdout,
+                "[contextmink] capped file scan at {max_scan_files} files; narrow the path or glob before treating this as complete."
+            )?;
+        }
+        let mut map = base_receipt(
             "files",
             config.profile.as_deref(),
             "files",
             shown,
-            files.len(),
+            collected.total_seen,
             truncated,
             cap_reason,
-        ))
+        );
+        map.insert("candidate_files_scanned".to_string(), json!(files.len()));
+        map.insert(
+            "candidate_files_total_is_lower_bound".to_string(),
+            json!(collected.truncated),
+        );
+        write_receipt(map)
     }
 }
 
@@ -459,8 +700,8 @@ fn command_files(
 fn command_grep(
     cli: &Cli,
     config: &ContextConfig,
-    pattern: &str,
-    paths: &[PathBuf],
+    args: &[String],
+    pattern_file: Option<&Path>,
     literal: bool,
     include_noisy: bool,
     max_count_files: usize,
@@ -471,13 +712,22 @@ fn command_grep(
     max_scan_files: usize,
     max_file_bytes: u64,
 ) -> Result<()> {
-    let matcher = TextMatcher::new(pattern, literal)?;
+    let (pattern, effective_paths) = if pattern_file.is_some() {
+        (None, string_args_to_paths(args))
+    } else {
+        let Some((pattern, paths)) = args.split_first() else {
+            return Err(anyhow!("grep requires PATTERN or --pattern-file <file>"));
+        };
+        (Some(pattern.as_str()), string_args_to_paths(paths))
+    };
+    let pattern = collect_single_text_source("grep pattern", pattern, pattern_file, true)?;
+    let matcher = TextMatcher::new(&pattern, literal)?;
     command_grep_with_matcher(
         cli,
         config,
         "grep",
         matcher,
-        paths,
+        &effective_paths,
         include_noisy,
         max_count_files,
         max_files,
@@ -487,6 +737,14 @@ fn command_grep(
         max_scan_files,
         max_file_bytes,
     )
+}
+
+fn string_args_to_paths(args: &[String]) -> Vec<PathBuf> {
+    if args.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        args.iter().map(PathBuf::from).collect()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -505,13 +763,19 @@ fn command_grep_with_matcher(
     max_scan_files: usize,
     max_file_bytes: u64,
 ) -> Result<()> {
-    let files = collect_files(paths, &[], config, include_noisy)?;
-    let scan_truncated = files.len() > max_scan_files;
-    let total_candidate_files = files.len();
+    if max_scan_files == 0 {
+        return Err(anyhow!(
+            "{command_name} --max-scan-files must be greater than zero"
+        ));
+    }
+    let collected = collect_files(paths, &[], config, include_noisy, max_scan_files)?;
+    let scan_truncated = collected.truncated;
+    let total_candidate_files = collected.total_seen;
+    let candidate_files_scanned = collected.files.len();
     let mut matches = Vec::new();
     let mut total_matches = 0usize;
     let mut skipped_large_or_binary = 0usize;
-    for file in files.into_iter().take(max_scan_files) {
+    for file in collected.files {
         let Some(text) = read_text_file(&file, max_file_bytes)? else {
             skipped_large_or_binary += 1;
             continue;
@@ -565,7 +829,11 @@ fn command_grep_with_matcher(
         );
         map.insert(
             "candidate_files_scanned".to_string(),
-            json!(min(total_candidate_files, max_scan_files)),
+            json!(candidate_files_scanned),
+        );
+        map.insert(
+            "candidate_files_total_is_lower_bound".to_string(),
+            json!(scan_truncated),
         );
         map.insert(
             "skipped_large_or_binary".to_string(),
@@ -604,9 +872,7 @@ fn command_grep_with_matcher(
         writeln!(
             stdout,
             "candidate_files_total={} candidate_files_scanned={} skipped_large_or_binary={}",
-            total_candidate_files,
-            min(total_candidate_files, max_scan_files),
-            skipped_large_or_binary
+            total_candidate_files, candidate_files_scanned, skipped_large_or_binary
         )?;
         if matches.is_empty() {
             writeln!(stdout, "no_matches")?;
@@ -625,7 +891,7 @@ fn command_grep_with_matcher(
                 total_matches,
                 0,
                 total_candidate_files,
-                min(total_candidate_files, max_scan_files),
+                candidate_files_scanned,
                 skipped_large_or_binary,
                 scan_truncated,
                 cap_reason,
@@ -688,7 +954,7 @@ fn command_grep_with_matcher(
             total_matches,
             sample_total,
             total_candidate_files,
-            min(total_candidate_files, max_scan_files),
+            candidate_files_scanned,
             skipped_large_or_binary,
             cap_reason.is_some(),
             cap_reason,
@@ -882,6 +1148,7 @@ fn command_json_find(
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
     let document: Value = serde_json::from_str(&document).context("failed to parse JSON")?;
     let mut rows = Vec::new();
+    let mut total_matches = 0usize;
     walk_json("$", None, &document, &mut |path, key, value| {
         if let Some(key_re) = &key_re
             && !key.is_some_and(|key| key_re.is_match(key))
@@ -903,10 +1170,13 @@ fn command_json_find(
         if !value_contains.is_empty() && !contains_any(&summary, value_contains) {
             return;
         }
-        rows.push((path.to_owned(), summary));
+        total_matches += 1;
+        if rows.len() < max {
+            rows.push((path.to_owned(), summary));
+        }
     });
-    let shown = min(rows.len(), max);
-    let truncated = shown < rows.len();
+    let shown = rows.len();
+    let truncated = shown < total_matches;
     let cap_reason = if truncated { Some("max") } else { None };
     if cli.json {
         let mut map = base_receipt(
@@ -914,7 +1184,7 @@ fn command_json_find(
             config.profile.as_deref(),
             "matches",
             shown,
-            rows.len(),
+            total_matches,
             truncated,
             cap_reason,
         );
@@ -951,10 +1221,704 @@ fn command_json_find(
             config.profile.as_deref(),
             "matches",
             shown,
+            total_matches,
+            truncated,
+            cap_reason,
+        ))
+    }
+}
+
+fn command_json_select(
+    cli: &Cli,
+    config: &ContextConfig,
+    file: &Path,
+    array: Option<&str>,
+    fields: &[String],
+    max: usize,
+    max_value_chars: usize,
+) -> Result<()> {
+    if max == 0 {
+        return Err(anyhow!("json-select --max must be greater than zero"));
+    }
+    let document =
+        fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
+    let document: Value = serde_json::from_str(&document).context("failed to parse JSON")?;
+    let rows: &[Value] = if let Some(pointer) = array {
+        let selected = json_pointer_lookup(&document, pointer)?
+            .ok_or_else(|| anyhow!("json-select --array pointer did not match: {pointer}"))?;
+        selected.as_array().ok_or_else(|| {
+            anyhow!("json-select --array pointer must resolve to an array: {pointer}")
+        })?
+    } else {
+        std::slice::from_ref(&document)
+    };
+    let shown = min(rows.len(), max);
+    let truncated = shown < rows.len();
+    let cap_reason = if truncated { Some("max") } else { None };
+    if cli.json {
+        let mut map = base_receipt(
+            "json-select",
+            config.profile.as_deref(),
+            "rows",
+            shown,
+            rows.len(),
+            truncated,
+            cap_reason,
+        );
+        map.insert("path".to_string(), json!(display_path(file)));
+        map.insert("array".to_string(), json!(array));
+        map.insert("fields".to_string(), json!(fields));
+        map.insert(
+            "rows".to_string(),
+            json!(
+                rows.iter()
+                    .take(shown)
+                    .enumerate()
+                    .map(|(index, row)| json_select_row(index, row, fields, max_value_chars))
+                    .collect::<Result<Vec<_>>>()?
+            ),
+        );
+        emit_json(Value::Object(map))
+    } else {
+        let mut stdout = io::stdout();
+        let source = array.unwrap_or("$");
+        if fields.is_empty() {
+            writeln!(stdout, "[contextmink] json-select source={source}")?;
+        } else {
+            writeln!(
+                stdout,
+                "[contextmink] json-select source={source} fields={}",
+                fields.join(",")
+            )?;
+        }
+        if rows.is_empty() {
+            writeln!(stdout, "no_rows")?;
+        }
+        for (index, row) in rows.iter().take(shown).enumerate() {
+            if fields.is_empty() {
+                writeln!(stdout, "{index}: {}", value_summary(row, max_value_chars))?;
+                continue;
+            }
+            let mut parts = Vec::with_capacity(fields.len());
+            for field in fields {
+                let summary = json_select_field(row, field)?
+                    .map(|value| value_summary(value, max_value_chars))
+                    .unwrap_or_else(|| "null".to_owned());
+                parts.push(format!("{field}={summary}"));
+            }
+            writeln!(stdout, "{index}: {}", parts.join(" "))?;
+        }
+        if truncated {
+            writeln!(
+                stdout,
+                "[contextmink] capped json rows at {max}; narrow the selector."
+            )?;
+        }
+        write_receipt(base_receipt(
+            "json-select",
+            config.profile.as_deref(),
+            "rows",
+            shown,
             rows.len(),
             truncated,
             cap_reason,
         ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_sqlite(
+    cli: &Cli,
+    config: &ContextConfig,
+    db: &Path,
+    sql: Option<&str>,
+    sql_file: Option<&Path>,
+    max_rows: usize,
+    max_scan_rows: usize,
+    max_value_chars: usize,
+) -> Result<()> {
+    if max_rows == 0 {
+        return Err(anyhow!("sqlite --max-rows must be greater than zero"));
+    }
+    if max_scan_rows == 0 {
+        return Err(anyhow!("sqlite --max-scan-rows must be greater than zero"));
+    }
+    if max_scan_rows < max_rows {
+        return Err(anyhow!(
+            "sqlite --max-scan-rows must be greater than or equal to --max-rows"
+        ));
+    }
+    let sql = collect_single_text_source("sqlite SQL", sql, sql_file, false)?;
+    if sql.trim().is_empty() {
+        return Err(anyhow!("sqlite SQL must not be empty"));
+    }
+    let conn = open_sqlite_readonly(db)?;
+    let mut stmt = conn.prepare(&sql).context("failed to prepare sqlite SQL")?;
+    if stmt.parameter_count() != 0 {
+        return Err(anyhow!(
+            "sqlite command does not bind parameters; use a literal read-only query"
+        ));
+    }
+    if !stmt.readonly() {
+        return Err(anyhow!("sqlite command only accepts read-only statements"));
+    }
+    let column_count = stmt.column_count();
+    let columns = stmt
+        .column_names()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut row_iter = stmt.query([]).context("failed to run sqlite query")?;
+    let mut rendered_rows = Vec::new();
+    let mut json_rows = Vec::new();
+    let mut total_seen = 0usize;
+    let mut scan_truncated = false;
+    while let Some(row) = row_iter.next().context("failed to read sqlite row")? {
+        total_seen += 1;
+        if total_seen <= max_rows {
+            let mut rendered = Vec::with_capacity(column_count);
+            let mut fields = serde_json::Map::new();
+            for (index, column) in columns.iter().enumerate() {
+                let summary = sqlite_value_summary(row.get_ref(index)?, max_value_chars);
+                rendered.push((column.clone(), summary.clone()));
+                fields.insert(column.clone(), json!(summary));
+            }
+            rendered_rows.push(rendered);
+            json_rows.push(json!({
+                "row": total_seen - 1,
+                "fields": fields,
+            }));
+        }
+        if total_seen > max_scan_rows {
+            scan_truncated = true;
+            break;
+        }
+    }
+    let shown = rendered_rows.len();
+    let cap_reason = if scan_truncated {
+        Some("scan")
+    } else if shown < total_seen {
+        Some("rows")
+    } else {
+        None
+    };
+    if cli.json {
+        let mut map = base_receipt(
+            "sqlite",
+            config.profile.as_deref(),
+            "rows",
+            shown,
+            total_seen,
+            cap_reason.is_some(),
+            cap_reason,
+        );
+        map.insert("db".to_string(), json!(display_path(db)));
+        map.insert("columns".to_string(), json!(columns));
+        map.insert("rows_scanned".to_string(), json!(total_seen));
+        map.insert("rows".to_string(), json!(json_rows));
+        emit_json(Value::Object(map))
+    } else {
+        let mut stdout = io::stdout();
+        writeln!(
+            stdout,
+            "[contextmink] sqlite db={} columns={}",
+            display_path(db),
+            columns.join(",")
+        )?;
+        if rendered_rows.is_empty() {
+            writeln!(stdout, "no_rows")?;
+        }
+        for (row_index, fields) in rendered_rows.iter().enumerate() {
+            let rendered = fields
+                .iter()
+                .map(|(column, value)| format!("{column}={value}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(stdout, "{row_index}: {rendered}")?;
+        }
+        if scan_truncated {
+            writeln!(
+                stdout,
+                "[contextmink] capped sqlite scan at {max_scan_rows} rows; add WHERE/LIMIT or narrow the query before treating this as complete."
+            )?;
+        } else if shown < total_seen {
+            writeln!(
+                stdout,
+                "[contextmink] capped sqlite output at {max_rows} rows; increase --max-rows or narrow the query."
+            )?;
+        }
+        let mut map = base_receipt(
+            "sqlite",
+            config.profile.as_deref(),
+            "rows",
+            shown,
+            total_seen,
+            cap_reason.is_some(),
+            cap_reason,
+        );
+        map.insert("columns".to_string(), json!(columns));
+        map.insert("rows_scanned".to_string(), json!(total_seen));
+        write_receipt(map)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_sqlite_schema(
+    cli: &Cli,
+    config: &ContextConfig,
+    db: &Path,
+    requested_tables: &[String],
+    name_contains: &[String],
+    include_shadow: bool,
+    include_system: bool,
+    max_tables: usize,
+    max_columns: usize,
+    max_indexes: usize,
+    max_line_chars: usize,
+) -> Result<()> {
+    if max_tables == 0 {
+        return Err(anyhow!(
+            "sqlite-schema --max-tables must be greater than zero"
+        ));
+    }
+    let conn = open_sqlite_readonly(db)?;
+    let requested = requested_tables.iter().collect::<BTreeSet<_>>();
+    let mut stmt = conn
+        .prepare(
+            "SELECT schema, name, type, ncol, wr, strict \
+             FROM pragma_table_list \
+             ORDER BY schema, name",
+        )
+        .context("failed to prepare sqlite schema query")?;
+    let mut table_rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)? != 0,
+                row.get::<_, i64>(5)? != 0,
+            ))
+        })
+        .context("failed to query sqlite schema")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("failed to read sqlite schema rows")?;
+    table_rows.retain(|(_, name, kind, _, _, _)| {
+        if !include_system && name.starts_with("sqlite_") {
+            return false;
+        }
+        if !include_shadow && kind == "shadow" {
+            return false;
+        }
+        if !requested.is_empty() && !requested.contains(name) {
+            return false;
+        }
+        if !name_contains.is_empty() && !contains_any(name, name_contains) {
+            return false;
+        }
+        true
+    });
+    let total_tables = table_rows.len();
+    let shown_tables = min(total_tables, max_tables);
+    let mut remaining_columns = max_columns;
+    let mut remaining_indexes = max_indexes;
+    let mut columns_total = 0usize;
+    let mut columns_shown = 0usize;
+    let mut indexes_total = 0usize;
+    let mut indexes_shown = 0usize;
+    let mut summaries = Vec::with_capacity(shown_tables);
+    for (schema, name, kind, column_count_declared, without_rowid, strict) in
+        table_rows.into_iter().take(shown_tables)
+    {
+        let all_columns = sqlite_schema_columns(&conn, &name)?;
+        let all_indexes = sqlite_schema_indexes(&conn, &name)?;
+        let all_columns_len = all_columns.len();
+        let all_indexes_len = all_indexes.len();
+        columns_total += all_columns_len;
+        indexes_total += all_indexes_len;
+        let columns_take = min(remaining_columns, all_columns.len());
+        let indexes_take = min(remaining_indexes, all_indexes.len());
+        columns_shown += columns_take;
+        indexes_shown += indexes_take;
+        remaining_columns = remaining_columns.saturating_sub(columns_take);
+        remaining_indexes = remaining_indexes.saturating_sub(indexes_take);
+        summaries.push(SqliteTableSummary {
+            schema,
+            name,
+            kind,
+            column_count_declared,
+            without_rowid,
+            strict,
+            columns: all_columns.into_iter().take(columns_take).collect(),
+            indexes: all_indexes.into_iter().take(indexes_take).collect(),
+            columns_total: all_columns_len,
+            indexes_total: all_indexes_len,
+        });
+    }
+    let columns_truncated = summaries.iter().any(|table| {
+        table.column_count_declared as usize > table.columns.len() && columns_shown >= max_columns
+    });
+    let indexes_truncated = indexes_shown < indexes_total;
+    let truncated = shown_tables < total_tables || columns_truncated || indexes_truncated;
+    let cap_reason = if shown_tables < total_tables {
+        Some("tables")
+    } else if columns_truncated {
+        Some("columns")
+    } else if indexes_truncated {
+        Some("indexes")
+    } else {
+        None
+    };
+    if cli.json {
+        let mut map = base_receipt(
+            "sqlite-schema",
+            config.profile.as_deref(),
+            "tables",
+            shown_tables,
+            total_tables,
+            truncated,
+            cap_reason,
+        );
+        map.insert("db".to_string(), json!(display_path(db)));
+        map.insert("columns_shown".to_string(), json!(columns_shown));
+        map.insert("columns_total".to_string(), json!(columns_total));
+        map.insert("indexes_shown".to_string(), json!(indexes_shown));
+        map.insert("indexes_total".to_string(), json!(indexes_total));
+        map.insert(
+            "tables".to_string(),
+            Value::Array(
+                summaries
+                    .iter()
+                    .map(sqlite_table_summary_json)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        return emit_json(Value::Object(map));
+    }
+    let mut stdout = io::stdout();
+    writeln!(
+        stdout,
+        "[contextmink] sqlite-schema db={}",
+        display_path(db)
+    )?;
+    if summaries.is_empty() {
+        writeln!(stdout, "no_tables")?;
+    }
+    for table in &summaries {
+        writeln!(
+            stdout,
+            "{}.{} type={} ncol={} strict={} without_rowid={}",
+            table.schema,
+            table.name,
+            table.kind,
+            table.column_count_declared,
+            table.strict,
+            table.without_rowid
+        )?;
+        for column in &table.columns {
+            writeln!(
+                stdout,
+                "  column {}",
+                clamp_text(&sqlite_column_summary_human(column), max_line_chars)
+            )?;
+        }
+        for index in &table.indexes {
+            writeln!(
+                stdout,
+                "  index {}",
+                clamp_text(&sqlite_index_summary_human(index), max_line_chars)
+            )?;
+        }
+    }
+    if truncated {
+        writeln!(
+            stdout,
+            "[contextmink] capped sqlite schema output at tables={max_tables} columns={max_columns} indexes={max_indexes}; narrow with --table or --name-contains."
+        )?;
+    }
+    let mut map = base_receipt(
+        "sqlite-schema",
+        config.profile.as_deref(),
+        "tables",
+        shown_tables,
+        total_tables,
+        truncated,
+        cap_reason,
+    );
+    map.insert("columns_shown".to_string(), json!(columns_shown));
+    map.insert("columns_total".to_string(), json!(columns_total));
+    map.insert("indexes_shown".to_string(), json!(indexes_shown));
+    map.insert("indexes_total".to_string(), json!(indexes_total));
+    write_receipt(map)
+}
+
+fn sqlite_schema_columns(conn: &Connection, table_name: &str) -> Result<Vec<SqliteColumnSummary>> {
+    let mut fks = HashMap::new();
+    let mut fk_stmt = conn
+        .prepare("SELECT \"from\", \"table\", \"to\" FROM pragma_foreign_key_list(?)")
+        .context("failed to prepare sqlite foreign-key query")?;
+    let fk_rows = fk_stmt
+        .query_map([table_name], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                SqliteForeignKeySummary {
+                    table: row.get::<_, String>(1)?,
+                    column: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                },
+            ))
+        })
+        .with_context(|| format!("failed to query foreign keys for {table_name}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .with_context(|| format!("failed to read foreign keys for {table_name}"))?;
+    for (column, fk) in fk_rows {
+        fks.insert(column, fk);
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, lower(type), \"notnull\", dflt_value, pk, hidden \
+             FROM pragma_table_xinfo(?) \
+             ORDER BY cid",
+        )
+        .context("failed to prepare sqlite column query")?;
+    stmt.query_map([table_name], |row| {
+        let name = row.get::<_, String>(0)?;
+        Ok(SqliteColumnSummary {
+            foreign_key: fks.get(&name).cloned(),
+            name,
+            type_name: row.get::<_, String>(1)?,
+            not_null: row.get::<_, i64>(2)? != 0,
+            default_value: row.get::<_, Option<String>>(3)?,
+            primary_key_rank: row.get::<_, i64>(4)?,
+            hidden: row.get::<_, i64>(5)?,
+        })
+    })
+    .with_context(|| format!("failed to query columns for {table_name}"))?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .with_context(|| format!("failed to read columns for {table_name}"))
+}
+
+fn sqlite_schema_indexes(conn: &Connection, table_name: &str) -> Result<Vec<SqliteIndexSummary>> {
+    let mut stmt = conn
+        .prepare("SELECT name, \"unique\", origin, partial FROM pragma_index_list(?) ORDER BY seq")
+        .context("failed to prepare sqlite index query")?;
+    let mut indexes = Vec::new();
+    for row in stmt
+        .query_map([table_name], |row| {
+            Ok(SqliteIndexSummary {
+                name: row.get::<_, String>(0)?,
+                unique: row.get::<_, i64>(1)? != 0,
+                origin: row.get::<_, String>(2)?,
+                partial: row.get::<_, i64>(3)? != 0,
+                columns: Vec::new(),
+            })
+        })
+        .with_context(|| format!("failed to query indexes for {table_name}"))?
+    {
+        let mut index = row.with_context(|| format!("failed to read index for {table_name}"))?;
+        let mut col_stmt = conn
+            .prepare("SELECT cid, name FROM pragma_index_xinfo(?) WHERE key != 0 ORDER BY seqno")
+            .with_context(|| format!("failed to prepare index-column query for {}", index.name))?;
+        index.columns = col_stmt
+            .query_map([index.name.as_str()], |row| {
+                let cid = row.get::<_, i64>(0)?;
+                let name = row.get::<_, Option<String>>(1)?;
+                Ok(name.unwrap_or_else(|| match cid {
+                    -2 => "<expr>".to_owned(),
+                    -1 => "<rowid>".to_owned(),
+                    _ => "<unknown>".to_owned(),
+                }))
+            })
+            .with_context(|| format!("failed to query columns for index {}", index.name))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .with_context(|| format!("failed to read columns for index {}", index.name))?;
+        indexes.push(index);
+    }
+    Ok(indexes)
+}
+
+fn sqlite_table_summary_json(table: &SqliteTableSummary) -> Value {
+    json!({
+        "schema": table.schema,
+        "name": table.name,
+        "type": table.kind,
+        "ncol": table.column_count_declared,
+        "strict": table.strict,
+        "without_rowid": table.without_rowid,
+        "columns_total": table.columns_total,
+        "indexes_total": table.indexes_total,
+        "columns": table.columns.iter().map(|column| {
+            json!({
+                "name": column.name,
+                "type": column.type_name,
+                "not_null": column.not_null,
+                "default": column.default_value,
+                "primary_key_rank": column.primary_key_rank,
+                "hidden": column.hidden,
+                "foreign_key": column.foreign_key.as_ref().map(|fk| json!({
+                    "table": fk.table,
+                    "column": fk.column,
+                })),
+            })
+        }).collect::<Vec<_>>(),
+        "indexes": table.indexes.iter().map(|index| {
+            json!({
+                "name": index.name,
+                "unique": index.unique,
+                "origin": index.origin,
+                "partial": index.partial,
+                "columns": index.columns,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn sqlite_column_summary_human(column: &SqliteColumnSummary) -> String {
+    let mut parts = vec![format!("{} {}", column.name, column.type_name)];
+    if column.not_null {
+        parts.push("not_null".to_owned());
+    }
+    if column.primary_key_rank != 0 {
+        parts.push(format!("pk#{}", column.primary_key_rank));
+    }
+    if column.hidden != 0 {
+        parts.push(format!("hidden#{}", column.hidden));
+    }
+    if let Some(default) = &column.default_value {
+        parts.push(format!("default={default:?}"));
+    }
+    if let Some(fk) = &column.foreign_key {
+        parts.push(format!("fk={}.{}", fk.table, fk.column));
+    }
+    parts.join(" ")
+}
+
+fn sqlite_index_summary_human(index: &SqliteIndexSummary) -> String {
+    let mut parts = vec![format!("{}({})", index.name, index.columns.join(","))];
+    if index.unique {
+        parts.push("unique".to_owned());
+    }
+    if index.partial {
+        parts.push("partial".to_owned());
+    }
+    parts.push(format!("origin={}", index.origin));
+    parts.join(" ")
+}
+
+fn open_sqlite_readonly(db: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("failed to open sqlite DB {}", db.display()))?;
+    conn.execute_batch("PRAGMA query_only = ON")
+        .context("failed to enable sqlite query_only mode")?;
+    Ok(conn)
+}
+
+fn json_select_row(
+    index: usize,
+    row: &Value,
+    fields: &[String],
+    max_value_chars: usize,
+) -> Result<Value> {
+    if fields.is_empty() {
+        return Ok(json!({
+            "row": index,
+            "value": value_summary(row, max_value_chars),
+        }));
+    }
+    let mut output_fields = serde_json::Map::new();
+    for field in fields {
+        let summary = json_select_field(row, field)?
+            .map(|value| value_summary(value, max_value_chars))
+            .unwrap_or_else(|| "null".to_owned());
+        output_fields.insert(field.clone(), json!(summary));
+    }
+    Ok(json!({
+        "row": index,
+        "fields": output_fields,
+    }))
+}
+
+fn json_select_field<'a>(row: &'a Value, selector: &str) -> Result<Option<&'a Value>> {
+    if selector == "$" || selector.starts_with('/') || selector.is_empty() {
+        return json_pointer_lookup(row, selector);
+    }
+    Ok(row.as_object().and_then(|map| map.get(selector)))
+}
+
+fn json_pointer_lookup<'a>(value: &'a Value, pointer: &str) -> Result<Option<&'a Value>> {
+    if pointer.is_empty() || pointer == "$" {
+        return Ok(Some(value));
+    }
+    if !pointer.starts_with('/') {
+        return Err(anyhow!(
+            "JSON pointer must be empty, $, or start with /: {pointer}"
+        ));
+    }
+    let mut current = value;
+    for raw_token in pointer[1..].split('/') {
+        let token = decode_json_pointer_token(raw_token)?;
+        match current {
+            Value::Object(map) => {
+                let Some(next) = map.get(&token) else {
+                    return Ok(None);
+                };
+                current = next;
+            }
+            Value::Array(values) => {
+                let index = token
+                    .parse::<usize>()
+                    .with_context(|| format!("invalid JSON array index in pointer: {token}"))?;
+                let Some(next) = values.get(index) else {
+                    return Ok(None);
+                };
+                current = next;
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(current))
+}
+
+fn decode_json_pointer_token(token: &str) -> Result<String> {
+    let mut output = String::with_capacity(token.len());
+    let mut chars = token.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '~' {
+            output.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('0') => output.push('~'),
+            Some('1') => output.push('/'),
+            Some(other) => {
+                return Err(anyhow!(
+                    "invalid JSON pointer escape: ~{other}; expected ~0 or ~1"
+                ));
+            }
+            None => {
+                return Err(anyhow!(
+                    "invalid JSON pointer escape at end of token; expected ~0 or ~1"
+                ));
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn sqlite_value_summary(value: ValueRef<'_>, max_chars: usize) -> String {
+    match value {
+        ValueRef::Null => "null".to_owned(),
+        ValueRef::Integer(value) => value.to_string(),
+        ValueRef::Real(value) => value.to_string(),
+        ValueRef::Text(value) => {
+            let value = String::from_utf8_lossy(value);
+            clamp_text(&format!("{value:?}"), max_chars)
+        }
+        ValueRef::Blob(value) => format!("<blob:{} bytes>", value.len()),
     }
 }
 
@@ -1007,12 +1971,28 @@ fn collect_files(
     globs: &[String],
     config: &ContextConfig,
     include_noisy: bool,
-) -> Result<Vec<PathBuf>> {
+    max_scan_files: usize,
+) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(globs)?;
     let mut files = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut total_seen = 0usize;
+    let mut truncated = false;
     for root in paths {
         if root.is_file() {
-            maybe_push_file(&mut files, root, &include_matcher, config, include_noisy);
+            if file_is_included(root, &include_matcher, config, include_noisy) {
+                let candidate = root.to_path_buf();
+                if !seen.insert(candidate.clone()) {
+                    continue;
+                }
+                total_seen += 1;
+                if files.len() < max_scan_files {
+                    files.push(candidate);
+                } else {
+                    truncated = true;
+                    break;
+                }
+            }
             continue;
         }
         let mut walk = WalkBuilder::new(root);
@@ -1024,38 +2004,51 @@ fn collect_files(
         for entry in walk.build() {
             let entry = entry?;
             if entry.file_type().is_some_and(|kind| kind.is_file()) {
-                maybe_push_file(
-                    &mut files,
-                    entry.path(),
-                    &include_matcher,
-                    config,
-                    include_noisy,
-                );
+                if !file_is_included(entry.path(), &include_matcher, config, include_noisy) {
+                    continue;
+                }
+                let candidate = entry.path().to_path_buf();
+                if !seen.insert(candidate.clone()) {
+                    continue;
+                }
+                total_seen += 1;
+                if files.len() < max_scan_files {
+                    files.push(candidate);
+                } else {
+                    truncated = true;
+                    break;
+                }
             }
+        }
+        if truncated {
+            break;
         }
     }
     files.sort();
     files.dedup();
-    Ok(files)
+    Ok(CollectedFiles {
+        files,
+        total_seen,
+        truncated,
+    })
 }
 
-fn maybe_push_file(
-    files: &mut Vec<PathBuf>,
+fn file_is_included(
     path: &Path,
     include_matcher: &Option<GlobSet>,
     config: &ContextConfig,
     include_noisy: bool,
-) {
+) -> bool {
     let normalized = normalize_path(path);
     if !include_noisy && config.excludes.is_match(&normalized) {
-        return;
+        return false;
     }
     if let Some(include_matcher) = include_matcher
         && !include_matcher.is_match(&normalized)
     {
-        return;
+        return false;
     }
-    files.push(path.to_path_buf());
+    true
 }
 
 fn build_optional_globset(globs: &[String]) -> Result<Option<GlobSet>> {
@@ -1125,10 +2118,57 @@ fn value_summary(value: &Value, max_chars: usize) -> String {
     match value {
         Value::String(value) => clamp_text(&format!("{value:?}"), max_chars),
         Value::Null | Value::Bool(_) | Value::Number(_) => value.to_string(),
-        _ => clamp_text(
-            &serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_owned()),
-            max_chars,
-        ),
+        Value::Array(values) => {
+            if is_small_json(value) {
+                clamp_text(
+                    &serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_owned()),
+                    max_chars,
+                )
+            } else {
+                format!("<array:{} items>", values.len())
+            }
+        }
+        Value::Object(map) => {
+            if is_small_json(value) {
+                clamp_text(
+                    &serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_owned()),
+                    max_chars,
+                )
+            } else {
+                let sample_keys = map.keys().take(5).cloned().collect::<Vec<_>>();
+                format!(
+                    "<object:{} keys sample={}>",
+                    map.len(),
+                    serde_json::to_string(&sample_keys).unwrap_or_else(|_| "[]".to_owned())
+                )
+            }
+        }
+    }
+}
+
+fn is_small_json(value: &Value) -> bool {
+    let mut nodes = 0usize;
+    let mut string_chars = 0usize;
+    json_fits_budget(value, &mut nodes, &mut string_chars)
+}
+
+fn json_fits_budget(value: &Value, nodes: &mut usize, string_chars: &mut usize) -> bool {
+    *nodes += 1;
+    if *nodes > JSON_SMALL_NODE_LIMIT {
+        return false;
+    }
+    match value {
+        Value::String(value) => {
+            *string_chars += value.chars().count();
+            *string_chars <= JSON_SMALL_STRING_CHAR_LIMIT
+        }
+        Value::Array(values) => values
+            .iter()
+            .all(|value| json_fits_budget(value, nodes, string_chars)),
+        Value::Object(map) => map
+            .values()
+            .all(|value| json_fits_budget(value, nodes, string_chars)),
+        Value::Null | Value::Bool(_) | Value::Number(_) => true,
     }
 }
 
@@ -1242,6 +2282,10 @@ fn emit_grep_receipt(
         json!(candidate_files_scanned),
     );
     map.insert(
+        "candidate_files_total_is_lower_bound".to_string(),
+        json!(matches!(cap_reason, Some("scan"))),
+    );
+    map.insert(
         "skipped_large_or_binary".to_string(),
         json!(skipped_large_or_binary),
     );
@@ -1264,6 +2308,23 @@ mod tests {
         assert!(is_json_identifier("alpha_beta1"));
         assert!(!is_json_identifier("1alpha"));
         assert!(!is_json_identifier("alpha-beta"));
+    }
+
+    #[test]
+    fn value_summary_keeps_large_json_structural() {
+        let large = json!({
+            "items": (0..120).map(|index| json!({"index": index})).collect::<Vec<_>>(),
+            "kind": "large",
+        });
+        let summary = value_summary(&large, 80);
+        assert!(summary.starts_with("<object:2 keys sample="));
+        assert!(!summary.contains("\"index\":119"));
+
+        let small = json!({"address": "0x7FF954", "function_count": 12});
+        assert_eq!(
+            value_summary(&small, 200),
+            "{\"address\":\"0x7FF954\",\"function_count\":12}"
+        );
     }
 
     #[test]

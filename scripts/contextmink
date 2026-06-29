@@ -54,4 +54,38 @@ if [[ "$needs_build" -eq 1 ]]; then
   fi
 fi
 
+case "${OS:-}:$(uname -s 2>/dev/null || true)" in
+  Windows_NT:* | *:MINGW* | *:MSYS* | *:CYGWIN*)
+    # JSON Pointer selectors begin with '/', which MSYS would otherwise
+    # rewrite as Windows paths when launching the native contextmink.exe.
+    conv_excl=()
+    next_selector=0
+    for arg in "$@"; do
+      if [[ "$next_selector" -eq 1 ]]; then
+        case "$arg" in
+          /*) conv_excl+=("$arg") ;;
+        esac
+        next_selector=0
+        continue
+      fi
+      case "$arg" in
+        --array | --field)
+          next_selector=1
+          ;;
+        --array=/* | --field=/*)
+          conv_excl+=("$arg")
+          ;;
+      esac
+    done
+    if [[ "${#conv_excl[@]}" -gt 0 ]]; then
+      joined="$(IFS=';'; printf '%s' "${conv_excl[*]}")"
+      if [[ -n "${MSYS2_ARG_CONV_EXCL:-}" ]]; then
+        export MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL};${joined}"
+      else
+        export MSYS2_ARG_CONV_EXCL="$joined"
+      fi
+    fi
+    ;;
+esac
+
 exec "$bin" "$@"
