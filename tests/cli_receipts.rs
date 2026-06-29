@@ -176,6 +176,26 @@ fn files_scan_cap_marks_incomplete_evidence() {
 }
 
 #[test]
+fn files_glob_matches_basename_inside_explicit_roots() {
+    let root = fixture_root("files-basename-glob");
+    fs::create_dir_all(root.join("queue")).unwrap();
+    fs::write(root.join("queue").join("work.jsonl"), "{}\n").unwrap();
+    fs::write(root.join("queue").join("notes.txt"), "skip\n").unwrap();
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json", "files", "queue", "--glob", "*.jsonl", "--limit", "5",
+        ],
+    );
+
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 1);
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0], "queue/work.jsonl");
+}
+
+#[test]
 fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     let root = fixture_root("grep-scan-cap");
     fs::write(root.join("extra_a.txt"), "alpha\n").unwrap();
@@ -359,6 +379,95 @@ fn json_select_projects_array_fields_without_jq_filters() {
     assert_eq!(json["total"], 2);
     assert_eq!(json["rows"][0]["fields"]["index"], "0");
     assert_eq!(json["rows"][0]["fields"]["path"], "\"World|A.blp\"");
+}
+
+#[test]
+fn json_select_projects_jsonl_rows_and_limit_alias() {
+    let root = fixture_root("json-select-jsonl");
+    fs::write(
+        root.join("queue.jsonl"),
+        "{\"addr\":\"0x408690\",\"flags\":[\"custom_register_args\"]}\n{\"addr\":\"0x409880\",\"flags\":[\"fpu_or_reg_dropped\"]}\n",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "queue.jsonl",
+            "--field",
+            "addr",
+            "--field",
+            "flags",
+            "--limit",
+            "1",
+        ],
+    );
+
+    assert_envelope(&json, "json-select", "rows");
+    assert_eq!(json["input_format"], "jsonl");
+    assert_eq!(json["shown"], 1);
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["truncated"], true);
+    assert_eq!(json["rows"][0]["fields"]["addr"], "\"0x408690\"");
+    assert_eq!(
+        json["rows"][0]["fields"]["flags"],
+        "[\"custom_register_args\"]"
+    );
+}
+
+#[test]
+fn limit_aliases_match_canonical_caps() {
+    let root = fixture_root("limit-aliases");
+    fs::write(root.join("extra.txt"), "alpha\n").unwrap();
+
+    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 1);
+    assert_eq!(files["truncated"], true);
+
+    let json_find = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-find",
+            "sidecar.json",
+            "--key-contains",
+            "mode",
+            "--limit",
+            "1",
+        ],
+    );
+    assert_envelope(&json_find, "json-find", "matches");
+    assert_eq!(json_find["shown"], 1);
+    assert_eq!(json_find["total"], 2);
+    assert_eq!(json_find["truncated"], true);
+
+    let db_path = root.join("limit.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE rows(id INTEGER PRIMARY KEY, label TEXT);
+         INSERT INTO rows(label) VALUES ('a'), ('b');",
+    )
+    .unwrap();
+    drop(conn);
+    let sqlite = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "limit.sqlite",
+            "--sql",
+            "SELECT * FROM rows ORDER BY id",
+            "--limit",
+            "1",
+        ],
+    );
+    assert_envelope(&sqlite, "sqlite", "rows");
+    assert_eq!(sqlite["shown"], 1);
+    assert_eq!(sqlite["total"], 2);
+    assert_eq!(sqlite["truncated"], true);
 }
 
 #[test]

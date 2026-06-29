@@ -55,7 +55,7 @@ enum Command {
         globs: Vec<String>,
         #[arg(long)]
         include_noisy: bool,
-        #[arg(long, default_value_t = 80)]
+        #[arg(long, alias = "limit", default_value_t = 80)]
         max: usize,
         #[arg(long, default_value_t = 220)]
         max_line_chars: usize,
@@ -156,7 +156,7 @@ enum Command {
         path_regex: Option<String>,
         #[arg(long)]
         value_contains: Vec<String>,
-        #[arg(long, default_value_t = 40)]
+        #[arg(long, alias = "limit", default_value_t = 40)]
         max: usize,
         #[arg(long, default_value_t = 260)]
         max_value_chars: usize,
@@ -169,7 +169,7 @@ enum Command {
         array: Option<String>,
         #[arg(long = "field", value_name = "KEY_OR_POINTER")]
         fields: Vec<String>,
-        #[arg(long, default_value_t = 40)]
+        #[arg(long, alias = "limit", default_value_t = 40)]
         max: usize,
         #[arg(long, default_value_t = 260)]
         max_value_chars: usize,
@@ -181,7 +181,7 @@ enum Command {
         sql: Option<String>,
         #[arg(long = "sql-file", value_name = "FILE")]
         sql_file: Option<PathBuf>,
-        #[arg(long, default_value_t = 40)]
+        #[arg(long = "max-rows", alias = "limit", default_value_t = 40)]
         max_rows: usize,
         #[arg(long, default_value_t = 5000)]
         max_scan_rows: usize,
@@ -1455,7 +1455,7 @@ fn command_json_find(
         .context("invalid path regex")?;
     let document =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
-    let document: Value = serde_json::from_str(&document).context("failed to parse JSON")?;
+    let (document, input_format) = parse_json_or_jsonl(&document)?;
     let mut rows = Vec::new();
     let mut total_matches = 0usize;
     walk_json("$", None, &document, &mut |path, key, value| {
@@ -1498,6 +1498,7 @@ fn command_json_find(
             cap_reason,
         );
         map.insert("path".to_string(), json!(display_path(file)));
+        map.insert("input_format".to_string(), json!(input_format));
         map.insert(
             "matches".to_string(),
             json!(
@@ -1537,6 +1538,37 @@ fn command_json_find(
     }
 }
 
+fn parse_json_or_jsonl(text: &str) -> Result<(Value, &'static str)> {
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => Ok((value, "json")),
+        Err(json_error) => {
+            let whole_document_error = json_error.to_string();
+            let mut rows = Vec::new();
+            let mut saw_line = false;
+            for (index, line) in text.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                saw_line = true;
+                let value: Value = serde_json::from_str(trimmed).with_context(|| {
+                    format!(
+                        "failed to parse JSON (whole document: {whole_document_error}); \
+                             failed to parse JSONL line {}",
+                        index + 1
+                    )
+                })?;
+                rows.push(value);
+            }
+            if saw_line {
+                Ok((Value::Array(rows), "jsonl"))
+            } else {
+                Err(json_error).context("failed to parse JSON")
+            }
+        }
+    }
+}
+
 fn command_json_select(
     cli: &Cli,
     config: &ContextConfig,
@@ -1551,15 +1583,25 @@ fn command_json_select(
     }
     let document =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
-    let document: Value = serde_json::from_str(&document).context("failed to parse JSON")?;
-    let rows: &[Value] = if let Some(pointer) = array {
+    let (document, input_format) = parse_json_or_jsonl(&document)?;
+    let rows: Vec<&Value> = if let Some(pointer) = array {
         let selected = json_pointer_lookup(&document, pointer)?
             .ok_or_else(|| anyhow!("json-select --array pointer did not match: {pointer}"))?;
-        selected.as_array().ok_or_else(|| {
-            anyhow!("json-select --array pointer must resolve to an array: {pointer}")
-        })?
+        selected
+            .as_array()
+            .ok_or_else(|| {
+                anyhow!("json-select --array pointer must resolve to an array: {pointer}")
+            })?
+            .iter()
+            .collect()
+    } else if input_format == "jsonl" {
+        document
+            .as_array()
+            .expect("JSONL parser returns an array")
+            .iter()
+            .collect()
     } else {
-        std::slice::from_ref(&document)
+        vec![&document]
     };
     let shown = min(rows.len(), max);
     let truncated = shown < rows.len();
@@ -1576,6 +1618,7 @@ fn command_json_select(
         );
         map.insert("path".to_string(), json!(display_path(file)));
         map.insert("array".to_string(), json!(array));
+        map.insert("input_format".to_string(), json!(input_format));
         map.insert("fields".to_string(), json!(fields));
         map.insert(
             "rows".to_string(),
@@ -1590,7 +1633,11 @@ fn command_json_select(
         emit_json(Value::Object(map))
     } else {
         let mut stdout = io::stdout();
-        let source = array.unwrap_or("$");
+        let source = array.unwrap_or(if input_format == "jsonl" {
+            "jsonl"
+        } else {
+            "$"
+        });
         if fields.is_empty() {
             writeln!(stdout, "[contextmink] json-select source={source}")?;
         } else {
@@ -2362,10 +2409,14 @@ fn file_is_included(
     if !include_noisy && config.excludes.is_match(&normalized) {
         return false;
     }
-    if let Some(include_matcher) = include_matcher
-        && !include_matcher.is_match(&normalized)
-    {
-        return false;
+    if let Some(include_matcher) = include_matcher {
+        let basename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if !include_matcher.is_match(&normalized) && !include_matcher.is_match(basename) {
+            return false;
+        }
     }
     true
 }

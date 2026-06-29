@@ -10,7 +10,9 @@ diagnostics, and synchronization should stay in project-native tools.
 
 ## Commands
 
-- `files`: list candidate files with hard caps and configured excludes.
+- `files`: list candidate files with hard caps and configured excludes. Include
+  globs match either the displayed path or the basename, so `--glob '*.jsonl'`
+  works inside an explicit queue directory.
 - `grep`: count matches first, then print a bounded file/sample summary. Use
   `--pattern-file <file>` when regex punctuation would be fragile through a
   host shell bridge.
@@ -22,9 +24,10 @@ diagnostics, and synchronization should stay in project-native tools.
 - `json-find`: query JSON by key, path, or summarized value without opening the
   whole document.
 - `json-select`: project a JSON document or array to bounded row summaries using
-  JSON Pointer and field selectors. The launcher preserves slash-leading JSON
-  Pointer selector arguments on Git Bash/Windows so they are not rewritten as
-  host paths before reaching the native binary.
+  JSON Pointer and field selectors. JSONL files are treated as row streams when
+  the file is not one complete JSON document. The launcher preserves
+  slash-leading JSON Pointer selector arguments on Git Bash/Windows so they are
+  not rewritten as host paths before reaching the native binary.
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
   caps and receipt metadata.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
@@ -58,6 +61,7 @@ scripts/contextmink grep-terms --term "TODO" --term "panic" --mode any src
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
+scripts/contextmink json-select queue.jsonl --field addr --field flags --limit 10
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query

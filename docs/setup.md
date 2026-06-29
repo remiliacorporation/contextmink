@@ -118,7 +118,7 @@ different integration mechanism.
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.
 - Prefer `json-find` over opening whole JSON reports, and `json-select` for
-  bounded row/field projection from JSON arrays.
+  bounded row/field projection from JSON arrays or JSONL row files.
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
   `json-select`; it preserves slash-leading JSON Pointer selectors while still
   leaving normal file path handling to the shell/runtime boundary.
