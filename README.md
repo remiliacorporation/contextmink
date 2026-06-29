@@ -17,8 +17,9 @@ diagnostics, and synchronization should stay in project-native tools.
   `--pattern-file <file>` when regex punctuation would be fragile through a
   host shell bridge.
 - `grep-terms`: match lines containing all `--term` values by default, or any
-  term with `--mode any`. Use `--term-file <file>` for phrase lists when shell
-  quoting or regex punctuation would make inline arguments fragile.
+  term with `--mode any` / `--any` / `--or`. Use `--term-file <file>` for
+  phrase lists when shell quoting or regex punctuation would make inline
+  arguments fragile.
 - `slice`: print bounded line windows, or character windows for very long
   single-line files and pasted attachments.
 - `json-find`: query JSON by key, path, or summarized value without opening the
@@ -37,8 +38,10 @@ diagnostics, and synchronization should stay in project-native tools.
   and the command lacks a better native filter or projection.
 
 Use `--json` when another script or tool should consume the result directly.
-Use `--fail-if-truncated` when a capped result should stop automation after the
-receipt is emitted.
+Use `--fail-if-truncated` (aliases: `--fail-on-truncate`,
+`--strict-complete`) when a capped result should stop automation after the
+receipt is emitted. Use `--require-complete-scan` when display caps may be fine
+but scan-capped lower-bound totals should fail.
 
 ## Quick Start
 
@@ -59,7 +62,7 @@ Release builds include bundled SQLite support for agent portability.
 scripts/contextmink files . --max 20
 scripts/contextmink files . --max 20 --max-scan-files 5000
 scripts/contextmink grep --pattern-file pattern.txt src tests --max-files 8
-scripts/contextmink grep-terms --term "TODO" --term "panic" --mode any src
+scripts/contextmink grep-terms --term "TODO" --term "panic" --or src
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
@@ -75,8 +78,8 @@ scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compac
 Every human-readable command ends with `CONTEXTMINK_RECEIPT ` followed by JSON.
 If a receipt has `"truncated": true` or `"complete": false`, the output is
 incomplete evidence. Narrow the path, glob, pattern, or slice and run again.
-With `--fail-if-truncated`, contextmink still emits the receipt and then exits
-nonzero when `truncated` is true.
+With strict completion flags, contextmink still emits the receipt and then exits
+nonzero when the requested completeness condition fails.
 
 Stable receipt fields:
 
@@ -91,12 +94,17 @@ Stable receipt fields:
 | `truncated` | whether output was capped |
 | `complete` | `!truncated` |
 | `cap_reason` | why output stopped, or `null` |
+| `evidence_status` | `"complete"` or `"incomplete"` for quick agent decisions |
+| `evidence_note` | compact human-readable completeness note |
+| `next_action` | generic narrowing hint when output was capped |
 
 For `grep` and `grep-terms`, `shown` and `total` are file counts. Match,
 sample, scan, and skip counts are reported in dedicated fields.
 When `cap_reason` is `"scan"` or `candidate_files_total_is_lower_bound` is
 true, candidate totals and no-match results only describe the scanned subset.
 Narrow the path/glob/query before treating the result as complete evidence.
+Grep receipts also include `no_match_scope` (`"complete_scope"` or
+`"scanned_subset"`) when no files match.
 
 For `capture`, `shown` and `total` are stdout plus stderr line counts. The
 receipt records the child command's `exit_code` and `success`; `contextmink`

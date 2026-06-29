@@ -38,8 +38,15 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
     /// Exit nonzero after emitting a receipt if the command output was capped.
-    #[arg(long, alias = "fail-on-truncated", global = true)]
+    #[arg(
+        long,
+        aliases = ["fail-on-truncated", "fail-on-truncate", "strict-complete"],
+        global = true
+    )]
     fail_if_truncated: bool,
+    /// Exit nonzero after emitting a receipt if scan-capped totals are lower bounds.
+    #[arg(long, global = true)]
+    require_complete_scan: bool,
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -105,6 +112,10 @@ enum Command {
         term_files: Vec<PathBuf>,
         #[arg(long = "mode", value_enum, default_value_t = TermMode::All)]
         mode: TermMode,
+        #[arg(long, alias = "or")]
+        any: bool,
+        #[arg(long, alias = "and")]
+        all: bool,
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
         #[arg(long = "path", value_name = "PATH")]
@@ -422,6 +433,8 @@ fn main() -> Result<()> {
             terms,
             term_files,
             mode,
+            any,
+            all,
             paths,
             path,
             include_noisy,
@@ -434,11 +447,12 @@ fn main() -> Result<()> {
             max_file_bytes,
         } => {
             let terms = collect_terms(terms, term_files)?;
+            let mode = resolve_term_mode(*mode, *any, *all)?;
             command_grep_with_matcher(
                 &cli,
                 &config,
                 "grep-terms",
-                TextMatcher::Terms { terms, mode: *mode },
+                TextMatcher::Terms { terms, mode },
                 &merged_paths(paths, path),
                 *include_noisy,
                 *max_count_files,
@@ -587,6 +601,17 @@ fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>
         ));
     }
     Ok(collected)
+}
+
+fn resolve_term_mode(mode: TermMode, any: bool, all: bool) -> Result<TermMode> {
+    match (any, all) {
+        (true, true) => Err(anyhow!(
+            "grep-terms accepts only one of --any/--or or --all/--and"
+        )),
+        (true, false) => Ok(TermMode::Any),
+        (false, true) => Ok(TermMode::All),
+        (false, false) => Ok(mode),
+    }
 }
 
 fn command_capture(
@@ -1169,6 +1194,10 @@ fn command_grep_with_matcher(
         map.insert(
             "skipped_large_or_binary".to_string(),
             json!(skipped_large_or_binary),
+        );
+        map.insert(
+            "no_match_scope".to_string(),
+            json!(no_match_scope(matches.is_empty(), scan_truncated)),
         );
         map.insert("files".to_string(), json!(files_json));
         emit_json_checked(cli, Value::Object(map))
@@ -1789,6 +1818,10 @@ fn command_sqlite(
         map.insert("db".to_string(), json!(display_path(db)));
         map.insert("columns".to_string(), json!(columns));
         map.insert("rows_scanned".to_string(), json!(total_seen));
+        map.insert(
+            "rows_total_is_lower_bound".to_string(),
+            json!(scan_truncated),
+        );
         map.insert("rows".to_string(), json!(json_rows));
         emit_json_checked(cli, Value::Object(map))
     } else {
@@ -1832,6 +1865,10 @@ fn command_sqlite(
         );
         map.insert("columns".to_string(), json!(columns));
         map.insert("rows_scanned".to_string(), json!(total_seen));
+        map.insert(
+            "rows_total_is_lower_bound".to_string(),
+            json!(scan_truncated),
+        );
         write_receipt_checked(cli, map)
     }
 }
@@ -2604,8 +2641,9 @@ fn emit_json(value: Value) -> Result<()> {
 
 fn emit_json_checked(cli: &Cli, value: Value) -> Result<()> {
     let truncated = receipt_truncated_from_value(&value);
+    let scan_incomplete = receipt_scan_incomplete_from_value(&value);
     emit_json(value)?;
-    fail_if_truncated(cli, truncated)
+    fail_after_receipt(cli, truncated, scan_incomplete)
 }
 
 fn write_receipt(map: serde_json::Map<String, Value>) -> Result<()> {
@@ -2616,8 +2654,9 @@ fn write_receipt(map: serde_json::Map<String, Value>) -> Result<()> {
 
 fn write_receipt_checked(cli: &Cli, map: serde_json::Map<String, Value>) -> Result<()> {
     let truncated = receipt_truncated_from_map(&map);
+    let scan_incomplete = receipt_scan_incomplete_from_map(&map);
     write_receipt(map)?;
-    fail_if_truncated(cli, truncated)
+    fail_after_receipt(cli, truncated, scan_incomplete)
 }
 
 fn receipt_truncated_from_value(value: &Value) -> bool {
@@ -2633,14 +2672,46 @@ fn receipt_truncated_from_map(map: &serde_json::Map<String, Value>) -> bool {
         .unwrap_or(false)
 }
 
-fn fail_if_truncated(cli: &Cli, truncated: bool) -> Result<()> {
-    if cli.fail_if_truncated && truncated {
-        Err(anyhow!(
-            "contextmink output was truncated (--fail-if-truncated)"
-        ))
-    } else {
-        Ok(())
+fn receipt_scan_incomplete_from_value(value: &Value) -> bool {
+    cap_reason_is_scan(value.get("cap_reason"))
+        || value
+            .get("candidate_files_total_is_lower_bound")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || value
+            .get("rows_total_is_lower_bound")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn receipt_scan_incomplete_from_map(map: &serde_json::Map<String, Value>) -> bool {
+    cap_reason_is_scan(map.get("cap_reason"))
+        || map
+            .get("candidate_files_total_is_lower_bound")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || map
+            .get("rows_total_is_lower_bound")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn cap_reason_is_scan(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_str) == Some("scan")
+}
+
+fn fail_after_receipt(cli: &Cli, truncated: bool, scan_incomplete: bool) -> Result<()> {
+    if cli.require_complete_scan && scan_incomplete {
+        return Err(anyhow!(
+            "contextmink scan was incomplete (--require-complete-scan)"
+        ));
     }
+    if cli.fail_if_truncated && truncated {
+        return Err(anyhow!(
+            "contextmink output was truncated (strict completion requested)"
+        ));
+    }
+    Ok(())
 }
 
 /// Build the common receipt envelope. `shown`/`total` always carry the unit
@@ -2665,7 +2736,58 @@ fn base_receipt(
     map.insert("truncated".to_string(), json!(truncated));
     map.insert("complete".to_string(), json!(!truncated));
     map.insert("cap_reason".to_string(), json!(cap_reason));
+    map.insert(
+        "evidence_status".to_string(),
+        json!(if truncated { "incomplete" } else { "complete" }),
+    );
+    map.insert(
+        "evidence_note".to_string(),
+        json!(evidence_note(unit, shown, total, truncated, cap_reason)),
+    );
+    map.insert(
+        "next_action".to_string(),
+        json!(next_action_for_cap(cap_reason)),
+    );
     map
+}
+
+fn evidence_note(
+    unit: &str,
+    shown: usize,
+    total: usize,
+    truncated: bool,
+    cap_reason: Option<&str>,
+) -> String {
+    if !truncated {
+        return format!("complete {unit} scope; shown={shown} total={total}");
+    }
+    match cap_reason {
+        Some("scan") => {
+            format!("incomplete scan; shown={shown} {unit}, total is a lower bound")
+        }
+        Some(reason) => {
+            format!("incomplete display; cap_reason={reason}; shown={shown} total={total} {unit}")
+        }
+        None => format!("incomplete; shown={shown} total={total} {unit}"),
+    }
+}
+
+fn next_action_for_cap(cap_reason: Option<&str>) -> Option<&'static str> {
+    match cap_reason {
+        Some("scan") => Some(
+            "narrow path/glob/query or raise the scan cap before treating no-match/totals as complete",
+        ),
+        Some("files") | Some("samples") => {
+            Some("narrow path/pattern or inspect selected files with slice")
+        }
+        Some("rows") | Some("max") | Some("tables") | Some("columns") | Some("indexes") => {
+            Some("narrow the selector/query or raise the display cap after confirming scope")
+        }
+        Some("lines") | Some("chars") | Some("bytes") | Some("max_lines") | Some("max_chars") => {
+            Some("request a narrower slice/window or use a native compact projection")
+        }
+        _ => None,
+    }
 }
 
 /// Grep receipts keep `shown`/`total` in file units in every path and report
@@ -2713,7 +2835,24 @@ fn emit_grep_receipt(
         "skipped_large_or_binary".to_string(),
         json!(skipped_large_or_binary),
     );
+    map.insert(
+        "no_match_scope".to_string(),
+        json!(no_match_scope(
+            matched_files_total == 0,
+            matches!(cap_reason, Some("scan"))
+        )),
+    );
     write_receipt_checked(cli, map)
+}
+
+fn no_match_scope(no_matches: bool, scan_truncated: bool) -> Option<&'static str> {
+    if !no_matches {
+        None
+    } else if scan_truncated {
+        Some("scanned_subset")
+    } else {
+        Some("complete_scope")
+    }
 }
 
 #[cfg(test)]

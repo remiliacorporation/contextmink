@@ -62,6 +62,9 @@ fn assert_envelope(value: &Value, command: &str, unit: &str) {
     assert!(value["truncated"].is_boolean());
     assert!(value["complete"].is_boolean());
     assert!(value.get("cap_reason").is_some());
+    assert!(value["evidence_status"].is_string());
+    assert!(value["evidence_note"].is_string());
+    assert!(value.get("next_action").is_some());
 }
 
 #[test]
@@ -171,7 +174,53 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stdout.contains("CONTEXTMINK_RECEIPT "));
     assert!(stdout.contains("\"truncated\":true"));
-    assert!(stderr.contains("--fail-if-truncated"));
+    assert!(stderr.contains("strict completion requested"));
+}
+
+#[test]
+fn strict_alias_and_scan_guard_fail_after_receipt() {
+    let root = fixture_root("strict-aliases");
+    fs::write(root.join("extra_a.txt"), "a\n").unwrap();
+    fs::write(root.join("extra_b.txt"), "b\n").unwrap();
+
+    let strict = run_contextmink_raw(&root, &["--strict-complete", "files", ".", "--max", "1"]);
+    assert!(!strict.status.success());
+    let strict_stdout = String::from_utf8(strict.stdout).unwrap();
+    assert!(strict_stdout.contains("CONTEXTMINK_RECEIPT "));
+
+    let display_capped = run_contextmink_raw(
+        &root,
+        &[
+            "--require-complete-scan",
+            "files",
+            ".",
+            "--max",
+            "1",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert!(display_capped.status.success());
+    let display_stdout = String::from_utf8(display_capped.stdout).unwrap();
+    assert!(display_stdout.contains("\"cap_reason\":\"max\""));
+
+    let scan_capped = run_contextmink_raw(
+        &root,
+        &[
+            "--require-complete-scan",
+            "files",
+            ".",
+            "--max",
+            "10",
+            "--max-scan-files",
+            "1",
+        ],
+    );
+    assert!(!scan_capped.status.success());
+    let scan_stdout = String::from_utf8(scan_capped.stdout).unwrap();
+    let scan_stderr = String::from_utf8(scan_capped.stderr).unwrap();
+    assert!(scan_stdout.contains("\"cap_reason\":\"scan\""));
+    assert!(scan_stderr.contains("--require-complete-scan"));
 }
 
 #[test]
@@ -278,6 +327,9 @@ fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     assert_eq!(grep["candidate_files_scanned"], 1);
     assert_eq!(grep["candidate_files_total_is_lower_bound"], true);
     assert!(grep["candidate_files_total"].as_u64().unwrap() >= 2);
+    assert_eq!(grep["no_match_scope"], "scanned_subset");
+    assert_eq!(grep["evidence_status"], "incomplete");
+    assert!(grep["next_action"].as_str().unwrap().contains("scan cap"));
 }
 
 #[test]
@@ -351,6 +403,23 @@ fn grep_terms_supports_any_mode_and_term_files() {
     assert_envelope(&any, "grep-terms", "files");
     assert_eq!(any["pattern"], "any_terms(alpha,beta)");
     assert_eq!(any["total_matches"], 3);
+
+    let or_alias = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--or",
+            "--term",
+            "alpha",
+            "--term",
+            "beta",
+            "sample.txt",
+        ],
+    );
+    assert_envelope(&or_alias, "grep-terms", "files");
+    assert_eq!(or_alias["pattern"], "any_terms(alpha,beta)");
+    assert_eq!(or_alias["total_matches"], 3);
 
     let term_file = parse_json_output(
         &root,
@@ -526,6 +595,46 @@ fn limit_aliases_match_canonical_caps() {
     assert_eq!(sqlite["shown"], 1);
     assert_eq!(sqlite["total"], 2);
     assert_eq!(sqlite["truncated"], true);
+    assert_eq!(sqlite["rows_total_is_lower_bound"], false);
+
+    let sqlite_scan = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "limit.sqlite",
+            "--sql",
+            "SELECT * FROM rows ORDER BY id",
+            "--max-rows",
+            "1",
+            "--max-scan-rows",
+            "1",
+        ],
+    );
+    assert_envelope(&sqlite_scan, "sqlite", "rows");
+    assert_eq!(sqlite_scan["rows_total_is_lower_bound"], true);
+    assert_eq!(sqlite_scan["cap_reason"], "scan");
+
+    let guarded_scan = run_contextmink_raw(
+        &root,
+        &[
+            "--require-complete-scan",
+            "sqlite",
+            "limit.sqlite",
+            "--sql",
+            "SELECT * FROM rows ORDER BY id",
+            "--max-rows",
+            "1",
+            "--max-scan-rows",
+            "1",
+        ],
+    );
+    assert!(!guarded_scan.status.success());
+    assert!(
+        String::from_utf8(guarded_scan.stderr)
+            .unwrap()
+            .contains("--require-complete-scan")
+    );
 }
 
 #[test]
