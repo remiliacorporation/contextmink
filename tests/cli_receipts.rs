@@ -40,6 +40,14 @@ fn run_contextmink(root: &PathBuf, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
+fn run_contextmink_raw(root: &PathBuf, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_contextmink"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
     serde_json::from_str(&run_contextmink(root, args)).unwrap()
 }
@@ -114,6 +122,56 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
     assert_eq!(json["truncated"], true);
     assert_eq!(json["cap_reason"], "lines");
     assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
+}
+
+#[test]
+fn run_alias_uses_capture_receipt_shape() {
+    let root = fixture_root("run-alias");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "run",
+            "--max-lines",
+            "1",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["success"], true);
+    assert_eq!(json["exit_code"], 0);
+}
+
+#[test]
+fn fail_if_truncated_exits_nonzero_after_receipt() {
+    let root = fixture_root("fail-if-truncated");
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--fail-if-truncated",
+            "files",
+            ".",
+            "--max",
+            "1",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stdout.contains("CONTEXTMINK_RECEIPT "));
+    assert!(stdout.contains("\"truncated\":true"));
+    assert!(stderr.contains("--fail-if-truncated"));
 }
 
 #[test]

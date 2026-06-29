@@ -37,6 +37,9 @@ const BUILTIN_EXCLUDES: &[&str] = &[
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
+    /// Exit nonzero after emitting a receipt if the command output was capped.
+    #[arg(long, alias = "fail-on-truncated", global = true)]
+    fail_if_truncated: bool,
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -210,6 +213,7 @@ enum Command {
         max_line_chars: usize,
     },
     /// Execute argv directly and print bounded stdout/stderr summaries.
+    #[command(visible_alias = "run")]
     Capture {
         #[arg(long, default_value_t = 80)]
         max_lines: usize,
@@ -709,7 +713,7 @@ fn command_capture(
             "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming the output is useful."
         )?;
     }
-    write_receipt(map)
+    write_receipt_checked(cli, map)
 }
 
 fn spawn_captured_child(
@@ -964,7 +968,7 @@ fn command_files(
                     .collect::<Vec<_>>()
             ),
         );
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         for path in files.iter().take(shown) {
@@ -994,7 +998,7 @@ fn command_files(
             "candidate_files_total_is_lower_bound".to_string(),
             json!(collected.truncated),
         );
-        write_receipt(map)
+        write_receipt_checked(cli, map)
     }
 }
 
@@ -1167,7 +1171,7 @@ fn command_grep_with_matcher(
             json!(skipped_large_or_binary),
         );
         map.insert("files".to_string(), json!(files_json));
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         writeln!(stdout, "[contextmink] grep pattern={}", matcher.label())?;
@@ -1193,6 +1197,7 @@ fn command_grep_with_matcher(
             }
             let cap_reason = if scan_truncated { Some("scan") } else { None };
             return emit_grep_receipt(
+                cli,
                 command_name,
                 config,
                 0,
@@ -1256,6 +1261,7 @@ fn command_grep_with_matcher(
             )?;
         }
         emit_grep_receipt(
+            cli,
             command_name,
             config,
             files_shown,
@@ -1318,22 +1324,25 @@ fn command_slice(
             map.insert("chars_shown".to_string(), json!(shown));
             map.insert("total_chars".to_string(), json!(total_chars));
             map.insert("text".to_string(), json!(shown_text));
-            return emit_json(Value::Object(map));
+            return emit_json_checked(cli, Value::Object(map));
         }
         let mut stdout = io::stdout();
         write!(stdout, "{}", shown_text)?;
         if !shown_text.ends_with('\n') {
             writeln!(stdout)?;
         }
-        return write_receipt(base_receipt(
-            "slice",
-            config.profile.as_deref(),
-            "chars",
-            shown_text.chars().count(),
-            total_chars,
-            truncated,
-            cap_reason,
-        ));
+        return write_receipt_checked(
+            cli,
+            base_receipt(
+                "slice",
+                config.profile.as_deref(),
+                "chars",
+                shown_text.chars().count(),
+                total_chars,
+                truncated,
+                cap_reason,
+            ),
+        );
     }
     let (start, end) = if let Some(range) = range {
         if start != 1 || end.is_some() {
@@ -1398,7 +1407,7 @@ fn command_slice(
                     .collect::<Vec<_>>()
             ),
         );
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         for (line, text) in rendered {
@@ -1410,15 +1419,18 @@ fn command_slice(
                 "[contextmink] capped slice at {max_lines} lines; request a narrower range."
             )?;
         }
-        write_receipt(base_receipt(
-            "slice",
-            config.profile.as_deref(),
-            "lines",
-            shown,
-            total_lines,
-            truncated,
-            cap_reason,
-        ))
+        write_receipt_checked(
+            cli,
+            base_receipt(
+                "slice",
+                config.profile.as_deref(),
+                "lines",
+                shown,
+                total_lines,
+                truncated,
+                cap_reason,
+            ),
+        )
     }
 }
 
@@ -1511,7 +1523,7 @@ fn command_json_find(
                     .collect::<Vec<_>>()
             ),
         );
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         if rows.is_empty() {
@@ -1526,15 +1538,18 @@ fn command_json_find(
                 "[contextmink] capped json matches at {max}; narrow the selector."
             )?;
         }
-        write_receipt(base_receipt(
-            "json-find",
-            config.profile.as_deref(),
-            "matches",
-            shown,
-            total_matches,
-            truncated,
-            cap_reason,
-        ))
+        write_receipt_checked(
+            cli,
+            base_receipt(
+                "json-find",
+                config.profile.as_deref(),
+                "matches",
+                shown,
+                total_matches,
+                truncated,
+                cap_reason,
+            ),
+        )
     }
 }
 
@@ -1630,7 +1645,7 @@ fn command_json_select(
                     .collect::<Result<Vec<_>>>()?
             ),
         );
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         let source = array.unwrap_or(if input_format == "jsonl" {
@@ -1670,15 +1685,18 @@ fn command_json_select(
                 "[contextmink] capped json rows at {max}; narrow the selector."
             )?;
         }
-        write_receipt(base_receipt(
-            "json-select",
-            config.profile.as_deref(),
-            "rows",
-            shown,
-            rows.len(),
-            truncated,
-            cap_reason,
-        ))
+        write_receipt_checked(
+            cli,
+            base_receipt(
+                "json-select",
+                config.profile.as_deref(),
+                "rows",
+                shown,
+                rows.len(),
+                truncated,
+                cap_reason,
+            ),
+        )
     }
 }
 
@@ -1772,7 +1790,7 @@ fn command_sqlite(
         map.insert("columns".to_string(), json!(columns));
         map.insert("rows_scanned".to_string(), json!(total_seen));
         map.insert("rows".to_string(), json!(json_rows));
-        emit_json(Value::Object(map))
+        emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
         writeln!(
@@ -1814,7 +1832,7 @@ fn command_sqlite(
         );
         map.insert("columns".to_string(), json!(columns));
         map.insert("rows_scanned".to_string(), json!(total_seen));
-        write_receipt(map)
+        write_receipt_checked(cli, map)
     }
 }
 
@@ -1950,7 +1968,7 @@ fn command_sqlite_schema(
                     .collect::<Vec<_>>(),
             ),
         );
-        return emit_json(Value::Object(map));
+        return emit_json_checked(cli, Value::Object(map));
     }
     let mut stdout = io::stdout();
     writeln!(
@@ -2006,7 +2024,7 @@ fn command_sqlite_schema(
     map.insert("columns_total".to_string(), json!(columns_total));
     map.insert("indexes_shown".to_string(), json!(indexes_shown));
     map.insert("indexes_total".to_string(), json!(indexes_total));
-    write_receipt(map)
+    write_receipt_checked(cli, map)
 }
 
 fn sqlite_schema_columns(
@@ -2584,10 +2602,45 @@ fn emit_json(value: Value) -> Result<()> {
     Ok(())
 }
 
+fn emit_json_checked(cli: &Cli, value: Value) -> Result<()> {
+    let truncated = receipt_truncated_from_value(&value);
+    emit_json(value)?;
+    fail_if_truncated(cli, truncated)
+}
+
 fn write_receipt(map: serde_json::Map<String, Value>) -> Result<()> {
     let mut stdout = io::stdout();
     writeln!(stdout, "{RECEIPT_PREFIX}{}", Value::Object(map))?;
     Ok(())
+}
+
+fn write_receipt_checked(cli: &Cli, map: serde_json::Map<String, Value>) -> Result<()> {
+    let truncated = receipt_truncated_from_map(&map);
+    write_receipt(map)?;
+    fail_if_truncated(cli, truncated)
+}
+
+fn receipt_truncated_from_value(value: &Value) -> bool {
+    value
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn receipt_truncated_from_map(map: &serde_json::Map<String, Value>) -> bool {
+    map.get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn fail_if_truncated(cli: &Cli, truncated: bool) -> Result<()> {
+    if cli.fail_if_truncated && truncated {
+        Err(anyhow!(
+            "contextmink output was truncated (--fail-if-truncated)"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Build the common receipt envelope. `shown`/`total` always carry the unit
@@ -2620,6 +2673,7 @@ fn base_receipt(
 /// of `total`) is what tells a consumer why output stopped.
 #[allow(clippy::too_many_arguments)]
 fn emit_grep_receipt(
+    cli: &Cli,
     command_name: &str,
     config: &ContextConfig,
     files_shown: usize,
@@ -2659,7 +2713,7 @@ fn emit_grep_receipt(
         "skipped_large_or_binary".to_string(),
         json!(skipped_large_or_binary),
     );
-    write_receipt(map)
+    write_receipt_checked(cli, map)
 }
 
 #[cfg(test)]

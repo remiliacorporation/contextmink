@@ -32,11 +32,13 @@ diagnostics, and synchronization should stay in project-native tools.
   caps and receipt metadata.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
   from SQLite metadata without hand-written PRAGMA queries.
-- `capture`: execute argv directly and print capped stdout/stderr summaries
+- `capture` (`run` alias): execute argv directly and print capped stdout/stderr summaries
   with exit status. Use it only when a command's output cardinality is unknown
   and the command lacks a better native filter or projection.
 
 Use `--json` when another script or tool should consume the result directly.
+Use `--fail-if-truncated` when a capped result should stop automation after the
+receipt is emitted.
 
 ## Quick Start
 
@@ -65,6 +67,7 @@ scripts/contextmink json-select queue.jsonl --field addr --field flags --limit 1
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
+scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compact-target query
 ```
 
 ## Receipts
@@ -72,6 +75,8 @@ scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 Every human-readable command ends with `CONTEXTMINK_RECEIPT ` followed by JSON.
 If a receipt has `"truncated": true` or `"complete": false`, the output is
 incomplete evidence. Narrow the path, glob, pattern, or slice and run again.
+With `--fail-if-truncated`, contextmink still emits the receipt and then exits
+nonzero when `truncated` is true.
 
 Stable receipt fields:
 
