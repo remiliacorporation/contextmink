@@ -3,7 +3,7 @@ name = "contextmink"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
-description = "A transcript guard for coding agents inspecting files, text, slices, JSON, SQLite, and bounded command output."
+description = "A transcript guard for bounded file, text, JSON, SQLite, and command-output inspection."
 license = "MIT"
 publish = false
 

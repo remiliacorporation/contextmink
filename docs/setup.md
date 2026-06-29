@@ -1,12 +1,11 @@
 # Setting Up contextmink In A Repository
 
-This guide is written for coding agents and maintainers adding `contextmink` to
-an existing repository.
+This guide is for adding `contextmink` to an existing repository.
 
 `contextmink` is a transcript guard. Use it before broad file, text, line-slice,
-JSON, read-only SQLite, or unknown-size command-output reconnaissance when the
-output cardinality is unknown or host-shell quoting would become the task. It is
-not a replacement for project-native tools.
+JSON, read-only SQLite, or unknown-size command-output reads when the output
+cardinality is unknown or host-shell quoting would become the task. It is not a
+replacement for project-native tools.
 
 ## Prerequisites
 
@@ -38,8 +37,7 @@ tool:
    directories, vendored dependencies, caches, exported reports, large binary
    asset trees, and tool output directories.
 
-4. Add the agent instruction snippet for the agent surface the target repository
-   uses:
+4. Add the instruction snippet for the tool surface the target repository uses:
 
    - Codex: copy `templates/AGENTS.contextmink.md` into the repository's
      `AGENTS.md` or equivalent Codex guidance file.
@@ -71,7 +69,7 @@ cargo install --path .
 contextmink files . --max 20
 ```
 
-Agents can still use a repository-local `.contextmink.toml`; the binary
+The binary can still use a repository-local `.contextmink.toml`; it
 searches upward from the current directory.
 
 ## Config Template
@@ -95,7 +93,7 @@ The binary already excludes common noisy paths such as `.git`, `target`,
 `node_modules`, and `.venv`. Include them in repo configs only if doing so makes
 the local policy clearer for future maintainers.
 
-## Agent Rule
+## Instruction Rule
 
 Do not copy prose from this setup guide by hand. Use the maintained templates:
 
@@ -103,12 +101,12 @@ Do not copy prose from this setup guide by hand. Use the maintained templates:
 - `templates/CLAUDE.contextmink.md` for Claude-facing guidance.
 
 The template files are intentionally kept equivalent by tests so behavior does
-not drift between agent surfaces.
+not drift between instruction surfaces.
 
 Do not create a separate contextmink skill or slash command by default.
-Context-output hygiene needs to be always visible before reconnaissance starts;
-an on-demand skill is easier to miss and adds another agent surface to keep in
-sync. Use the short Codex/Claude snippets above unless a host agent requires a
+The bounded-output rule should be visible before broad reads start; an on-demand
+skill is easier to miss and adds another instruction surface to keep in
+sync. Use the short Codex/Claude snippets above unless a host tool requires a
 different integration mechanism.
 
 ## Operational Notes
@@ -132,11 +130,11 @@ different integration mechanism.
   receipt. On Windows, the Bash launcher lets `capture` retry extensionless
   shell scripts through the current Bash interpreter without shell-string
   parsing.
-- Treat capped receipts as incomplete. When `cap_reason` is `scan` or
+- Treat capped receipts as `complete: false`. When `cap_reason` is `scan` or
   `candidate_files_total_is_lower_bound` is true, totals and no-match results
   only describe the scanned subset; narrow and rerun.
-- Keep repository-specific policy in `.contextmink.toml` and agent guidance,
-  not in `contextmink` source code.
+- Keep repository-specific policy in `.contextmink.toml` and repository
+  instructions, not in `contextmink` source code.
 
 ## Maintenance
 

@@ -62,9 +62,6 @@ fn assert_envelope(value: &Value, command: &str, unit: &str) {
     assert!(value["truncated"].is_boolean());
     assert!(value["complete"].is_boolean());
     assert!(value.get("cap_reason").is_some());
-    assert!(value["evidence_status"].is_string());
-    assert!(value["evidence_note"].is_string());
-    assert!(value.get("next_action").is_some());
 }
 
 #[test]
@@ -255,7 +252,7 @@ fn capture_keeps_nonzero_child_status_in_receipt() {
 }
 
 #[test]
-fn files_scan_cap_marks_incomplete_evidence() {
+fn files_scan_cap_sets_complete_false() {
     let root = fixture_root("files-scan-cap");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
     fs::write(root.join("extra_b.txt"), "b\n").unwrap();
@@ -328,8 +325,6 @@ fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     assert_eq!(grep["candidate_files_total_is_lower_bound"], true);
     assert!(grep["candidate_files_total"].as_u64().unwrap() >= 2);
     assert_eq!(grep["no_match_scope"], "scanned_subset");
-    assert_eq!(grep["evidence_status"], "incomplete");
-    assert!(grep["next_action"].as_str().unwrap().contains("scan cap"));
 }
 
 #[test]

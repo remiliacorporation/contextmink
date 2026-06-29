@@ -1,7 +1,7 @@
 # contextmink
 
-`contextmink` is a transcript guard for coding agents. It gives agents bounded
-ways to list files, search text, read line windows, inspect JSON, run bounded
+`contextmink` is a transcript guard for command-line code work. It provides
+bounded ways to list files, search text, read line windows, inspect JSON, run
 read-only SQLite queries, and capture unknown-size command output without
 dumping large outputs into the conversation.
 
@@ -54,7 +54,7 @@ target/release/contextmink files . --max 20
 `contextmink` uses Rust edition 2024 and requires a recent stable Rust
 toolchain. To add it to another repository, follow [SETUP.md](SETUP.md).
 
-Release builds include bundled SQLite support for agent portability.
+Release builds include bundled SQLite support for portability.
 
 ## Examples
 
@@ -77,7 +77,7 @@ scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compac
 
 Every human-readable command ends with `CONTEXTMINK_RECEIPT ` followed by JSON.
 If a receipt has `"truncated": true` or `"complete": false`, the output is
-incomplete evidence. Narrow the path, glob, pattern, or slice and run again.
+capped. Narrow the path, glob, pattern, or slice and run again.
 With strict completion flags, contextmink still emits the receipt and then exits
 nonzero when the requested completeness condition fails.
 
@@ -94,15 +94,12 @@ Stable receipt fields:
 | `truncated` | whether output was capped |
 | `complete` | `!truncated` |
 | `cap_reason` | why output stopped, or `null` |
-| `evidence_status` | `"complete"` or `"incomplete"` for quick agent decisions |
-| `evidence_note` | compact human-readable completeness note |
-| `next_action` | generic narrowing hint when output was capped |
 
 For `grep` and `grep-terms`, `shown` and `total` are file counts. Match,
 sample, scan, and skip counts are reported in dedicated fields.
 When `cap_reason` is `"scan"` or `candidate_files_total_is_lower_bound` is
 true, candidate totals and no-match results only describe the scanned subset.
-Narrow the path/glob/query before treating the result as complete evidence.
+Narrow the path/glob/query before treating the result as complete.
 Grep receipts also include `no_match_scope` (`"complete_scope"` or
 `"scanned_subset"`) when no files match.
 
@@ -131,7 +128,7 @@ exclude_globs = [
 ]
 ```
 
-Keep repository policy in `.contextmink.toml` and agent guidance, not in the
+Keep repository policy in `.contextmink.toml` and repository instructions, not in the
 binary.
 
 ## Scope

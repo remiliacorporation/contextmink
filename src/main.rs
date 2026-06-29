@@ -735,7 +735,7 @@ fn command_capture(
     if truncated {
         writeln!(
             out,
-            "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming the output is useful."
+            "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming command scope."
         )?;
     }
     write_receipt_checked(cli, map)
@@ -2641,9 +2641,9 @@ fn emit_json(value: Value) -> Result<()> {
 
 fn emit_json_checked(cli: &Cli, value: Value) -> Result<()> {
     let truncated = receipt_truncated_from_value(&value);
-    let scan_incomplete = receipt_scan_incomplete_from_value(&value);
+    let scan_capped = receipt_scan_capped_from_value(&value);
     emit_json(value)?;
-    fail_after_receipt(cli, truncated, scan_incomplete)
+    fail_after_receipt(cli, truncated, scan_capped)
 }
 
 fn write_receipt(map: serde_json::Map<String, Value>) -> Result<()> {
@@ -2654,9 +2654,9 @@ fn write_receipt(map: serde_json::Map<String, Value>) -> Result<()> {
 
 fn write_receipt_checked(cli: &Cli, map: serde_json::Map<String, Value>) -> Result<()> {
     let truncated = receipt_truncated_from_map(&map);
-    let scan_incomplete = receipt_scan_incomplete_from_map(&map);
+    let scan_capped = receipt_scan_capped_from_map(&map);
     write_receipt(map)?;
-    fail_after_receipt(cli, truncated, scan_incomplete)
+    fail_after_receipt(cli, truncated, scan_capped)
 }
 
 fn receipt_truncated_from_value(value: &Value) -> bool {
@@ -2672,7 +2672,7 @@ fn receipt_truncated_from_map(map: &serde_json::Map<String, Value>) -> bool {
         .unwrap_or(false)
 }
 
-fn receipt_scan_incomplete_from_value(value: &Value) -> bool {
+fn receipt_scan_capped_from_value(value: &Value) -> bool {
     cap_reason_is_scan(value.get("cap_reason"))
         || value
             .get("candidate_files_total_is_lower_bound")
@@ -2684,7 +2684,7 @@ fn receipt_scan_incomplete_from_value(value: &Value) -> bool {
             .unwrap_or(false)
 }
 
-fn receipt_scan_incomplete_from_map(map: &serde_json::Map<String, Value>) -> bool {
+fn receipt_scan_capped_from_map(map: &serde_json::Map<String, Value>) -> bool {
     cap_reason_is_scan(map.get("cap_reason"))
         || map
             .get("candidate_files_total_is_lower_bound")
@@ -2700,10 +2700,10 @@ fn cap_reason_is_scan(value: Option<&Value>) -> bool {
     value.and_then(Value::as_str) == Some("scan")
 }
 
-fn fail_after_receipt(cli: &Cli, truncated: bool, scan_incomplete: bool) -> Result<()> {
-    if cli.require_complete_scan && scan_incomplete {
+fn fail_after_receipt(cli: &Cli, truncated: bool, scan_capped: bool) -> Result<()> {
+    if cli.require_complete_scan && scan_capped {
         return Err(anyhow!(
-            "contextmink scan was incomplete (--require-complete-scan)"
+            "contextmink scan was capped (--require-complete-scan)"
         ));
     }
     if cli.fail_if_truncated && truncated {
@@ -2736,58 +2736,7 @@ fn base_receipt(
     map.insert("truncated".to_string(), json!(truncated));
     map.insert("complete".to_string(), json!(!truncated));
     map.insert("cap_reason".to_string(), json!(cap_reason));
-    map.insert(
-        "evidence_status".to_string(),
-        json!(if truncated { "incomplete" } else { "complete" }),
-    );
-    map.insert(
-        "evidence_note".to_string(),
-        json!(evidence_note(unit, shown, total, truncated, cap_reason)),
-    );
-    map.insert(
-        "next_action".to_string(),
-        json!(next_action_for_cap(cap_reason)),
-    );
     map
-}
-
-fn evidence_note(
-    unit: &str,
-    shown: usize,
-    total: usize,
-    truncated: bool,
-    cap_reason: Option<&str>,
-) -> String {
-    if !truncated {
-        return format!("complete {unit} scope; shown={shown} total={total}");
-    }
-    match cap_reason {
-        Some("scan") => {
-            format!("incomplete scan; shown={shown} {unit}, total is a lower bound")
-        }
-        Some(reason) => {
-            format!("incomplete display; cap_reason={reason}; shown={shown} total={total} {unit}")
-        }
-        None => format!("incomplete; shown={shown} total={total} {unit}"),
-    }
-}
-
-fn next_action_for_cap(cap_reason: Option<&str>) -> Option<&'static str> {
-    match cap_reason {
-        Some("scan") => Some(
-            "narrow path/glob/query or raise the scan cap before treating no-match/totals as complete",
-        ),
-        Some("files") | Some("samples") => {
-            Some("narrow path/pattern or inspect selected files with slice")
-        }
-        Some("rows") | Some("max") | Some("tables") | Some("columns") | Some("indexes") => {
-            Some("narrow the selector/query or raise the display cap after confirming scope")
-        }
-        Some("lines") | Some("chars") | Some("bytes") | Some("max_lines") | Some("max_chars") => {
-            Some("request a narrower slice/window or use a native compact projection")
-        }
-        _ => None,
-    }
 }
 
 /// Grep receipts keep `shown`/`total` in file units in every path and report

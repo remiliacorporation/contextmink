@@ -1,10 +1,10 @@
 #[test]
-fn agent_templates_are_policy_equivalent() {
-    let agents = include_str!("../templates/AGENTS.contextmink.md");
+fn instruction_templates_are_policy_equivalent() {
+    let codex = include_str!("../templates/AGENTS.contextmink.md");
     let claude = include_str!("../templates/CLAUDE.contextmink.md");
 
     assert_eq!(
-        agents, claude,
+        codex, claude,
         "Codex and Claude contextmink guidance must stay equivalent"
     );
 }
