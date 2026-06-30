@@ -64,10 +64,10 @@ enum Command {
         #[arg(long = "glob")]
         globs: Vec<String>,
         #[arg(
-            long,
-            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+            long = "ignore-exclude-globs",
+            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        include_noisy: bool,
+        ignore_exclude_globs: bool,
         #[arg(long, alias = "limit", default_value_t = 80)]
         max: usize,
         #[arg(long, default_value_t = 220)]
@@ -90,10 +90,10 @@ enum Command {
         #[arg(long)]
         literal: bool,
         #[arg(
-            long,
-            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+            long = "ignore-exclude-globs",
+            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        include_noisy: bool,
+        ignore_exclude_globs: bool,
         #[arg(long, default_value_t = 80)]
         max_count_files: usize,
         #[arg(long, default_value_t = 12)]
@@ -127,10 +127,10 @@ enum Command {
         #[arg(long = "path", value_name = "PATH")]
         path: Vec<PathBuf>,
         #[arg(
-            long,
-            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+            long = "ignore-exclude-globs",
+            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        include_noisy: bool,
+        ignore_exclude_globs: bool,
         #[arg(long, default_value_t = 80)]
         max_count_files: usize,
         #[arg(long, default_value_t = 12)]
@@ -397,7 +397,7 @@ fn main() -> Result<()> {
         Command::Files {
             path,
             globs,
-            include_noisy,
+            ignore_exclude_globs,
             max,
             max_line_chars,
             max_scan_files,
@@ -406,7 +406,7 @@ fn main() -> Result<()> {
             &config,
             path,
             globs,
-            *include_noisy,
+            *ignore_exclude_globs,
             *max,
             *max_line_chars,
             *max_scan_files,
@@ -415,7 +415,7 @@ fn main() -> Result<()> {
             args,
             pattern_file,
             literal,
-            include_noisy,
+            ignore_exclude_globs,
             max_count_files,
             max_files,
             lines_per_file,
@@ -429,7 +429,7 @@ fn main() -> Result<()> {
             args,
             pattern_file.as_deref(),
             *literal,
-            *include_noisy,
+            *ignore_exclude_globs,
             *max_count_files,
             *max_files,
             *lines_per_file,
@@ -446,7 +446,7 @@ fn main() -> Result<()> {
             all,
             paths,
             path,
-            include_noisy,
+            ignore_exclude_globs,
             max_count_files,
             max_files,
             lines_per_file,
@@ -463,7 +463,7 @@ fn main() -> Result<()> {
                 "grep-terms",
                 TextMatcher::Terms { terms, mode },
                 &merged_paths(paths, path),
-                *include_noisy,
+                *ignore_exclude_globs,
                 *max_count_files,
                 *max_files,
                 *lines_per_file,
@@ -958,7 +958,7 @@ fn command_files(
     config: &ContextConfig,
     paths: &[PathBuf],
     globs: &[String],
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
     max: usize,
     max_line_chars: usize,
     max_scan_files: usize,
@@ -966,7 +966,7 @@ fn command_files(
     if max_scan_files == 0 {
         return Err(anyhow!("files --max-scan-files must be greater than zero"));
     }
-    let collected = collect_files(paths, globs, config, include_noisy, max_scan_files)?;
+    let collected = collect_files(paths, globs, config, ignore_exclude_globs, max_scan_files)?;
     let files = collected.files;
     let shown = min(files.len(), max);
     let truncated = collected.truncated || shown < files.len();
@@ -1043,7 +1043,7 @@ fn command_grep(
     args: &[String],
     pattern_file: Option<&Path>,
     literal: bool,
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1068,7 +1068,7 @@ fn command_grep(
         "grep",
         matcher,
         &effective_paths,
-        include_noisy,
+        ignore_exclude_globs,
         max_count_files,
         max_files,
         lines_per_file,
@@ -1094,7 +1094,7 @@ fn command_grep_with_matcher(
     command_name: &str,
     matcher: TextMatcher,
     paths: &[PathBuf],
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1108,7 +1108,7 @@ fn command_grep_with_matcher(
             "{command_name} --max-scan-files must be greater than zero"
         ));
     }
-    let collected = collect_files(paths, &[], config, include_noisy, max_scan_files)?;
+    let collected = collect_files(paths, &[], config, ignore_exclude_globs, max_scan_files)?;
     let scan_truncated = collected.truncated;
     let total_candidate_files = collected.total_seen;
     let candidate_files_scanned = collected.files.len();
@@ -2400,11 +2400,11 @@ fn collect_files(
     paths: &[PathBuf],
     globs: &[String],
     config: &ContextConfig,
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
     max_scan_files: usize,
 ) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(globs)?;
-    let explicit_excluded_roots = explicit_excluded_roots(paths, config, include_noisy);
+    let explicit_excluded_roots = explicit_excluded_roots(paths, config, ignore_exclude_globs);
     let mut files = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut total_seen = 0usize;
@@ -2415,7 +2415,7 @@ fn collect_files(
                 root,
                 &include_matcher,
                 config,
-                include_noisy,
+                ignore_exclude_globs,
                 &explicit_excluded_roots,
             ) {
                 let candidate = root.to_path_buf();
@@ -2445,7 +2445,7 @@ fn collect_files(
                     entry.path(),
                     &include_matcher,
                     config,
-                    include_noisy,
+                    ignore_exclude_globs,
                     &explicit_excluded_roots,
                 ) {
                     continue;
@@ -2479,9 +2479,9 @@ fn collect_files(
 fn explicit_excluded_roots(
     paths: &[PathBuf],
     config: &ContextConfig,
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
 ) -> Vec<String> {
-    if include_noisy {
+    if ignore_exclude_globs {
         return Vec::new();
     }
     paths
@@ -2505,11 +2505,11 @@ fn file_is_included(
     path: &Path,
     include_matcher: &Option<GlobSet>,
     config: &ContextConfig,
-    include_noisy: bool,
+    ignore_exclude_globs: bool,
     explicit_excluded_roots: &[String],
 ) -> bool {
     let normalized = normalize_path(path);
-    if !include_noisy
+    if !ignore_exclude_globs
         && config.excludes.is_match(&normalized)
         && !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots)
     {

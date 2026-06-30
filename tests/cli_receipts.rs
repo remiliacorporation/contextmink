@@ -300,6 +300,15 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 }
 
 #[test]
+fn help_names_exclude_glob_bypass_literally() {
+    let root = fixture_root("help-exclude-globs");
+
+    let help = run_contextmink(&root, &["files", "--help"]);
+    assert!(help.contains("--ignore-exclude-globs"));
+    assert!(!help.contains("--include-noisy"));
+}
+
+#[test]
 fn explicit_roots_inside_configured_excludes_are_honored() {
     let root = fixture_root("explicit-excluded-root");
     fs::write(
@@ -321,6 +330,28 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
         broad_files
             .iter()
             .all(|path| !path.as_str().unwrap().starts_with("artifacts/"))
+    );
+
+    let bypass = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            ".",
+            "--ignore-exclude-globs",
+            "--max",
+            "20",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&bypass, "files", "files");
+    assert!(
+        bypass["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path.as_str().unwrap() == "./artifacts/notes/finding.md")
     );
 
     let files = parse_json_output(

@@ -14,7 +14,7 @@ diagnostics, and synchronization should stay in project-native tools.
   globs match either the displayed path or the basename, so `--glob '*.jsonl'`
   works inside an explicit queue directory. Configured excludes apply to broad
   scans, but an explicit path inside an excluded tree is treated as the target
-  and searched without `--include-noisy`.
+  and searched without `--ignore-exclude-globs`.
 - `grep`: count matches first, then print a bounded file/sample summary. Use
   `--pattern-file <file>` when regex punctuation would be fragile through a
   host shell bridge.
@@ -131,9 +131,12 @@ exclude_globs = [
 ```
 
 Keep repository policy in `.contextmink.toml` and repository instructions, not in the
-binary. Exclude generated or high-noise trees from broad scans, then pass an
-explicit subdirectory or file when that tree is the target. `--include-noisy`
-is only for intentionally disabling configured excludes for the whole command.
+binary. Exclude generated or high-output trees from broad scans, then pass an
+explicit subdirectory or file when that tree is the target.
+`--ignore-exclude-globs` is only for intentionally disabling contextmink's
+built-in and configured exclude globs for the whole command. It does not disable
+Git ignore rules; pass an explicit path when an ignored artifact tree is the
+target.
 
 ## Scope
 

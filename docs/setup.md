@@ -33,7 +33,7 @@ tool:
 
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
 
-   Keep only repo-local noisy paths. Good candidates include generated build
+   Keep only repo-local high-output paths. Good candidates include generated build
    directories, vendored dependencies, caches, exported reports, large binary
    asset trees, and tool output directories. These excludes keep broad scans
    quiet; callers can still pass an explicit file or subdirectory inside an
@@ -91,7 +91,7 @@ exclude_globs = [
 ]
 ```
 
-The binary already excludes common noisy paths such as `.git`, `target`,
+The binary already excludes common high-output paths such as `.git`, `target`,
 `node_modules`, and `.venv`. Include them in repo configs only if doing so makes
 the local policy clearer for future maintainers.
 
@@ -115,8 +115,9 @@ different integration mechanism.
 
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
 - Pass an explicit file or subdirectory for artifact lookups inside configured
-  noisy trees. Use `--include-noisy` only when the whole command should ignore
-  configured excludes.
+  high-output trees. Use `--ignore-exclude-globs` only when the whole command
+  should ignore contextmink's built-in and configured exclude globs. It does
+  not disable Git ignore rules.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.
