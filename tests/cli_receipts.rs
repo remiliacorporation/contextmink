@@ -300,11 +300,12 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 }
 
 #[test]
-fn help_names_exclude_glob_bypass_literally() {
+fn help_names_excluded_file_bypass_positively() {
     let root = fixture_root("help-exclude-globs");
 
     let help = run_contextmink(&root, &["files", "--help"]);
-    assert!(help.contains("--ignore-exclude-globs"));
+    assert!(help.contains("--with-excluded"));
+    assert!(!help.contains("--ignore-exclude-globs"));
     assert!(!help.contains("--include-noisy"));
 }
 
@@ -338,7 +339,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
             "--json",
             "files",
             ".",
-            "--ignore-exclude-globs",
+            "--with-excluded",
             "--max",
             "20",
             "--max-scan-files",

@@ -115,9 +115,9 @@ different integration mechanism.
 
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
 - Pass an explicit file or subdirectory for artifact lookups inside configured
-  high-output trees. Use `--ignore-exclude-globs` only when the whole command
-  should ignore contextmink's built-in and configured exclude globs. It does
-  not disable Git ignore rules.
+  high-output trees. Use `--with-excluded` only when the whole command should
+  include files matched by contextmink's built-in and configured exclude globs.
+  It does not disable Git ignore rules.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.

@@ -35,6 +35,7 @@ const BUILTIN_EXCLUDES: &[&str] = &[
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 struct Cli {
+    /// Emit one JSON object instead of human-readable rows plus a receipt line.
     #[arg(long, global = true)]
     json: bool,
     /// Exit nonzero after emitting a receipt if the command output was capped.
@@ -47,8 +48,10 @@ struct Cli {
     /// Exit nonzero after emitting a receipt if scan-capped totals are lower bounds.
     #[arg(long, global = true)]
     require_complete_scan: bool,
+    /// Read configuration from this TOML file instead of searching upward.
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+    /// Ignore .contextmink.toml and use only built-in defaults.
     #[arg(long, global = true)]
     no_config: bool,
     #[command(subcommand)]
@@ -59,20 +62,36 @@ struct Cli {
 enum Command {
     /// List candidate files with configured excludes and a display cap.
     Files {
-        #[arg(default_value = ".")]
+        #[arg(default_value = ".", help = "Files or directories to enumerate")]
         path: Vec<PathBuf>,
-        #[arg(long = "glob")]
+        #[arg(
+            long = "glob",
+            help = "Only include paths matching this glob or basename"
+        )]
         globs: Vec<String>,
         #[arg(
-            long = "ignore-exclude-globs",
-            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
+            long = "with-excluded",
+            help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        ignore_exclude_globs: bool,
-        #[arg(long, alias = "limit", default_value_t = 80)]
+        with_excluded: bool,
+        #[arg(
+            long,
+            alias = "limit",
+            default_value_t = 80,
+            help = "Maximum paths to print"
+        )]
         max: usize,
-        #[arg(long, default_value_t = 220)]
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum characters per printed path"
+        )]
         max_line_chars: usize,
-        #[arg(long, default_value_t = 50_000)]
+        #[arg(
+            long,
+            default_value_t = 50_000,
+            help = "Maximum candidate files to scan"
+        )]
         max_scan_files: usize,
     },
     /// Search text and report bounded file counts plus sample lines.
@@ -85,163 +104,316 @@ enum Command {
             help = "PATTERN followed by optional PATHs, or only PATHs with --pattern-file"
         )]
         args: Vec<String>,
-        #[arg(long = "pattern-file", value_name = "FILE")]
+        #[arg(
+            long = "pattern-file",
+            value_name = "FILE",
+            help = "Read the regex or literal pattern from a UTF-8 file"
+        )]
         pattern_file: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, help = "Treat the pattern as literal text instead of regex")]
         literal: bool,
         #[arg(
-            long = "ignore-exclude-globs",
-            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
+            long = "with-excluded",
+            help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        ignore_exclude_globs: bool,
-        #[arg(long, default_value_t = 80)]
+        with_excluded: bool,
+        #[arg(
+            long,
+            default_value_t = 80,
+            help = "Maximum matching files to count before display caps"
+        )]
         max_count_files: usize,
-        #[arg(long, default_value_t = 12)]
+        #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
         max_files: usize,
-        #[arg(long, default_value_t = 3)]
+        #[arg(
+            long,
+            default_value_t = 3,
+            help = "Maximum sample lines per matching file"
+        )]
         lines_per_file: usize,
-        #[arg(long, default_value_t = 36)]
+        #[arg(
+            long,
+            default_value_t = 36,
+            help = "Maximum sample lines to print across all files"
+        )]
         max_sample_lines: usize,
-        #[arg(long, default_value_t = 220)]
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum characters per sample line"
+        )]
         max_line_chars: usize,
-        #[arg(long, default_value_t = 5000)]
+        #[arg(long, default_value_t = 5000, help = "Maximum candidate files to scan")]
         max_scan_files: usize,
-        #[arg(long, default_value_t = 2_000_000)]
+        #[arg(
+            long,
+            default_value_t = 2_000_000,
+            help = "Skip files larger than this byte count"
+        )]
         max_file_bytes: u64,
     },
     /// Search for literal terms without regex or shell-fragile pattern syntax.
     #[command(name = "grep-terms")]
     GrepTerms {
-        #[arg(long = "term")]
+        #[arg(long = "term", help = "Literal term to search for")]
         terms: Vec<String>,
-        #[arg(long = "term-file", value_name = "FILE")]
+        #[arg(
+            long = "term-file",
+            value_name = "FILE",
+            help = "Read literal terms from a UTF-8 file, one per line"
+        )]
         term_files: Vec<PathBuf>,
-        #[arg(long = "mode", value_enum, default_value_t = TermMode::All)]
+        #[arg(long = "mode", value_enum, default_value_t = TermMode::All, help = "Require all terms or any term on a matching line")]
         mode: TermMode,
-        #[arg(long, alias = "or")]
+        #[arg(long, alias = "or", help = "Shortcut for --mode any")]
         any: bool,
-        #[arg(long, alias = "and")]
+        #[arg(long, alias = "and", help = "Shortcut for --mode all")]
         all: bool,
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", help = "Files or directories to search")]
         paths: Vec<PathBuf>,
-        #[arg(long = "path", value_name = "PATH")]
+        #[arg(
+            long = "path",
+            value_name = "PATH",
+            help = "Additional file or directory to search"
+        )]
         path: Vec<PathBuf>,
         #[arg(
-            long = "ignore-exclude-globs",
-            help = "Ignore contextmink built-in and configured exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
+            long = "with-excluded",
+            help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
-        ignore_exclude_globs: bool,
-        #[arg(long, default_value_t = 80)]
+        with_excluded: bool,
+        #[arg(
+            long,
+            default_value_t = 80,
+            help = "Maximum matching files to count before display caps"
+        )]
         max_count_files: usize,
-        #[arg(long, default_value_t = 12)]
+        #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
         max_files: usize,
-        #[arg(long, default_value_t = 3)]
+        #[arg(
+            long,
+            default_value_t = 3,
+            help = "Maximum sample lines per matching file"
+        )]
         lines_per_file: usize,
-        #[arg(long, default_value_t = 36)]
+        #[arg(
+            long,
+            default_value_t = 36,
+            help = "Maximum sample lines to print across all files"
+        )]
         max_sample_lines: usize,
-        #[arg(long, default_value_t = 220)]
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum characters per sample line"
+        )]
         max_line_chars: usize,
-        #[arg(long, default_value_t = 5000)]
+        #[arg(long, default_value_t = 5000, help = "Maximum candidate files to scan")]
         max_scan_files: usize,
-        #[arg(long, default_value_t = 2_000_000)]
+        #[arg(
+            long,
+            default_value_t = 2_000_000,
+            help = "Skip files larger than this byte count"
+        )]
         max_file_bytes: u64,
     },
     /// Print a bounded line or character window from one text file.
     Slice {
+        #[arg(help = "Text file to slice")]
         file: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "One-based inclusive line range START:END")]
         range: Option<String>,
-        #[arg(long, default_value_t = 1)]
+        #[arg(long, default_value_t = 1, help = "First one-based line to print")]
         start: usize,
-        #[arg(long)]
+        #[arg(long, help = "Last one-based line to print")]
         end: Option<usize>,
-        #[arg(long, default_value_t = 120)]
+        #[arg(
+            long,
+            default_value_t = 120,
+            help = "Line count when --end/--range is omitted"
+        )]
         lines: usize,
-        #[arg(long, default_value_t = 220)]
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum lines to print even if the range is larger"
+        )]
         max_lines: usize,
-        #[arg(long, default_value_t = 240)]
+        #[arg(
+            long,
+            default_value_t = 240,
+            help = "Maximum characters per printed line"
+        )]
         max_line_chars: usize,
-        #[arg(long)]
+        #[arg(long, help = "Zero-based character offset for character-window mode")]
         char_start: Option<usize>,
-        #[arg(long, default_value_t = 4000)]
+        #[arg(
+            long,
+            default_value_t = 4000,
+            help = "Character count for character-window mode"
+        )]
         chars: usize,
     },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
+        #[arg(help = "JSON or JSONL file to inspect")]
         file: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Match object keys containing this text")]
         key_contains: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = "Match object keys with this regex")]
         key_regex: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Match JSON paths containing this text")]
         path_contains: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = "Match JSON paths with this regex")]
         path_regex: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Match summarized values containing this text")]
         value_contains: Vec<String>,
-        #[arg(long, alias = "limit", default_value_t = 40)]
+        #[arg(
+            long,
+            alias = "limit",
+            default_value_t = 40,
+            help = "Maximum matches to print"
+        )]
         max: usize,
-        #[arg(long, default_value_t = 260)]
+        #[arg(
+            long,
+            default_value_t = 260,
+            help = "Maximum characters per summarized value"
+        )]
         max_value_chars: usize,
     },
     /// Project JSON root or array rows to bounded field summaries.
     #[command(name = "json-select")]
     JsonSelect {
+        #[arg(help = "JSON or JSONL file to project")]
         file: PathBuf,
-        #[arg(long, value_name = "POINTER")]
+        #[arg(
+            long,
+            value_name = "POINTER",
+            help = "JSON Pointer to an array to project; omit for the root"
+        )]
         array: Option<String>,
-        #[arg(long = "field", value_name = "KEY_OR_POINTER")]
+        #[arg(
+            long = "field",
+            value_name = "KEY_OR_POINTER",
+            help = "Field key or JSON Pointer to include in each row"
+        )]
         fields: Vec<String>,
-        #[arg(long, alias = "limit", default_value_t = 40)]
+        #[arg(
+            long,
+            alias = "limit",
+            default_value_t = 40,
+            help = "Maximum rows to print"
+        )]
         max: usize,
-        #[arg(long, default_value_t = 260)]
+        #[arg(
+            long,
+            default_value_t = 260,
+            help = "Maximum characters per projected value"
+        )]
         max_value_chars: usize,
     },
     /// Run a read-only SQLite query with bounded row output.
     Sqlite {
+        #[arg(help = "SQLite database file")]
         db: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Read-only SQL query to run")]
         sql: Option<String>,
-        #[arg(long = "sql-file", value_name = "FILE")]
+        #[arg(
+            long = "sql-file",
+            value_name = "FILE",
+            help = "Read the SQL query from a UTF-8 file"
+        )]
         sql_file: Option<PathBuf>,
-        #[arg(long = "max-rows", alias = "limit", default_value_t = 40)]
+        #[arg(
+            long = "max-rows",
+            alias = "limit",
+            default_value_t = 40,
+            help = "Maximum rows to print"
+        )]
         max_rows: usize,
-        #[arg(long, default_value_t = 5000)]
+        #[arg(
+            long,
+            default_value_t = 5000,
+            help = "Maximum rows to scan before treating totals as lower bounds"
+        )]
         max_scan_rows: usize,
-        #[arg(long, default_value_t = 260)]
+        #[arg(
+            long,
+            default_value_t = 260,
+            help = "Maximum characters per cell value"
+        )]
         max_value_chars: usize,
     },
     /// Summarize SQLite tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
     SqliteSchema {
+        #[arg(help = "SQLite database file")]
         db: PathBuf,
-        #[arg(long = "table", value_name = "NAME")]
+        #[arg(
+            long = "table",
+            value_name = "NAME",
+            help = "Only summarize this table; repeatable"
+        )]
         tables: Vec<String>,
-        #[arg(long = "name-contains", value_name = "TEXT")]
+        #[arg(
+            long = "name-contains",
+            value_name = "TEXT",
+            help = "Only summarize tables whose names contain this text"
+        )]
         name_contains: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = "Include SQLite shadow tables")]
         include_shadow: bool,
-        #[arg(long)]
+        #[arg(long, help = "Include SQLite system tables")]
         include_system: bool,
-        #[arg(long, default_value_t = 40)]
+        #[arg(long, default_value_t = 40, help = "Maximum tables to print")]
         max_tables: usize,
-        #[arg(long, default_value_t = 160)]
+        #[arg(
+            long,
+            default_value_t = 160,
+            help = "Maximum columns to print across all tables"
+        )]
         max_columns: usize,
-        #[arg(long, default_value_t = 120)]
+        #[arg(
+            long,
+            default_value_t = 120,
+            help = "Maximum indexes to print across all tables"
+        )]
         max_indexes: usize,
-        #[arg(long, default_value_t = 320)]
+        #[arg(
+            long,
+            default_value_t = 320,
+            help = "Maximum characters per printed schema line"
+        )]
         max_line_chars: usize,
     },
     /// Execute argv directly and print bounded stdout/stderr summaries.
     #[command(visible_alias = "run")]
     Capture {
-        #[arg(long, default_value_t = 80)]
+        #[arg(
+            long,
+            default_value_t = 80,
+            help = "Maximum stdout plus stderr lines to print"
+        )]
         max_lines: usize,
-        #[arg(long, default_value_t = 24_000)]
+        #[arg(
+            long,
+            default_value_t = 24_000,
+            help = "Maximum bytes to retain per stream"
+        )]
         max_bytes: usize,
-        #[arg(long, default_value_t = 260)]
+        #[arg(
+            long,
+            default_value_t = 260,
+            help = "Maximum characters per printed output line"
+        )]
         max_line_chars: usize,
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        #[arg(
+            required = true,
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            help = "Command argv to execute directly"
+        )]
         argv: Vec<String>,
     },
 }
@@ -397,7 +569,7 @@ fn main() -> Result<()> {
         Command::Files {
             path,
             globs,
-            ignore_exclude_globs,
+            with_excluded,
             max,
             max_line_chars,
             max_scan_files,
@@ -406,7 +578,7 @@ fn main() -> Result<()> {
             &config,
             path,
             globs,
-            *ignore_exclude_globs,
+            *with_excluded,
             *max,
             *max_line_chars,
             *max_scan_files,
@@ -415,7 +587,7 @@ fn main() -> Result<()> {
             args,
             pattern_file,
             literal,
-            ignore_exclude_globs,
+            with_excluded,
             max_count_files,
             max_files,
             lines_per_file,
@@ -429,7 +601,7 @@ fn main() -> Result<()> {
             args,
             pattern_file.as_deref(),
             *literal,
-            *ignore_exclude_globs,
+            *with_excluded,
             *max_count_files,
             *max_files,
             *lines_per_file,
@@ -446,7 +618,7 @@ fn main() -> Result<()> {
             all,
             paths,
             path,
-            ignore_exclude_globs,
+            with_excluded,
             max_count_files,
             max_files,
             lines_per_file,
@@ -463,7 +635,7 @@ fn main() -> Result<()> {
                 "grep-terms",
                 TextMatcher::Terms { terms, mode },
                 &merged_paths(paths, path),
-                *ignore_exclude_globs,
+                *with_excluded,
                 *max_count_files,
                 *max_files,
                 *lines_per_file,
@@ -958,7 +1130,7 @@ fn command_files(
     config: &ContextConfig,
     paths: &[PathBuf],
     globs: &[String],
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
     max: usize,
     max_line_chars: usize,
     max_scan_files: usize,
@@ -966,7 +1138,7 @@ fn command_files(
     if max_scan_files == 0 {
         return Err(anyhow!("files --max-scan-files must be greater than zero"));
     }
-    let collected = collect_files(paths, globs, config, ignore_exclude_globs, max_scan_files)?;
+    let collected = collect_files(paths, globs, config, with_excluded, max_scan_files)?;
     let files = collected.files;
     let shown = min(files.len(), max);
     let truncated = collected.truncated || shown < files.len();
@@ -1043,7 +1215,7 @@ fn command_grep(
     args: &[String],
     pattern_file: Option<&Path>,
     literal: bool,
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1068,7 +1240,7 @@ fn command_grep(
         "grep",
         matcher,
         &effective_paths,
-        ignore_exclude_globs,
+        with_excluded,
         max_count_files,
         max_files,
         lines_per_file,
@@ -1094,7 +1266,7 @@ fn command_grep_with_matcher(
     command_name: &str,
     matcher: TextMatcher,
     paths: &[PathBuf],
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1108,7 +1280,7 @@ fn command_grep_with_matcher(
             "{command_name} --max-scan-files must be greater than zero"
         ));
     }
-    let collected = collect_files(paths, &[], config, ignore_exclude_globs, max_scan_files)?;
+    let collected = collect_files(paths, &[], config, with_excluded, max_scan_files)?;
     let scan_truncated = collected.truncated;
     let total_candidate_files = collected.total_seen;
     let candidate_files_scanned = collected.files.len();
@@ -2400,11 +2572,11 @@ fn collect_files(
     paths: &[PathBuf],
     globs: &[String],
     config: &ContextConfig,
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
     max_scan_files: usize,
 ) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(globs)?;
-    let explicit_excluded_roots = explicit_excluded_roots(paths, config, ignore_exclude_globs);
+    let explicit_excluded_roots = explicit_excluded_roots(paths, config, with_excluded);
     let mut files = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut total_seen = 0usize;
@@ -2415,7 +2587,7 @@ fn collect_files(
                 root,
                 &include_matcher,
                 config,
-                ignore_exclude_globs,
+                with_excluded,
                 &explicit_excluded_roots,
             ) {
                 let candidate = root.to_path_buf();
@@ -2445,7 +2617,7 @@ fn collect_files(
                     entry.path(),
                     &include_matcher,
                     config,
-                    ignore_exclude_globs,
+                    with_excluded,
                     &explicit_excluded_roots,
                 ) {
                     continue;
@@ -2479,9 +2651,9 @@ fn collect_files(
 fn explicit_excluded_roots(
     paths: &[PathBuf],
     config: &ContextConfig,
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
 ) -> Vec<String> {
-    if ignore_exclude_globs {
+    if with_excluded {
         return Vec::new();
     }
     paths
@@ -2505,11 +2677,11 @@ fn file_is_included(
     path: &Path,
     include_matcher: &Option<GlobSet>,
     config: &ContextConfig,
-    ignore_exclude_globs: bool,
+    with_excluded: bool,
     explicit_excluded_roots: &[String],
 ) -> bool {
     let normalized = normalize_path(path);
-    if !ignore_exclude_globs
+    if !with_excluded
         && config.excludes.is_match(&normalized)
         && !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots)
     {
