@@ -315,8 +315,13 @@ enum Command {
     },
     /// Run a read-only SQLite query with bounded row output.
     Sqlite {
-        #[arg(help = "SQLite database file")]
-        db: PathBuf,
+        #[arg(
+            value_name = "DB",
+            help = "SQLite database file; may also be passed with --db"
+        )]
+        positional_db: Option<PathBuf>,
+        #[arg(long = "db", value_name = "DB", help = "SQLite database file")]
+        db: Option<PathBuf>,
         #[arg(long, help = "Read-only SQL query to run")]
         sql: Option<String>,
         #[arg(
@@ -348,8 +353,13 @@ enum Command {
     /// Summarize SQLite tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
     SqliteSchema {
-        #[arg(help = "SQLite database file")]
-        db: PathBuf,
+        #[arg(
+            value_name = "DB",
+            help = "SQLite database file; may also be passed with --db"
+        )]
+        positional_db: Option<PathBuf>,
+        #[arg(long = "db", value_name = "DB", help = "SQLite database file")]
+        db: Option<PathBuf>,
         #[arg(
             long = "table",
             value_name = "NAME",
@@ -705,23 +715,28 @@ fn main() -> Result<()> {
             *max_value_chars,
         ),
         Command::Sqlite {
+            positional_db,
             db,
             sql,
             sql_file,
             max_rows,
             max_scan_rows,
             max_value_chars,
-        } => command_sqlite(
-            &cli,
-            &config,
-            db,
-            sql.as_deref(),
-            sql_file.as_deref(),
-            *max_rows,
-            *max_scan_rows,
-            *max_value_chars,
-        ),
+        } => {
+            let db = resolve_db_path("sqlite", positional_db.as_ref(), db.as_ref())?;
+            command_sqlite(
+                &cli,
+                &config,
+                db,
+                sql.as_deref(),
+                sql_file.as_deref(),
+                *max_rows,
+                *max_scan_rows,
+                *max_value_chars,
+            )
+        }
         Command::SqliteSchema {
+            positional_db,
             db,
             tables,
             name_contains,
@@ -731,19 +746,22 @@ fn main() -> Result<()> {
             max_columns,
             max_indexes,
             max_line_chars,
-        } => command_sqlite_schema(
-            &cli,
-            &config,
-            db,
-            tables,
-            name_contains,
-            *include_shadow,
-            *include_system,
-            *max_tables,
-            *max_columns,
-            *max_indexes,
-            *max_line_chars,
-        ),
+        } => {
+            let db = resolve_db_path("sqlite-schema", positional_db.as_ref(), db.as_ref())?;
+            command_sqlite_schema(
+                &cli,
+                &config,
+                db,
+                tables,
+                name_contains,
+                *include_shadow,
+                *include_system,
+                *max_tables,
+                *max_columns,
+                *max_indexes,
+                *max_line_chars,
+            )
+        }
         Command::Capture {
             max_lines,
             max_bytes,
@@ -761,6 +779,22 @@ fn merged_paths(positional: &[PathBuf], named: &[PathBuf]) -> Vec<PathBuf> {
         paths.push(PathBuf::from("."));
     }
     paths
+}
+
+fn resolve_db_path<'a>(
+    command_name: &str,
+    positional_db: Option<&'a PathBuf>,
+    named_db: Option<&'a PathBuf>,
+) -> Result<&'a Path> {
+    match (positional_db, named_db) {
+        (Some(_), Some(_)) => Err(anyhow!(
+            "{command_name} accepts either positional <DB> or --db <DB>, not both"
+        )),
+        (Some(path), None) | (None, Some(path)) => Ok(path.as_path()),
+        (None, None) => Err(anyhow!(
+            "{command_name} requires a SQLite database path as <DB> or --db <DB>"
+        )),
+    }
 }
 
 fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>> {

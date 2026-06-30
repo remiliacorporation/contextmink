@@ -744,6 +744,7 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
         &[
             "--json",
             "sqlite",
+            "--db",
             "sample.sqlite",
             "--sql-file",
             "query.sql",
@@ -756,6 +757,25 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
     assert_eq!(json["total"], 2);
     assert_eq!(json["cap_reason"], "rows");
     assert_eq!(json["rows"][0]["fields"]["joined"], "\"alpha:beta\"");
+
+    let duplicate_db = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "sample.sqlite",
+            "--db",
+            "sample.sqlite",
+            "--sql",
+            "SELECT 1",
+        ],
+    );
+    assert!(!duplicate_db.status.success());
+    assert!(
+        String::from_utf8(duplicate_db.stderr)
+            .unwrap()
+            .contains("either positional <DB> or --db <DB>, not both")
+    );
 }
 
 #[test]
@@ -777,6 +797,7 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         &[
             "--json",
             "sqlite-schema",
+            "--db",
             "schema.sqlite",
             "--table",
             "child",

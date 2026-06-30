@@ -32,9 +32,10 @@ diagnostics, and synchronization should stay in project-native tools.
   slash-leading JSON Pointer selector arguments on Git Bash/Windows so they are
   not rewritten as host paths before reaching the native binary.
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
-  caps and receipt metadata.
+  caps and receipt metadata. The DB path may be positional or `--db <file>`.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
-  from SQLite metadata without hand-written PRAGMA queries.
+  from SQLite metadata without hand-written PRAGMA queries. The DB path may be
+  positional or `--db <file>`.
 - `capture` (`run` alias): execute argv directly and print capped stdout/stderr summaries
   with exit status. Use it only when a command's output cardinality is unknown
   and the command lacks a better native filter or projection.
@@ -70,7 +71,7 @@ scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
 scripts/contextmink json-select queue.jsonl --field addr --field flags --limit 10
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --max-rows 20
-scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
+scripts/contextmink sqlite-schema --db state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compact-target query
 ```

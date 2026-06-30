@@ -126,8 +126,8 @@ different integration mechanism.
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
   `json-select`; it preserves slash-leading JSON Pointer selectors while still
   leaving normal file path handling to the shell/runtime boundary.
-- Prefer `sqlite-schema <db>` before ad hoc SQLite queries against unfamiliar
-  databases.
+- Prefer `sqlite-schema <db>` or `sqlite-schema --db <db>` before ad hoc SQLite
+  queries against unfamiliar databases.
 - Prefer `sqlite --sql-file <file>` for read-only SQL containing shell-fragile
   operators or quotes.
 - Prefer a domain command's native compact/projection/limit flags first. Use
