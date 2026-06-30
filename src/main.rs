@@ -63,7 +63,10 @@ enum Command {
         path: Vec<PathBuf>,
         #[arg(long = "glob")]
         globs: Vec<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+        )]
         include_noisy: bool,
         #[arg(long, alias = "limit", default_value_t = 80)]
         max: usize,
@@ -86,7 +89,10 @@ enum Command {
         pattern_file: Option<PathBuf>,
         #[arg(long)]
         literal: bool,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+        )]
         include_noisy: bool,
         #[arg(long, default_value_t = 80)]
         max_count_files: usize,
@@ -120,7 +126,10 @@ enum Command {
         paths: Vec<PathBuf>,
         #[arg(long = "path", value_name = "PATH")]
         path: Vec<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Disable configured excludes for this command. Explicit paths inside excluded trees do not need this."
+        )]
         include_noisy: bool,
         #[arg(long, default_value_t = 80)]
         max_count_files: usize,
@@ -2395,13 +2404,20 @@ fn collect_files(
     max_scan_files: usize,
 ) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(globs)?;
+    let explicit_excluded_roots = explicit_excluded_roots(paths, config, include_noisy);
     let mut files = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut total_seen = 0usize;
     let mut truncated = false;
     for root in paths {
         if root.is_file() {
-            if file_is_included(root, &include_matcher, config, include_noisy) {
+            if file_is_included(
+                root,
+                &include_matcher,
+                config,
+                include_noisy,
+                &explicit_excluded_roots,
+            ) {
                 let candidate = root.to_path_buf();
                 if !seen.insert(candidate.clone()) {
                     continue;
@@ -2425,7 +2441,13 @@ fn collect_files(
         for entry in walk.build() {
             let entry = entry?;
             if entry.file_type().is_some_and(|kind| kind.is_file()) {
-                if !file_is_included(entry.path(), &include_matcher, config, include_noisy) {
+                if !file_is_included(
+                    entry.path(),
+                    &include_matcher,
+                    config,
+                    include_noisy,
+                    &explicit_excluded_roots,
+                ) {
                     continue;
                 }
                 let candidate = entry.path().to_path_buf();
@@ -2454,14 +2476,43 @@ fn collect_files(
     })
 }
 
+fn explicit_excluded_roots(
+    paths: &[PathBuf],
+    config: &ContextConfig,
+    include_noisy: bool,
+) -> Vec<String> {
+    if include_noisy {
+        return Vec::new();
+    }
+    paths
+        .iter()
+        .filter_map(|path| {
+            let normalized = trim_normalized_path(&normalize_path(path));
+            if normalized.is_empty() || normalized == "." {
+                return None;
+            }
+            let probe = format!("{normalized}/__contextmink_probe__");
+            if config.excludes.is_match(&normalized) || config.excludes.is_match(&probe) {
+                Some(normalized)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn file_is_included(
     path: &Path,
     include_matcher: &Option<GlobSet>,
     config: &ContextConfig,
     include_noisy: bool,
+    explicit_excluded_roots: &[String],
 ) -> bool {
     let normalized = normalize_path(path);
-    if !include_noisy && config.excludes.is_match(&normalized) {
+    if !include_noisy
+        && config.excludes.is_match(&normalized)
+        && !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots)
+    {
         return false;
     }
     if let Some(include_matcher) = include_matcher {
@@ -2474,6 +2525,19 @@ fn file_is_included(
         }
     }
     true
+}
+
+fn is_under_explicit_excluded_root(path: &str, explicit_excluded_roots: &[String]) -> bool {
+    let normalized = trim_normalized_path(path);
+    explicit_excluded_roots
+        .iter()
+        .any(|root| normalized == *root || normalized.starts_with(&format!("{root}/")))
+}
+
+fn trim_normalized_path(path: &str) -> String {
+    path.trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn build_optional_globset(globs: &[String]) -> Result<Option<GlobSet>> {

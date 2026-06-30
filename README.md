@@ -12,7 +12,9 @@ diagnostics, and synchronization should stay in project-native tools.
 
 - `files`: list candidate files with hard caps and configured excludes. Include
   globs match either the displayed path or the basename, so `--glob '*.jsonl'`
-  works inside an explicit queue directory.
+  works inside an explicit queue directory. Configured excludes apply to broad
+  scans, but an explicit path inside an excluded tree is treated as the target
+  and searched without `--include-noisy`.
 - `grep`: count matches first, then print a bounded file/sample summary. Use
   `--pattern-file <file>` when regex punctuation would be fragile through a
   host shell bridge.
@@ -129,7 +131,9 @@ exclude_globs = [
 ```
 
 Keep repository policy in `.contextmink.toml` and repository instructions, not in the
-binary.
+binary. Exclude generated or high-noise trees from broad scans, then pass an
+explicit subdirectory or file when that tree is the target. `--include-noisy`
+is only for intentionally disabling configured excludes for the whole command.
 
 ## Scope
 

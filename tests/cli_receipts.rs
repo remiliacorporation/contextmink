@@ -300,6 +300,64 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 }
 
 #[test]
+fn explicit_roots_inside_configured_excludes_are_honored() {
+    let root = fixture_root("explicit-excluded-root");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test-profile\"\nexclude_globs = [\"artifacts/**\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("artifacts").join("notes")).unwrap();
+    fs::write(
+        root.join("artifacts").join("notes").join("finding.md"),
+        "needle\n",
+    )
+    .unwrap();
+
+    let broad = parse_json_output(&root, &["--json", "files", ".", "--max", "20"]);
+    assert_envelope(&broad, "files", "files");
+    let broad_files = broad["files"].as_array().unwrap();
+    assert!(
+        broad_files
+            .iter()
+            .all(|path| !path.as_str().unwrap().starts_with("artifacts/"))
+    );
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            "artifacts/notes",
+            "--max",
+            "20",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 1);
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0], "artifacts/notes/finding.md");
+
+    let grep = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "needle",
+            "artifacts/notes",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&grep, "grep", "files");
+    assert_eq!(grep["shown"], 1);
+    assert_eq!(grep["total"], 1);
+    assert_eq!(grep["total_matches"], 1);
+}
+
+#[test]
 fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     let root = fixture_root("grep-scan-cap");
     fs::write(root.join("extra_a.txt"), "alpha\n").unwrap();

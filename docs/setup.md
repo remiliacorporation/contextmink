@@ -35,7 +35,9 @@ tool:
 
    Keep only repo-local noisy paths. Good candidates include generated build
    directories, vendored dependencies, caches, exported reports, large binary
-   asset trees, and tool output directories.
+   asset trees, and tool output directories. These excludes keep broad scans
+   quiet; callers can still pass an explicit file or subdirectory inside an
+   excluded tree when that tree is the target.
 
 4. Add the instruction snippet for the tool surface the target repository uses:
 
@@ -112,6 +114,9 @@ different integration mechanism.
 ## Operational Notes
 
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
+- Pass an explicit file or subdirectory for artifact lookups inside configured
+  noisy trees. Use `--include-noisy` only when the whole command should ignore
+  configured excludes.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.
