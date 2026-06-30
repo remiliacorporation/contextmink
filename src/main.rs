@@ -75,6 +75,11 @@ enum Command {
         )]
         with_excluded: bool,
         #[arg(
+            long = "with-git-ignored",
+            help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
+        )]
+        with_git_ignored: bool,
+        #[arg(
             long,
             alias = "limit",
             default_value_t = 80,
@@ -117,6 +122,11 @@ enum Command {
             help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
         with_excluded: bool,
+        #[arg(
+            long = "with-git-ignored",
+            help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
+        )]
+        with_git_ignored: bool,
         #[arg(
             long,
             default_value_t = 80,
@@ -182,6 +192,11 @@ enum Command {
             help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
         )]
         with_excluded: bool,
+        #[arg(
+            long = "with-git-ignored",
+            help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
+        )]
+        with_git_ignored: bool,
         #[arg(
             long,
             default_value_t = 80,
@@ -580,6 +595,7 @@ fn main() -> Result<()> {
             path,
             globs,
             with_excluded,
+            with_git_ignored,
             max,
             max_line_chars,
             max_scan_files,
@@ -589,6 +605,7 @@ fn main() -> Result<()> {
             path,
             globs,
             *with_excluded,
+            *with_git_ignored,
             *max,
             *max_line_chars,
             *max_scan_files,
@@ -598,6 +615,7 @@ fn main() -> Result<()> {
             pattern_file,
             literal,
             with_excluded,
+            with_git_ignored,
             max_count_files,
             max_files,
             lines_per_file,
@@ -612,6 +630,7 @@ fn main() -> Result<()> {
             pattern_file.as_deref(),
             *literal,
             *with_excluded,
+            *with_git_ignored,
             *max_count_files,
             *max_files,
             *lines_per_file,
@@ -629,6 +648,7 @@ fn main() -> Result<()> {
             paths,
             path,
             with_excluded,
+            with_git_ignored,
             max_count_files,
             max_files,
             lines_per_file,
@@ -646,6 +666,7 @@ fn main() -> Result<()> {
                 TextMatcher::Terms { terms, mode },
                 &merged_paths(paths, path),
                 *with_excluded,
+                *with_git_ignored,
                 *max_count_files,
                 *max_files,
                 *lines_per_file,
@@ -1165,6 +1186,7 @@ fn command_files(
     paths: &[PathBuf],
     globs: &[String],
     with_excluded: bool,
+    with_git_ignored: bool,
     max: usize,
     max_line_chars: usize,
     max_scan_files: usize,
@@ -1172,7 +1194,14 @@ fn command_files(
     if max_scan_files == 0 {
         return Err(anyhow!("files --max-scan-files must be greater than zero"));
     }
-    let collected = collect_files(paths, globs, config, with_excluded, max_scan_files)?;
+    let collected = collect_files(
+        paths,
+        globs,
+        config,
+        with_excluded,
+        with_git_ignored,
+        max_scan_files,
+    )?;
     let files = collected.files;
     let shown = min(files.len(), max);
     let truncated = collected.truncated || shown < files.len();
@@ -1250,6 +1279,7 @@ fn command_grep(
     pattern_file: Option<&Path>,
     literal: bool,
     with_excluded: bool,
+    with_git_ignored: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1275,6 +1305,7 @@ fn command_grep(
         matcher,
         &effective_paths,
         with_excluded,
+        with_git_ignored,
         max_count_files,
         max_files,
         lines_per_file,
@@ -1301,6 +1332,7 @@ fn command_grep_with_matcher(
     matcher: TextMatcher,
     paths: &[PathBuf],
     with_excluded: bool,
+    with_git_ignored: bool,
     max_count_files: usize,
     max_files: usize,
     lines_per_file: usize,
@@ -1314,7 +1346,14 @@ fn command_grep_with_matcher(
             "{command_name} --max-scan-files must be greater than zero"
         ));
     }
-    let collected = collect_files(paths, &[], config, with_excluded, max_scan_files)?;
+    let collected = collect_files(
+        paths,
+        &[],
+        config,
+        with_excluded,
+        with_git_ignored,
+        max_scan_files,
+    )?;
     let scan_truncated = collected.truncated;
     let total_candidate_files = collected.total_seen;
     let candidate_files_scanned = collected.files.len();
@@ -2607,6 +2646,7 @@ fn collect_files(
     globs: &[String],
     config: &ContextConfig,
     with_excluded: bool,
+    with_git_ignored: bool,
     max_scan_files: usize,
 ) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(globs)?;
@@ -2640,10 +2680,10 @@ fn collect_files(
         }
         let mut walk = WalkBuilder::new(root);
         walk.hidden(false)
-            .ignore(true)
-            .git_ignore(true)
-            .git_exclude(true)
-            .parents(true);
+            .ignore(!with_git_ignored)
+            .git_ignore(!with_git_ignored)
+            .git_exclude(!with_git_ignored)
+            .parents(!with_git_ignored);
         for entry in walk.build() {
             let entry = entry?;
             if entry.file_type().is_some_and(|kind| kind.is_file()) {

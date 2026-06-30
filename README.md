@@ -14,7 +14,8 @@ diagnostics, and synchronization should stay in project-native tools.
   globs match either the displayed path or the basename, so `--glob '*.jsonl'`
   works inside an explicit queue directory. Configured excludes apply to broad
   scans, but an explicit path inside an excluded tree is treated as the target
-  and searched without `--with-excluded`.
+  and searched without `--with-excluded`. Use `--with-git-ignored` only when
+  intentionally inspecting files hidden by Git or `.ignore` rules.
 - `grep`: count matches first, then print a bounded file/sample summary. Use
   `--pattern-file <file>` when regex punctuation would be fragile through a
   host shell bridge.
@@ -64,6 +65,7 @@ Release builds include bundled SQLite support for portability.
 ```bash
 scripts/contextmink files . --max 20
 scripts/contextmink files . --max 20 --max-scan-files 5000
+scripts/contextmink files vendor --with-git-ignored --max 20
 scripts/contextmink grep --pattern-file pattern.txt src tests --max-files 8
 scripts/contextmink grep-terms --term "TODO" --term "panic" --or src
 scripts/contextmink slice src/main.rs --range 120:180

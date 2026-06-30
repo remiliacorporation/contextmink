@@ -118,6 +118,9 @@ different integration mechanism.
   high-output trees. Use `--with-excluded` only when the whole command should
   include files matched by contextmink's built-in and configured exclude globs.
   It does not disable Git ignore rules.
+- Use `--with-git-ignored` only when intentionally inspecting a Git-ignored
+  vendor, cache, or artifact tree. Contextmink exclude globs still apply unless
+  `--with-excluded` is also set.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
 - Prefer `slice --range START:END` before opening large files.

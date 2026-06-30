@@ -390,6 +390,75 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
 }
 
 #[test]
+fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_globs() {
+    let root = fixture_root("with-git-ignored");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join(".gitignore"), "vendor/*\n").unwrap();
+    fs::create_dir_all(root.join("vendor").join("sqlite-tool").join(".git")).unwrap();
+    fs::write(
+        root.join("vendor").join("sqlite-tool").join("README.md"),
+        "sqlite helper\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("vendor")
+            .join("sqlite-tool")
+            .join(".git")
+            .join("config"),
+        "ignored metadata\n",
+    )
+    .unwrap();
+
+    let without_flag = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            ".",
+            "--max",
+            "20",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&without_flag, "files", "files");
+    let files_without_flag = without_flag["files"].as_array().unwrap();
+    assert!(
+        files_without_flag
+            .iter()
+            .all(|path| path.as_str().unwrap().trim_start_matches("./")
+                != "vendor/sqlite-tool/README.md")
+    );
+
+    let with_flag = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            ".",
+            "--with-git-ignored",
+            "--max",
+            "20",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&with_flag, "files", "files");
+    let files = with_flag["files"].as_array().unwrap();
+    assert!(
+        files
+            .iter()
+            .any(|path| path.as_str().unwrap().trim_start_matches("./")
+                == "vendor/sqlite-tool/README.md")
+    );
+    assert!(
+        files
+            .iter()
+            .all(|path| !path.as_str().unwrap().contains("/.git/"))
+    );
+}
+
+#[test]
 fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     let root = fixture_root("grep-scan-cap");
     fs::write(root.join("extra_a.txt"), "alpha\n").unwrap();
