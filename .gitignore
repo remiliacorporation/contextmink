@@ -1,1 +1,4 @@
-/target
+/target/
+/dist/
+/bin/contextmink
+/bin/contextmink.exe

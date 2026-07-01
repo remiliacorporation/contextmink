@@ -15,14 +15,18 @@ diagnostics, and synchronization should stay in project-native tools.
   works inside an explicit queue directory. Configured excludes apply to broad
   scans, but an explicit path inside an excluded tree is treated as the target
   and searched without `--with-excluded`. Use `--with-git-ignored` only when
-  intentionally inspecting files hidden by Git or `.ignore` rules.
-- `grep`: count matches first, then print a bounded file/sample summary. Use
-  `--pattern-file <file>` when regex punctuation would be fragile through a
-  host shell bridge.
+  intentionally inspecting files hidden by Git or `.ignore` rules. On Windows
+  shell bridges, prefer `--ext jsonl` over wildcard globs for extension filters.
+- `grep`: print a bounded file/sample summary for a regex or literal pattern.
+  Use `--pattern-file <file>` when regex punctuation would be fragile through a
+  host shell bridge. `--max-count-files` stops content scanning after enough
+  matching files have been found; receipts mark match totals as lower bounds
+  when that cap fires.
 - `grep-terms`: match lines containing all `--term` values by default, or any
   term with `--mode any` / `--any` / `--or`. Use `--term-file <file>` for
   phrase lists when shell quoting or regex punctuation would make inline
-  arguments fragile.
+  arguments fragile. `--limit` caps printed files; `--max-matches` /
+  `--max-lines` cap printed sample match lines.
 - `slice`: print bounded line windows, or character windows for very long
   single-line files and pasted attachments.
 - `json-find`: query JSON by key, path, or summarized value without opening the
@@ -49,7 +53,22 @@ Use `--fail-if-truncated` (aliases: `--fail-on-truncate`,
 receipt is emitted. Use `--require-complete-scan` when display caps may be fine
 but scan-capped lower-bound totals should fail.
 
-## Quick Start
+## Install
+
+Download the release archive for your platform from GitHub Releases and unpack
+it. Put `contextmink` on your `PATH`, or run it from the unpacked directory:
+
+```bash
+contextmink files --path . --max 20
+```
+
+Release archives are built for Windows x64, macOS Intel, macOS ARM, and Linux
+x64. Each archive includes the binary, setup docs, repository instruction
+templates, a manifest, and a SHA-256 checksum.
+
+Release builds include bundled SQLite support for portability.
+
+## Build From Source
 
 ```bash
 cargo test
@@ -60,16 +79,15 @@ target/release/contextmink files --path . --max 20
 `contextmink` uses Rust edition 2024 and requires a recent stable Rust
 toolchain. To add it to another repository, follow [SETUP.md](SETUP.md).
 
-Release builds include bundled SQLite support for portability.
-
 ## Examples
 
 ```bash
 scripts/contextmink files --path . --max 20
 scripts/contextmink files --path . --max 20 --max-scan-files 5000
 scripts/contextmink files --path vendor --with-git-ignored --max 20
-scripts/contextmink grep --pattern-file pattern.txt src tests --max-files 8
-scripts/contextmink grep-terms --term "TODO" --term "panic" --or src
+scripts/contextmink files --path specs/_assets --with-git-ignored --ext json --max 20
+scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
+scripts/contextmink grep-terms --term "--flag-like" --term "panic" --or src --max-matches 12
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
@@ -103,10 +121,14 @@ Stable receipt fields:
 | `cap_reason` | why output stopped, or `null` |
 
 For `grep` and `grep-terms`, `shown` and `total` are file counts. Match,
-sample, scan, and skip counts are reported in dedicated fields.
-When `cap_reason` is `"scan"` or `candidate_files_total_is_lower_bound` is
-true, candidate totals and no-match results only describe the scanned subset.
-Narrow the path/glob/query before treating the result as complete.
+sample, scan, and skip counts are reported in dedicated fields. If
+`matched_files_total_is_lower_bound` or `total_matches_is_lower_bound` is true,
+the content scan stopped at `--max-count-files`; narrow the query or raise that
+cap before treating match totals as exact.
+When `cap_reason` is `"scan"`, `candidate_files_total_is_lower_bound` is true,
+or grep match-total lower-bound fields are true, totals and no-match results
+only describe the scanned subset. Narrow the path/glob/query before treating the
+result as complete.
 Grep receipts also include `no_match_scope` (`"complete_scope"` or
 `"scanned_subset"`) when no files match.
 

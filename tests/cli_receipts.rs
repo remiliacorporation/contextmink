@@ -347,6 +347,36 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 }
 
 #[test]
+fn files_ext_filters_without_shell_glob_patterns() {
+    let root = fixture_root("files-ext-filter");
+    fs::create_dir_all(root.join("queue")).unwrap();
+    fs::write(root.join("queue").join("work.JSON"), "{}\n").unwrap();
+    fs::write(root.join("queue").join("work.jsonl"), "{}\n").unwrap();
+    fs::write(root.join("queue").join("notes.txt"), "skip\n").unwrap();
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            "queue",
+            "--ext",
+            ".json",
+            "--extension",
+            "jsonl",
+            "--limit",
+            "5",
+        ],
+    );
+
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 2);
+    assert_eq!(files["total"], 2);
+    assert_eq!(files["files"][0], "queue/work.JSON");
+    assert_eq!(files["files"][1], "queue/work.jsonl");
+}
+
+#[test]
 fn files_accepts_named_path_without_default_root() {
     let root = fixture_root("files-path-alias");
     fs::create_dir_all(root.join("queue")).unwrap();
@@ -653,6 +683,98 @@ fn grep_terms_supports_any_mode_and_term_files() {
 }
 
 #[test]
+fn grep_terms_accepts_agent_friendly_limit_aliases() {
+    let root = fixture_root("grep-terms-aliases");
+    fs::write(root.join("flags.txt"), "--flag-like value\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--term",
+            "alpha",
+            "--limit",
+            "1",
+            "--max-matches",
+            "1",
+            "sample.txt",
+        ],
+    );
+    assert_envelope(&json, "grep-terms", "files");
+    assert_eq!(json["shown"], 1);
+    assert_eq!(json["sample_lines_shown"], 1);
+    assert_eq!(json["cap_reason"], "samples");
+    assert_eq!(json["files"][0]["samples"].as_array().unwrap().len(), 1);
+
+    let flag_like = parse_json_output(
+        &root,
+        &["--json", "grep-terms", "--term", "--flag-like", "flags.txt"],
+    );
+    assert_envelope(&flag_like, "grep-terms", "files");
+    assert_eq!(flag_like["total_matches"], 1);
+
+    let help = run_contextmink(&root, &["grep-terms", "--help"]);
+    assert!(help.contains("--max-matched-files"));
+    assert!(help.contains("--limit"));
+    assert!(help.contains("--max-matches"));
+    assert!(help.contains("--max-lines"));
+}
+
+#[test]
+fn grep_stops_content_scan_at_matching_file_cap() {
+    let root = fixture_root("grep-count-cap");
+    let matches = root.join("matches");
+    fs::create_dir_all(&matches).unwrap();
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"] {
+        fs::write(matches.join(name), "needle\n").unwrap();
+    }
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--term",
+            "needle",
+            "--max-count-files",
+            "2",
+            "--max-files",
+            "2",
+            "matches",
+        ],
+    );
+    assert_envelope(&json, "grep-terms", "files");
+    assert_eq!(json["shown"], 2);
+    assert_eq!(json["matched_files_total"], 2);
+    assert_eq!(json["matched_files_total_is_lower_bound"], true);
+    assert_eq!(json["total_matches"], 2);
+    assert_eq!(json["total_matches_is_lower_bound"], true);
+    assert_eq!(json["candidate_files_scanned"], 5);
+    assert_eq!(json["content_files_scanned"], 2);
+    assert_eq!(json["cap_reason"], "matched_files");
+    assert_eq!(json["truncated"], true);
+
+    let guarded = run_contextmink_raw(
+        &root,
+        &[
+            "--require-complete-scan",
+            "grep-terms",
+            "--term",
+            "needle",
+            "--max-count-files",
+            "2",
+            "matches",
+        ],
+    );
+    assert!(!guarded.status.success());
+    let guarded_stdout = String::from_utf8(guarded.stdout).unwrap();
+    let guarded_stderr = String::from_utf8(guarded.stderr).unwrap();
+    assert!(guarded_stdout.contains("\"cap_reason\":\"matched_files\""));
+    assert!(guarded_stderr.contains("--require-complete-scan"));
+}
+
+#[test]
 fn grep_json_honors_global_sample_cap() {
     let root = fixture_root("grep-json-sample-cap");
 
@@ -731,6 +853,40 @@ fn json_select_projects_array_fields_without_jq_filters() {
     assert_eq!(json["total"], 2);
     assert_eq!(json["rows"][0]["fields"]["index"], "0");
     assert_eq!(json["rows"][0]["fields"]["path"], "\"World|A.blp\"");
+}
+
+#[test]
+fn json_select_tolerates_msys_converted_json_pointers() {
+    let root = fixture_root("json-select-msys-pointers");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_contextmink"))
+        .current_dir(&root)
+        .env("MSYSTEM", "MINGW64")
+        .env("EXEPATH", r"C:\Program Files\Git\bin")
+        .args([
+            "--json",
+            "json-select",
+            "sidecar.json",
+            "--array",
+            "C:/Program Files/Git/textures",
+            "--field",
+            "C:/Program Files/Git/path",
+            "--limit",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "contextmink failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_envelope(&json, "json-select", "rows");
+    assert_eq!(json["array"], "/textures");
+    assert_eq!(json["fields"][0], "/path");
+    assert_eq!(json["rows"][0]["fields"]["/path"], "\"World|A.blp\"");
 }
 
 #[test]

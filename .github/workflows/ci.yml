@@ -18,10 +18,13 @@ jobs:
           components: clippy, rustfmt
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Check package contents
+        run: cargo package

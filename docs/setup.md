@@ -9,11 +9,38 @@ replacement for project-native tools.
 
 ## Prerequisites
 
-- Recent stable Rust toolchain with Cargo. `contextmink` uses Rust edition
+- For standalone use, download the release archive for your platform and put
+  `contextmink` on `PATH`, or run it from the unpacked directory.
+- Rust and Cargo are needed only for source builds or vendored integrations that
+  build the local `tools/contextmink` copy. `contextmink` uses Rust edition
   2024.
-- A POSIX-compatible shell for the `scripts/contextmink` launcher. On Windows,
-  Git Bash works. Without Bash, call `cargo run --manifest-path
-  tools/contextmink/Cargo.toml -- ...` or the release binary directly.
+- A POSIX-compatible shell is needed only for the optional `scripts/contextmink`
+  launcher. On Windows, Git Bash works. Without Bash, call the release binary
+  directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml -- ...`.
+
+## Standalone Binary Install
+
+Use this when the user wants `contextmink` on PATH instead of vendored in each
+repository:
+
+1. Download the release archive for the host platform:
+
+   - `contextmink-<version>-windows-x86_64.zip`
+   - `contextmink-<version>-macos-x86_64.tar.gz`
+   - `contextmink-<version>-macos-arm64.tar.gz`
+   - `contextmink-<version>-linux-x86_64.tar.gz`
+
+2. Verify the adjacent `.sha256` checksum if the archive was downloaded outside
+   GitHub's release UI.
+
+3. Unpack the archive and run:
+
+   ```bash
+   contextmink files --path . --max 20
+   ```
+
+The binary can still use a repository-local `.contextmink.toml`; it searches
+upward from the current directory.
 
 ## Vendored Integration
 
@@ -30,6 +57,10 @@ tool:
    ```bash
    chmod +x scripts/contextmink
    ```
+
+   The launcher uses `tools/contextmink/target/release/contextmink(.exe)` when
+   it builds from source. If the repository should avoid requiring Rust, copy a
+   release binary to `tools/contextmink/bin/contextmink(.exe)` instead.
 
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
 
@@ -54,25 +85,23 @@ tool:
 
    ```bash
    scripts/contextmink files --path . --max 20
-   scripts/contextmink grep contextmink --path . --max-files 5
+   scripts/contextmink grep contextmink --path . --limit 5
    ```
 
-   The first run may build the release binary. Build output is sent to stderr
-   so stdout remains parseable. Release builds include bundled SQLite support
-   so read-only DB inspection works without a system SQLite install.
+   The first source-backed run may build the release binary. Build output is
+   sent to stderr so stdout remains parseable. Release builds include bundled
+   SQLite support so read-only DB inspection works without a system SQLite
+   install.
 
-## Standalone Install
+## Source Install
 
-Use this when the user wants `contextmink` on PATH instead of vendored in each
-repository:
+Use this for local development or when a release archive is not available for
+the host:
 
 ```bash
 cargo install --path .
 contextmink files --path . --max 20
 ```
-
-The binary can still use a repository-local `.contextmink.toml`; it
-searches upward from the current directory.
 
 ## Config Template
 
@@ -113,7 +142,14 @@ different integration mechanism.
 
 ## Operational Notes
 
+- For extension filtering, prefer `files --ext json` / `--extension jsonl`
+  over wildcard globs when commands cross Windows-to-Bash boundaries. Wildcards
+  can be expanded before contextmink receives them.
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
+- For `grep` and `grep-terms`, use `--limit` to cap printed matching files,
+  `--max-matches` / `--max-lines` to cap printed sample match lines, and
+  `--max-count-files` only when it is acceptable for match totals to become
+  lower bounds after enough matching files are found.
 - Pass an explicit file or subdirectory for artifact lookups inside configured
   high-output trees. Use `--with-excluded` only when the whole command should
   include files matched by contextmink's built-in and configured exclude globs.

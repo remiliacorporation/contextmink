@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Thin launcher for the contextmink transcript guard. It works both from a
-# standalone contextmink clone and from a repository that vendors the crate at
-# tools/contextmink. Build chatter goes to stderr so stdout remains parseable.
+# Thin launcher for the contextmink transcript guard. It works from a standalone
+# contextmink clone, a repository that vendors the crate at tools/contextmink,
+# or a repository that carries a prebuilt tools/contextmink/bin/contextmink
+# binary. Build chatter goes to stderr so stdout remains parseable.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -13,11 +14,6 @@ else
   tool="$root/tools/contextmink"
 fi
 
-if [[ ! -f "$tool/Cargo.toml" ]]; then
-  echo "contextmink Cargo.toml not found at $tool" >&2
-  exit 2
-fi
-
 exe=""
 case "${OS:-}:$(uname -s 2>/dev/null || true)" in
   Windows_NT:* | *:MINGW* | *:MSYS* | *:CYGWIN*)
@@ -25,20 +21,45 @@ case "${OS:-}:$(uname -s 2>/dev/null || true)" in
     ;;
 esac
 
-bin="$tool/target/release/contextmink$exe"
-if [[ ! -f "$bin" && -f "$tool/target/release/contextmink.exe" ]]; then
+prebuilt=""
+for candidate in \
+  "$tool/bin/contextmink$exe" \
+  "$tool/bin/contextmink.exe" \
+  "$tool/bin/contextmink" \
+  "$tool/contextmink$exe" \
+  "$tool/contextmink.exe" \
+  "$tool/contextmink"
+do
+  if [[ -f "$candidate" ]]; then
+    prebuilt="$candidate"
+    break
+  fi
+done
+
+target_bin="$tool/target/release/contextmink$exe"
+bin="$target_bin"
+if [[ ! -f "$bin" && -n "$prebuilt" ]]; then
+  bin="$prebuilt"
+elif [[ ! -f "$bin" && -f "$tool/target/release/contextmink.exe" ]]; then
   bin="$tool/target/release/contextmink.exe"
 elif [[ ! -f "$bin" && -f "$tool/target/release/contextmink" ]]; then
   bin="$tool/target/release/contextmink"
 fi
 
+if [[ ! -f "$tool/Cargo.toml" && ! -f "$bin" ]]; then
+  echo "contextmink binary or Cargo.toml not found at $tool" >&2
+  exit 2
+fi
+
 needs_build=0
-if [[ ! -f "$bin" ]]; then
-  needs_build=1
-elif [[ -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bin" -print -quit 2>/dev/null)" ]]; then
-  needs_build=1
-elif [[ -n "$(find "$tool/Cargo.toml" -newer "$bin" -print -quit 2>/dev/null)" ]] && command -v cargo >/dev/null 2>&1; then
-  needs_build=1
+if [[ -f "$tool/Cargo.toml" ]]; then
+  if [[ ! -f "$bin" ]]; then
+    needs_build=1
+  elif [[ -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bin" -print -quit 2>/dev/null)" ]]; then
+    needs_build=1
+  elif [[ -n "$(find "$tool/Cargo.toml" -newer "$bin" -print -quit 2>/dev/null)" ]] && command -v cargo >/dev/null 2>&1; then
+    needs_build=1
+  fi
 fi
 
 if [[ "$needs_build" -eq 1 ]]; then
@@ -51,6 +72,7 @@ if [[ "$needs_build" -eq 1 ]]; then
     fi
   else
     cargo build --quiet --release --manifest-path "$tool/Cargo.toml" 1>&2
+    bin="$target_bin"
   fi
 fi
 
