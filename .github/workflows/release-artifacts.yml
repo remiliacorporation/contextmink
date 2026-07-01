@@ -82,7 +82,7 @@ jobs:
           archive="dist/${{ steps.names.outputs.archive }}"
           mkdir -p "${bundle}/docs" "${bundle}/templates"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${bundle}/"
-          cp README.md SETUP.md LICENSE "${bundle}/"
+          cp README.md SETUP.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
           cp -R docs/. "${bundle}/docs/"
           cp -R templates/. "${bundle}/templates/"
           cat > "${bundle}/manifest.json" <<EOF
@@ -111,7 +111,7 @@ jobs:
           $archive = "dist/${{ steps.names.outputs.archive }}"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $bundle
-          Copy-Item README.md,SETUP.md,LICENSE $bundle
+          Copy-Item README.md,SETUP.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
           Copy-Item -Recurse docs $bundle
           Copy-Item -Recurse templates $bundle
           $manifest = [ordered]@{
@@ -137,6 +137,8 @@ jobs:
           test -f "${bundle}/README.md"
           test -f "${bundle}/SETUP.md"
           test -f "${bundle}/LICENSE"
+          test -f "${bundle}/LICENSE-SSL"
+          test -f "${bundle}/LICENSE-VPL"
           test -f "${bundle}/manifest.json"
           test -d "${bundle}/docs"
           test -d "${bundle}/templates"
@@ -157,6 +159,8 @@ jobs:
           if (!(Test-Path "$bundle/README.md")) { throw "README.md missing" }
           if (!(Test-Path "$bundle/SETUP.md")) { throw "SETUP.md missing" }
           if (!(Test-Path "$bundle/LICENSE")) { throw "LICENSE missing" }
+          if (!(Test-Path "$bundle/LICENSE-SSL")) { throw "LICENSE-SSL missing" }
+          if (!(Test-Path "$bundle/LICENSE-VPL")) { throw "LICENSE-VPL missing" }
           if (!(Test-Path "$bundle/manifest.json")) { throw "manifest.json missing" }
           if (!(Test-Path "$bundle/docs")) { throw "docs missing" }
           if (!(Test-Path "$bundle/templates")) { throw "templates missing" }
@@ -213,15 +217,26 @@ jobs:
           cat > release_body.md <<EOF
           contextmink ${{ steps.ver.outputs.version }}
 
-          Docs/templates refresh only.
+          Agent-recon fidelity release.
 
-          - Make release archive download the primary setup path.
-          - Document project-local binary installs under tools/contextmink/bin/.
-          - Tighten bundled Codex/Claude guidance snippets.
-          - Add Windows launcher guidance for capture of extensionless Bash scripts.
+          - Broad scans enter git-ignored nested repository roots and disclose
+            them in receipts (multi-repo workspaces no longer report false
+            completeness); opt out with --skip-nested-repos.
+          - BOM-driven decoding: UTF-16LE/BE files are searched instead of
+            skipped as binary; UTF-8 BOM no longer breaks JSON parsing.
+          - New dirs subcommand for bounded tree orientation.
+          - grep/grep-terms: --glob/--ext filters, -i, --context N, named
+            skipped-file samples, honest no-match scope, parallel
+            walk-order-deterministic content scan.
+          - slice --tail N and encoding receipts; json-select --where /
+            --where-contains row filters, all_null_fields typo audit, and
+            streamed *.jsonl input; capture keeps head and tail of truncated
+            output; every receipt carries duration_ms.
+          - Bespoke fail-fast config parser: unknown or duplicate
+            .contextmink.toml keys are hard errors.
 
           Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64.
-          Each archive includes the contextmink binary, setup docs, templates, a manifest, and a SHA-256 checksum.
+          Each archive includes the contextmink binary, setup docs, templates, licenses, a manifest, and a SHA-256 checksum.
           EOF
 
       - name: Create GitHub Release

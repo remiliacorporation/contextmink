@@ -41,6 +41,8 @@ docs/
 templates/
 manifest.json
 LICENSE
+LICENSE-SSL
+LICENSE-VPL
 ```
 
 Verify the adjacent `.sha256` checksum when the archive was downloaded through
@@ -234,10 +236,18 @@ requires it.
 
 ## Operational Notes
 
+- Start with `dirs --depth 2` to orient in an unfamiliar tree before running
+  `files` or `grep`.
 - For extension filtering, prefer `files --ext json` / `--extension jsonl`
-  over wildcard globs when commands cross Windows-to-Bash boundaries. Wildcards
-  can be expanded before contextmink receives them.
+  (also available on `grep` and `grep-terms`) over wildcard globs when
+  commands cross Windows-to-Bash boundaries. Wildcards can be expanded before
+  contextmink receives them.
 - Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
+  Add `-i` for case-insensitive matching and `--context N` when the
+  surrounding lines would otherwise need a follow-up `slice`.
+- Broad scans enter git-ignored nested repository roots and disclose them in
+  `nested_repos_entered`; pass `--skip-nested-repos` for strict Git scope, or
+  exclude unwanted repos in `.contextmink.toml`.
 - For `grep` and `grep-terms`, use `--limit` to cap printed matching files,
   `--max-matches` / `--max-lines` to cap printed sample match lines, and
   `--max-count-files` only when it is acceptable for match totals to become
@@ -251,9 +261,13 @@ requires it.
   `--with-excluded` is also set.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
-- Prefer `slice --range START:END` before opening large files.
+- Prefer `slice --range START:END` before opening large files, and
+  `slice --tail N` for the end of logs.
 - Prefer `json-find` over opening whole JSON reports, and `json-select` for
-  bounded row/field projection from JSON arrays or JSONL row files.
+  bounded row/field projection from JSON arrays or JSONL row files
+  (`--where FIELD=VALUE` / `--where-contains FIELD=TEXT` filter rows; a field
+  reported in `all_null_fields` is a selector typo or shape mismatch, not
+  evidence).
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
   `json-select`; it preserves slash-leading JSON Pointer selectors while still
   leaving normal file path handling to the shell/runtime boundary.
@@ -264,9 +278,9 @@ requires it.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no better
   native bound exists; read the child `exit_code`/`success` fields in the
-  receipt. On Windows, the Bash launcher lets `capture` retry extensionless
-  shell scripts through the current Bash interpreter without shell-string
-  parsing.
+  receipt. Truncated captures keep both the head and the tail of the output.
+  On Windows, the Bash launcher lets `capture` retry extensionless shell
+  scripts through the current Bash interpreter without shell-string parsing.
 - Treat capped receipts as `complete: false`. When `cap_reason` is `scan` or
   `candidate_files_total_is_lower_bound` is true, totals and no-match results
   only describe the scanned subset; narrow and rerun.
@@ -290,6 +304,8 @@ tools/contextmink/templates/
 tools/contextmink/.github/
 tools/contextmink/.gitignore
 tools/contextmink/LICENSE
+tools/contextmink/LICENSE-SSL
+tools/contextmink/LICENSE-VPL
 ```
 
 Do not sync a target repository's `.contextmink.toml`; that file is local

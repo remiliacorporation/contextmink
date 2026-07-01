@@ -266,4 +266,6 @@ specialized parser, extend that domain tool instead.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The distribution also carries
+[LICENSE-SSL](LICENSE-SSL) and [LICENSE-VPL](LICENSE-VPL); both accompany every
+release archive and mirror sync.
