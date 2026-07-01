@@ -63,6 +63,7 @@ pub(crate) fn command_sqlite(
     sql_file: Option<&Path>,
     max_rows: usize,
     max_scan_rows: usize,
+    timeout_secs: u64,
     max_value_chars: usize,
 ) -> Result<()> {
     if max_rows == 0 {
@@ -81,6 +82,7 @@ pub(crate) fn command_sqlite(
         return Err(anyhow!("sqlite SQL must not be empty"));
     }
     let conn = open_sqlite_readonly(db)?;
+    let _watchdog = QueryWatchdog::arm(&conn, timeout_secs);
     let mut stmt = conn.prepare(&sql).context("failed to prepare sqlite SQL")?;
     if stmt.parameter_count() != 0 {
         return Err(anyhow!(
@@ -101,7 +103,10 @@ pub(crate) fn command_sqlite(
     let mut json_rows = Vec::new();
     let mut total_seen = 0usize;
     let mut scan_truncated = false;
-    while let Some(row) = row_iter.next().context("failed to read sqlite row")? {
+    while let Some(row) = row_iter
+        .next()
+        .map_err(|error| annotate_interrupt(error, timeout_secs))?
+    {
         total_seen += 1;
         if total_seen <= max_rows {
             let mut rendered = Vec::with_capacity(column_count);
@@ -550,6 +555,63 @@ fn sqlite_index_summary_human(index: &SqliteIndexSummary) -> String {
     }
     parts.push(format!("origin={}", index.origin));
     parts.join(" ")
+}
+
+/// Interrupts a running query after a wall-clock budget so a runaway scan
+/// fails with an accountable error instead of hanging until the calling
+/// shell kills the process without a receipt.
+struct QueryWatchdog {
+    cancel: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl QueryWatchdog {
+    fn arm(conn: &Connection, timeout_secs: u64) -> Self {
+        if timeout_secs == 0 {
+            return Self {
+                cancel: None,
+                thread: None,
+            };
+        }
+        let handle = conn.get_interrupt_handle();
+        let (cancel, cancelled) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            // A disconnect (watchdog dropped) means the query finished.
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                cancelled.recv_timeout(std::time::Duration::from_secs(timeout_secs))
+            {
+                handle.interrupt();
+            }
+        });
+        Self {
+            cancel: Some(cancel),
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for QueryWatchdog {
+    fn drop(&mut self) {
+        drop(self.cancel.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join(); // guardrail: allow-ignore-result watchdog thread cannot fail meaningfully after cancellation
+        }
+    }
+}
+
+fn annotate_interrupt(error: rusqlite::Error, timeout_secs: u64) -> anyhow::Error {
+    let interrupted = matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(inner, _)
+            if inner.code == rusqlite::ErrorCode::OperationInterrupted
+    );
+    if interrupted {
+        anyhow::Error::new(error).context(format!(
+            "sqlite query interrupted after --timeout-secs {timeout_secs};              narrow the query (WHERE/LIMIT) or raise --timeout-secs (0 disables)"
+        ))
+    } else {
+        anyhow::Error::new(error).context("failed to read sqlite row")
+    }
 }
 
 fn open_sqlite_readonly(db: &Path) -> Result<Connection> {

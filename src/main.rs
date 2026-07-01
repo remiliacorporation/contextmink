@@ -248,6 +248,7 @@ fn main() -> Result<()> {
             sql_file,
             max_rows,
             max_scan_rows,
+            timeout_secs,
             max_value_chars,
         } => {
             let db = resolve_db_path("sqlite", positional_db.as_ref(), db.as_ref())?;
@@ -259,6 +260,7 @@ fn main() -> Result<()> {
                 sql_file.as_deref(),
                 *max_rows,
                 *max_scan_rows,
+                *timeout_secs,
                 *max_value_chars,
             )
         }

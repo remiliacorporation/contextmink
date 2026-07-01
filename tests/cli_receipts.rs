@@ -1557,3 +1557,49 @@ fn excludes_hold_for_absolute_scan_roots() {
             .ends_with("artifacts/big.log")
     );
 }
+
+#[test]
+fn sqlite_timeout_interrupts_runaway_queries() {
+    let root = fixture_root("sqlite-timeout");
+    let db_path = root.join("tiny.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY);")
+        .unwrap();
+    drop(conn);
+
+    // A nonterminating recursive CTE must be interrupted, not hang.
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "--path",
+            "tiny.sqlite",
+            "--timeout-secs",
+            "1",
+            "--sql",
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("interrupted after --timeout-secs 1"),
+        "stderr: {stderr}"
+    );
+
+    // A normal query under the same budget still succeeds.
+    let ok = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "--path",
+            "tiny.sqlite",
+            "--timeout-secs",
+            "1",
+            "--sql",
+            "SELECT 1 AS one",
+        ],
+    );
+    assert_eq!(ok["rows"][0]["fields"]["one"], "1");
+}

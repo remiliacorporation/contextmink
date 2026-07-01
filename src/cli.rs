@@ -540,6 +540,12 @@ pub(crate) enum Command {
         )]
         max_scan_rows: usize,
         #[arg(
+            long = "timeout-secs",
+            default_value_t = 60,
+            help = "Interrupt the query after this many seconds; 0 disables"
+        )]
+        timeout_secs: u64,
+        #[arg(
             long,
             default_value_t = 260,
             help = "Maximum characters per cell value"

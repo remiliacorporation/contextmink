@@ -55,8 +55,10 @@ diagnostics, and synchronization should stay in project-native tools.
   on Git Bash/Windows so they are not rewritten as host paths before reaching
   the native binary.
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
-  caps and receipt metadata. Prefer `--path <file>` for the DB path;
-  positional DB paths and `--db <file>` remain accepted.
+  caps and receipt metadata. A runaway query is interrupted after
+  `--timeout-secs` (default 60; 0 disables) so it fails accountably instead
+  of hanging until the calling shell kills it. Prefer `--path <file>` for the
+  DB path; positional DB paths and `--db <file>` remain accepted.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
   from SQLite metadata without hand-written PRAGMA queries. Prefer
   `--path <file>` for the DB path; positional DB paths and `--db <file>` remain
