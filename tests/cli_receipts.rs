@@ -166,9 +166,48 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
     assert_eq!(json["exit_code"], 0);
     assert_eq!(json["stdout"]["shown_lines"], 1);
     assert!(json["stdout"]["total_lines"].as_u64().unwrap() > 1);
+    assert!(json["stdout"]["omitted_lines"].as_u64().unwrap() > 0);
     assert_eq!(json["truncated"], true);
     assert_eq!(json["cap_reason"], "lines");
-    assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
+    // With a one-line budget the tail (verdict end of the output) wins.
+    assert!(
+        json["stdout_text"]
+            .as_str()
+            .unwrap()
+            .contains("CONTEXTMINK_RECEIPT")
+    );
+}
+
+#[test]
+fn capture_keeps_head_and_tail_when_line_capped() {
+    let root = fixture_root("capture-head-tail");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    // slice 1:3 of sample.txt emits 3 content lines plus a receipt line.
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "2",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:3",
+        ],
+    );
+    assert_envelope(&json, "capture", "lines");
+    let text = json["stdout_text"].as_str().unwrap();
+    assert!(text.contains("alpha beta"), "head kept: {text}");
+    assert!(text.contains("CONTEXTMINK_RECEIPT"), "tail kept: {text}");
+    assert!(text.contains("omitted"), "omission marker shown: {text}");
+    assert_eq!(json["stdout"]["head_lines"], 1);
+    assert_eq!(json["stdout"]["tail_lines"], 1);
+    assert_eq!(json["stdout"]["omitted_lines"], 2);
 }
 
 #[test]
@@ -499,6 +538,8 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
     )
     .unwrap();
 
+    // vendor/sqlite-tool is git-ignored but is itself a repo root: the
+    // nested-repo supplement enters it and discloses the entry.
     let without_flag = parse_json_output(
         &root,
         &[
@@ -516,9 +557,39 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
     assert!(
         files_without_flag
             .iter()
-            .all(|path| path.as_str().unwrap().trim_start_matches("./")
-                != "vendor/sqlite-tool/README.md")
+            .any(|path| path.as_str().unwrap().trim_start_matches("./")
+                == "vendor/sqlite-tool/README.md")
     );
+    let nested = without_flag["nested_repos_entered"].as_array().unwrap();
+    assert_eq!(nested.len(), 1);
+    assert_eq!(
+        nested[0].as_str().unwrap().trim_start_matches("./"),
+        "vendor/sqlite-tool"
+    );
+
+    // --skip-nested-repos restores strict Git-scope behavior.
+    let skipped = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            ".",
+            "--skip-nested-repos",
+            "--max",
+            "20",
+            "--max-scan-files",
+            "20",
+        ],
+    );
+    assert_envelope(&skipped, "files", "files");
+    assert!(
+        skipped["files"].as_array().unwrap().iter().all(|path| path
+            .as_str()
+            .unwrap()
+            .trim_start_matches("./")
+            != "vendor/sqlite-tool/README.md")
+    );
+    assert_eq!(skipped["nested_repos_entered"].as_array().unwrap().len(), 0);
 
     let with_flag = parse_json_output(
         &root,
@@ -817,7 +888,8 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
     );
     assert_envelope(&json, "grep", "files");
     assert_eq!(json["pattern"], "\"alpha|beta\"");
-    assert_eq!(json["total_matches"], 4);
+    // total_matches counts matching lines: "alpha beta", "alpha", "beta".
+    assert_eq!(json["total_matches"], 3);
 }
 
 #[test]
@@ -1163,4 +1235,280 @@ fn slice_past_eof_is_complete_when_every_available_line_is_shown() {
     assert_eq!(json["truncated"], false);
     assert_eq!(json["complete"], true);
     assert!(json["cap_reason"].is_null());
+}
+
+#[test]
+fn grep_filters_by_extension_and_glob() {
+    let root = fixture_root("grep-ext-glob");
+    fs::write(root.join("code.rs"), "needle in rust\n").unwrap();
+    fs::write(root.join("notes.md"), "needle in markdown\n").unwrap();
+
+    let by_ext = parse_json_output(&root, &["--json", "grep", "needle", ".", "--ext", "rs"]);
+    assert_envelope(&by_ext, "grep", "files");
+    assert_eq!(by_ext["total"], 1);
+    assert_eq!(by_ext["files"][0]["path"], "./code.rs");
+
+    let by_glob = parse_json_output(&root, &["--json", "grep", "needle", ".", "--glob", "*.md"]);
+    assert_envelope(&by_glob, "grep", "files");
+    assert_eq!(by_glob["total"], 1);
+    assert_eq!(by_glob["files"][0]["path"], "./notes.md");
+}
+
+#[test]
+fn grep_ignore_case_matches_and_labels() {
+    let root = fixture_root("grep-ignore-case");
+    fs::write(root.join("mixed.txt"), "NeEdLe here\n").unwrap();
+
+    let sensitive = parse_json_output(&root, &["--json", "grep", "needle", "mixed.txt"]);
+    assert_eq!(sensitive["total_matches"], 0);
+
+    let insensitive = parse_json_output(
+        &root,
+        &["--json", "grep", "-i", "--literal", "needle", "mixed.txt"],
+    );
+    assert_eq!(insensitive["total_matches"], 1);
+    assert!(
+        insensitive["pattern"]
+            .as_str()
+            .unwrap()
+            .contains("ignore_case")
+    );
+
+    let terms = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "-i",
+            "--term",
+            "NEEDLE",
+            "mixed.txt",
+        ],
+    );
+    assert_eq!(terms["total_matches"], 1);
+}
+
+#[test]
+fn grep_context_lines_render_with_dash_separator() {
+    let root = fixture_root("grep-context");
+    fs::write(root.join("ctx.txt"), "before\nneedle\nafter\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "grep", "needle", "ctx.txt", "--context", "1"],
+    );
+    let samples = json["files"][0]["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 3);
+    assert_eq!(samples[0]["is_match"], false);
+    assert_eq!(samples[1]["is_match"], true);
+    assert_eq!(samples[2]["is_match"], false);
+
+    let human = run_contextmink(&root, &["grep", "needle", "ctx.txt", "--context", "1"]);
+    assert!(human.contains("ctx.txt:1-before"));
+    assert!(human.contains("ctx.txt:2:needle"));
+    assert!(human.contains("ctx.txt:3-after"));
+}
+
+#[test]
+fn grep_scans_utf16_files_and_lists_skipped_files() {
+    let root = fixture_root("grep-utf16-skips");
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in "needle utf16\n".encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    fs::write(root.join("powershell.log"), utf16).unwrap();
+    fs::write(root.join("binary.bin"), b"MZ\x00\x00needle").unwrap();
+
+    let json = parse_json_output(&root, &["--json", "grep", "needle", "."]);
+    assert_eq!(json["total_matches"], 1);
+    assert_eq!(json["files"][0]["path"], "./powershell.log");
+    assert_eq!(json["skipped_large_or_binary"], 1);
+    let skipped = json["skipped_files_sample"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0]["path"], "./binary.bin");
+    assert_eq!(skipped[0]["reason"], "binary");
+}
+
+#[test]
+fn grep_no_match_scope_demotes_when_large_files_skipped() {
+    let root = fixture_root("grep-large-skip-scope");
+    fs::write(root.join("big.txt"), "x".repeat(64)).unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "not-present",
+            "big.txt",
+            "--max-file-bytes",
+            "8",
+        ],
+    );
+    assert_eq!(json["total_matches"], 0);
+    assert_eq!(json["no_match_scope"], "scanned_subset");
+    assert_eq!(json["skipped_files_sample"][0]["reason"], "large");
+}
+
+#[test]
+fn slice_tail_returns_last_lines() {
+    let root = fixture_root("slice-tail");
+
+    let json = parse_json_output(&root, &["--json", "slice", "sample.txt", "--tail", "2"]);
+    assert_envelope(&json, "slice", "lines");
+    assert_eq!(json["shown"], 2);
+    assert_eq!(json["lines"][0]["line"], 2);
+    assert_eq!(json["lines"][0]["text"], "alpha");
+    assert_eq!(json["lines"][1]["line"], 3);
+    assert_eq!(json["lines"][1]["text"], "beta");
+    assert_eq!(json["encoding"], "utf8");
+}
+
+#[test]
+fn json_select_where_filters_rows() {
+    let root = fixture_root("json-select-where");
+    fs::write(
+        root.join("queue.jsonl"),
+        "{\"addr\":\"0x1\",\"state\":\"open\"}\n{\"addr\":\"0x2\",\"state\":\"closed\"}\n{\"addr\":\"0x3\",\"state\":\"open\"}\n",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "queue.jsonl",
+            "--field",
+            "addr",
+            "--where",
+            "state=open",
+        ],
+    );
+    assert_envelope(&json, "json-select", "rows");
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["rows_scanned"], 3);
+    assert_eq!(json["rows"][0]["fields"]["addr"], "\"0x1\"");
+    assert_eq!(json["rows"][1]["fields"]["addr"], "\"0x3\"");
+
+    let contains = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "queue.jsonl",
+            "--field",
+            "addr",
+            "--where-contains",
+            "state=clo",
+        ],
+    );
+    assert_eq!(contains["total"], 1);
+    assert_eq!(contains["rows"][0]["fields"]["addr"], "\"0x2\"");
+}
+
+#[test]
+fn json_select_reports_all_null_fields() {
+    let root = fixture_root("json-select-all-null");
+    fs::write(
+        root.join("rows.jsonl"),
+        "{\"addr\":\"0x1\"}\n{\"addr\":\"0x2\"}\n",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "rows.jsonl",
+            "--field",
+            "addr",
+            "--field",
+            "typo_field",
+        ],
+    );
+    let all_null = json["all_null_fields"].as_array().unwrap();
+    assert_eq!(all_null.len(), 1);
+    assert_eq!(all_null[0], "typo_field");
+
+    let human = run_contextmink(
+        &root,
+        &["json-select", "rows.jsonl", "--field", "typo_field"],
+    );
+    assert!(human.contains("warning: field(s) typo_field"));
+}
+
+#[test]
+fn json_commands_tolerate_utf8_bom_documents() {
+    let root = fixture_root("json-bom");
+    fs::write(root.join("bom.json"), b"\xEF\xBB\xBF{\"mode\":\"demo\"}").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "json-find", "bom.json", "--key-contains", "mode"],
+    );
+    assert_eq!(json["total"], 1);
+
+    let select = parse_json_output(
+        &root,
+        &["--json", "json-select", "bom.json", "--field", "mode"],
+    );
+    assert_eq!(select["rows"][0]["fields"]["mode"], "\"demo\"");
+}
+
+#[test]
+fn dirs_reports_bounded_recursive_file_counts() {
+    let root = fixture_root("dirs-overview");
+    fs::create_dir_all(root.join("crates").join("alpha").join("src")).unwrap();
+    fs::create_dir_all(root.join("crates").join("beta")).unwrap();
+    fs::write(
+        root.join("crates").join("alpha").join("src").join("lib.rs"),
+        "x\n",
+    )
+    .unwrap();
+    fs::write(root.join("crates").join("alpha").join("Cargo.toml"), "x\n").unwrap();
+    fs::write(root.join("crates").join("beta").join("Cargo.toml"), "x\n").unwrap();
+
+    let json = parse_json_output(&root, &["--json", "dirs", "crates", "--depth", "1"]);
+    assert_envelope(&json, "dirs", "dirs");
+    let dirs = json["dirs"].as_array().unwrap();
+    let find = |name: &str| {
+        dirs.iter()
+            .find(|dir| dir["path"] == name)
+            .unwrap_or_else(|| panic!("missing dir {name} in {dirs:?}"))
+    };
+    assert_eq!(find("crates")["files"], 3);
+    assert_eq!(find("crates/alpha")["files"], 2);
+    assert_eq!(find("crates/beta")["files"], 1);
+
+    let deeper = parse_json_output(&root, &["--json", "dirs", "crates", "--depth", "2"]);
+    let dirs = deeper["dirs"].as_array().unwrap();
+    assert!(dirs.iter().any(|dir| dir["path"] == "crates/alpha/src"));
+}
+
+#[test]
+fn config_typos_fail_fast() {
+    let root = fixture_root("config-typo");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"x\"\nexclude_glob = [\"typo/**\"]\n",
+    )
+    .unwrap();
+
+    let output = run_contextmink_raw(&root, &["files", ".", "--max", "1"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unknown key `exclude_glob`")
+    );
+}
+
+#[test]
+fn receipts_carry_duration_ms() {
+    let root = fixture_root("duration-ms");
+
+    let json = parse_json_output(&root, &["--json", "files", ".", "--max", "1"]);
+    assert!(json["duration_ms"].is_number());
 }

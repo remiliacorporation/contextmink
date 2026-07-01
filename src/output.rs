@@ -1,12 +1,28 @@
 use std::io::{self, Write};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
 use crate::cli::Cli;
-use crate::config::ContextConfig;
 
 const RECEIPT_PREFIX: &str = "CONTEXTMINK_RECEIPT ";
+
+static COMMAND_START: OnceLock<Instant> = OnceLock::new();
+
+/// Record process start so every receipt can carry `duration_ms`; agents use
+/// it to judge whether a query is cheap enough to rerun with narrower scope.
+pub(crate) fn mark_command_start() {
+    let _ = COMMAND_START.set(Instant::now()); // guardrail: allow-ignore-result second initialization in tests is harmless
+}
+
+fn elapsed_ms() -> u64 {
+    COMMAND_START
+        .get()
+        .map(|start| start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
 
 pub(crate) fn clamp_text(value: &str, max_chars: usize) -> String {
     let mut iter = value.chars();
@@ -143,77 +159,8 @@ pub(crate) fn base_receipt(
     map.insert("truncated".to_string(), json!(truncated));
     map.insert("complete".to_string(), json!(!truncated));
     map.insert("cap_reason".to_string(), json!(cap_reason));
+    map.insert("duration_ms".to_string(), json!(elapsed_ms()));
     map
-}
-
-/// Grep receipts keep `shown`/`total` in file units in every path and report
-/// match/sample/scan detail in dedicated fields, so `cap_reason` (not the unit
-/// of `total`) is what tells a consumer why output stopped.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_grep_receipt(
-    cli: &Cli,
-    command_name: &str,
-    config: &ContextConfig,
-    files_shown: usize,
-    matched_files_total: usize,
-    total_matches: usize,
-    sample_lines_shown: usize,
-    candidate_files_total: usize,
-    candidate_files_scanned: usize,
-    content_files_scanned: usize,
-    skipped_large_or_binary: usize,
-    truncated: bool,
-    matched_files_total_is_lower_bound: bool,
-    total_matches_is_lower_bound: bool,
-    cap_reason: Option<&str>,
-) -> Result<()> {
-    let mut map = base_receipt(
-        command_name,
-        config.profile.as_deref(),
-        "files",
-        files_shown,
-        matched_files_total,
-        truncated,
-        cap_reason,
-    );
-    map.insert("total_matches".to_string(), json!(total_matches));
-    map.insert("sample_lines_shown".to_string(), json!(sample_lines_shown));
-    map.insert(
-        "candidate_files_total".to_string(),
-        json!(candidate_files_total),
-    );
-    map.insert(
-        "candidate_files_scanned".to_string(),
-        json!(candidate_files_scanned),
-    );
-    map.insert(
-        "content_files_scanned".to_string(),
-        json!(content_files_scanned),
-    );
-    map.insert(
-        "candidate_files_total_is_lower_bound".to_string(),
-        json!(matches!(cap_reason, Some("scan"))),
-    );
-    map.insert(
-        "matched_files_total_is_lower_bound".to_string(),
-        json!(matched_files_total_is_lower_bound),
-    );
-    map.insert(
-        "total_matches_is_lower_bound".to_string(),
-        json!(total_matches_is_lower_bound),
-    );
-    map.insert(
-        "skipped_large_or_binary".to_string(),
-        json!(skipped_large_or_binary),
-    );
-    map.insert(
-        "no_match_scope".to_string(),
-        json!(no_match_scope(
-            matched_files_total == 0,
-            matches!(cap_reason, Some("scan"))
-        )),
-    );
-    write_receipt_checked(cli, map)
 }
 
 pub(crate) fn no_match_scope(no_matches: bool, scan_truncated: bool) -> Option<&'static str> {

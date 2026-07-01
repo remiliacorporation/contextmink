@@ -8,9 +8,19 @@ use regex::Regex;
 
 #[derive(Clone)]
 pub(crate) enum TextMatcher {
-    Literal(String),
-    Regex(Regex),
-    Terms { terms: Vec<String>, mode: TermMode },
+    Literal {
+        pattern: String,
+        ignore_case: bool,
+    },
+    Regex {
+        regex: Regex,
+        ignore_case: bool,
+    },
+    Terms {
+        terms: Vec<String>,
+        mode: TermMode,
+        ignore_case: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -20,49 +30,94 @@ pub(crate) enum TermMode {
 }
 
 impl TextMatcher {
-    pub(crate) fn new(pattern: &str, literal: bool) -> Result<Self> {
+    pub(crate) fn new(pattern: &str, literal: bool, ignore_case: bool) -> Result<Self> {
         if literal {
-            Ok(Self::Literal(pattern.to_owned()))
+            Ok(Self::Literal {
+                pattern: if ignore_case {
+                    pattern.to_lowercase()
+                } else {
+                    pattern.to_owned()
+                },
+                ignore_case,
+            })
         } else {
-            Ok(Self::Regex(Regex::new(pattern).with_context(|| {
-                format!("invalid regex pattern: {pattern}")
-            })?))
+            Ok(Self::Regex {
+                regex: regex::RegexBuilder::new(pattern)
+                    .case_insensitive(ignore_case)
+                    .build()
+                    .with_context(|| format!("invalid regex pattern: {pattern}"))?,
+                ignore_case,
+            })
+        }
+    }
+
+    pub(crate) fn terms(terms: Vec<String>, mode: TermMode, ignore_case: bool) -> Self {
+        let terms = if ignore_case {
+            terms.into_iter().map(|term| term.to_lowercase()).collect()
+        } else {
+            terms
+        };
+        Self::Terms {
+            terms,
+            mode,
+            ignore_case,
         }
     }
 
     pub(crate) fn is_match(&self, text: &str) -> bool {
         match self {
-            Self::Literal(pattern) => text.contains(pattern),
-            Self::Regex(pattern) => pattern.is_match(text),
-            Self::Terms { terms, mode } => match mode {
-                TermMode::All => terms.iter().all(|term| text.contains(term)),
-                TermMode::Any => terms.iter().any(|term| text.contains(term)),
-            },
-        }
-    }
-
-    pub(crate) fn count_matches(&self, text: &str) -> usize {
-        match self {
-            Self::Literal(pattern) => {
-                if pattern.is_empty() {
-                    0
+            Self::Literal {
+                pattern,
+                ignore_case,
+            } => {
+                if *ignore_case {
+                    text.to_lowercase().contains(pattern)
                 } else {
-                    text.matches(pattern).count()
+                    text.contains(pattern)
                 }
             }
-            Self::Regex(pattern) => pattern.find_iter(text).count(),
-            Self::Terms { .. } => text.lines().filter(|line| self.is_match(line)).count(),
+            Self::Regex { regex, .. } => regex.is_match(text),
+            Self::Terms {
+                terms,
+                mode,
+                ignore_case,
+            } => {
+                let lowered;
+                let haystack = if *ignore_case {
+                    lowered = text.to_lowercase();
+                    lowered.as_str()
+                } else {
+                    text
+                };
+                match mode {
+                    TermMode::All => terms.iter().all(|term| haystack.contains(term)),
+                    TermMode::Any => terms.iter().any(|term| haystack.contains(term)),
+                }
+            }
         }
     }
 
     pub(crate) fn label(&self) -> String {
+        let suffix = if self.is_ignore_case() {
+            " ignore_case"
+        } else {
+            ""
+        };
         match self {
-            Self::Literal(pattern) => format!("{pattern:?}"),
-            Self::Regex(pattern) => format!("{:?}", pattern.as_str()),
-            Self::Terms { terms, mode } => match mode {
-                TermMode::All => format!("all_terms({})", terms.join(",")),
-                TermMode::Any => format!("any_terms({})", terms.join(",")),
+            Self::Literal { pattern, .. } => format!("{pattern:?}{suffix}"),
+            Self::Regex { regex, .. } => format!("{:?}{suffix}", regex.as_str()),
+            Self::Terms { terms, mode, .. } => match mode {
+                TermMode::All => format!("all_terms({}){suffix}", terms.join(",")),
+                TermMode::Any => format!("any_terms({}){suffix}", terms.join(",")),
             },
+        }
+    }
+
+    fn is_ignore_case(&self) -> bool {
+        match self {
+            Self::Literal { ignore_case, .. }
+            | Self::Regex { ignore_case, .. }
+            | Self::Terms { ignore_case, .. } => *ignore_case,
         }
     }
 }

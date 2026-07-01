@@ -65,6 +65,11 @@ pub(crate) enum Command {
         )]
         with_git_ignored: bool,
         #[arg(
+            long = "skip-nested-repos",
+            help = "Do not enter git-ignored nested repository roots during broad scans"
+        )]
+        skip_nested_repos: bool,
+        #[arg(
             long,
             alias = "limit",
             default_value_t = 80,
@@ -75,6 +80,57 @@ pub(crate) enum Command {
             long,
             default_value_t = 220,
             help = "Maximum characters per printed path"
+        )]
+        max_line_chars: usize,
+        #[arg(
+            long,
+            default_value_t = 50_000,
+            help = "Maximum candidate files to scan"
+        )]
+        max_scan_files: usize,
+    },
+    /// Summarize directories with bounded recursive file counts.
+    Dirs {
+        #[arg(value_name = "PATH", help = "Directories to summarize")]
+        paths: Vec<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "PATH",
+            help = "Additional directory to summarize"
+        )]
+        path: Vec<PathBuf>,
+        #[arg(
+            long,
+            default_value_t = 2,
+            help = "Directory levels below each root to report"
+        )]
+        depth: usize,
+        #[arg(
+            long = "with-excluded",
+            help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
+        )]
+        with_excluded: bool,
+        #[arg(
+            long = "with-git-ignored",
+            help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
+        )]
+        with_git_ignored: bool,
+        #[arg(
+            long = "skip-nested-repos",
+            help = "Do not enter git-ignored nested repository roots during broad scans"
+        )]
+        skip_nested_repos: bool,
+        #[arg(
+            long,
+            alias = "limit",
+            default_value_t = 60,
+            help = "Maximum directories to print"
+        )]
+        max: usize,
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum characters per printed line"
         )]
         max_line_chars: usize,
         #[arg(
@@ -108,6 +164,27 @@ pub(crate) enum Command {
         pattern_file: Option<PathBuf>,
         #[arg(long, help = "Treat the pattern as literal text instead of regex")]
         literal: bool,
+        #[arg(long = "ignore-case", short = 'i', help = "Match case-insensitively")]
+        ignore_case: bool,
+        #[arg(
+            long = "glob",
+            help = "Only search files matching this glob or basename"
+        )]
+        globs: Vec<String>,
+        #[arg(
+            long = "ext",
+            alias = "extension",
+            value_name = "EXT",
+            help = "Only search files with this extension; leading dot is optional"
+        )]
+        extensions: Vec<String>,
+        #[arg(
+            long,
+            short = 'C',
+            default_value_t = 0,
+            help = "Context lines to print around each sample match line"
+        )]
+        context: usize,
         #[arg(
             long = "with-excluded",
             help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
@@ -118,6 +195,11 @@ pub(crate) enum Command {
             help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
         )]
         with_git_ignored: bool,
+        #[arg(
+            long = "skip-nested-repos",
+            help = "Do not enter git-ignored nested repository roots during broad scans"
+        )]
+        skip_nested_repos: bool,
         #[arg(
             long,
             visible_alias = "max-matched-files",
@@ -181,6 +263,27 @@ pub(crate) enum Command {
         any: bool,
         #[arg(long, alias = "and", help = "Shortcut for --mode all")]
         all: bool,
+        #[arg(long = "ignore-case", short = 'i', help = "Match case-insensitively")]
+        ignore_case: bool,
+        #[arg(
+            long = "glob",
+            help = "Only search files matching this glob or basename"
+        )]
+        globs: Vec<String>,
+        #[arg(
+            long = "ext",
+            alias = "extension",
+            value_name = "EXT",
+            help = "Only search files with this extension; leading dot is optional"
+        )]
+        extensions: Vec<String>,
+        #[arg(
+            long,
+            short = 'C',
+            default_value_t = 0,
+            help = "Context lines to print around each sample match line"
+        )]
+        context: usize,
         #[arg(value_name = "PATH", help = "Files or directories to search")]
         paths: Vec<PathBuf>,
         #[arg(
@@ -199,6 +302,11 @@ pub(crate) enum Command {
             help = "Include files hidden by Git/.ignore rules. Contextmink exclude globs still apply unless --with-excluded is also set."
         )]
         with_git_ignored: bool,
+        #[arg(
+            long = "skip-nested-repos",
+            help = "Do not enter git-ignored nested repository roots during broad scans"
+        )]
+        skip_nested_repos: bool,
         #[arg(
             long,
             visible_alias = "max-matched-files",
@@ -262,6 +370,12 @@ pub(crate) enum Command {
         start: usize,
         #[arg(long, help = "Last one-based line to print")]
         end: Option<usize>,
+        #[arg(
+            long,
+            value_name = "N",
+            help = "Print the last N lines instead of a start-anchored window"
+        )]
+        tail: Option<usize>,
         #[arg(
             long,
             default_value_t = 120,
@@ -356,6 +470,18 @@ pub(crate) enum Command {
             help = "Field key or JSON Pointer to include in each row"
         )]
         fields: Vec<String>,
+        #[arg(
+            long = "where",
+            value_name = "FIELD=VALUE",
+            help = "Only keep rows whose field equals VALUE exactly; repeatable, all must hold"
+        )]
+        where_exact: Vec<String>,
+        #[arg(
+            long = "where-contains",
+            value_name = "FIELD=TEXT",
+            help = "Only keep rows whose field value contains TEXT; repeatable, all must hold"
+        )]
+        where_contains: Vec<String>,
         #[arg(
             long,
             alias = "limit",

@@ -1,9 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use serde::Deserialize;
 
 const CONFIG_NAME: &str = ".contextmink.toml";
 const BUILTIN_EXCLUDES: &[&str] = &[
@@ -17,7 +16,7 @@ const BUILTIN_EXCLUDES: &[&str] = &[
     "**/.venv/**",
 ];
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 struct ContextminkConfig {
     profile: Option<String>,
     exclude_globs: Option<Vec<String>>,
@@ -39,7 +38,7 @@ pub(crate) fn load_context_config(
         if let Some(path) = selected_config.as_deref() {
             let text = fs::read_to_string(path)
                 .with_context(|| format!("failed to read config {}", path.display()))?;
-            raw = toml::from_str(&text)
+            raw = parse_config(&text)
                 .with_context(|| format!("failed to parse {}", path.display()))?;
         }
     }
@@ -62,6 +61,145 @@ pub(crate) fn load_context_config(
     })
 }
 
+/// Bespoke parser for the two-key `.contextmink.toml` surface:
+/// `profile = "name"` and `exclude_globs = ["glob", ...]` (single or
+/// multi-line arrays), plus comments and blank lines. Anything else is a
+/// hard error so config typos fail fast instead of silently changing scan
+/// scope.
+fn parse_config(text: &str) -> Result<ContextminkConfig> {
+    let mut config = ContextminkConfig::default();
+    let mut lines = text.lines().enumerate();
+    while let Some((index, line)) = lines.next() {
+        let line_no = index + 1;
+        let line = strip_comment(line).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| anyhow!("line {line_no}: expected `key = value`, found {line:?}"))?;
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "profile" => {
+                if config.profile.is_some() {
+                    return Err(anyhow!("line {line_no}: duplicate key `profile`"));
+                }
+                config.profile =
+                    Some(parse_string(value).ok_or_else(|| {
+                        anyhow!("line {line_no}: profile must be a quoted string")
+                    })?);
+            }
+            "exclude_globs" => {
+                if config.exclude_globs.is_some() {
+                    return Err(anyhow!("line {line_no}: duplicate key `exclude_globs`"));
+                }
+                let mut body = value.to_owned();
+                if !body.starts_with('[') {
+                    return Err(anyhow!("line {line_no}: exclude_globs must be an array"));
+                }
+                while !array_is_closed(&body) {
+                    let Some((next_index, next_line)) = lines.next() else {
+                        return Err(anyhow!(
+                            "line {line_no}: exclude_globs array is never closed with `]`"
+                        ));
+                    };
+                    let next_line = strip_comment(next_line).trim();
+                    if next_line.contains('=') && !next_line.starts_with(['"', '\'', ']', ',']) {
+                        return Err(anyhow!(
+                            "line {}: exclude_globs array is never closed with `]`",
+                            next_index + 1
+                        ));
+                    }
+                    body.push(' ');
+                    body.push_str(next_line);
+                }
+                config.exclude_globs = Some(parse_string_array(&body).map_err(|error| {
+                    anyhow!("exclude_globs starting at line {line_no}: {error}")
+                })?);
+            }
+            other => {
+                return Err(anyhow!(
+                    "line {line_no}: unknown key `{other}`; contextmink config accepts `profile` and `exclude_globs`"
+                ));
+            }
+        }
+    }
+    Ok(config)
+}
+
+/// A `]` outside quoted strings closes an `exclude_globs` array body.
+fn array_is_closed(body: &str) -> bool {
+    let mut in_string = false;
+    let mut quote = '"';
+    for ch in body.chars() {
+        match ch {
+            '"' | '\'' if !in_string => {
+                in_string = true;
+                quote = ch;
+            }
+            ch if in_string && ch == quote => in_string = false,
+            ']' if !in_string => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Strip a `#` comment that is not inside a quoted string.
+fn strip_comment(line: &str) -> &str {
+    let mut in_string = false;
+    let mut quote = '"';
+    for (offset, ch) in line.char_indices() {
+        match ch {
+            '"' | '\'' if !in_string => {
+                in_string = true;
+                quote = ch;
+            }
+            ch if in_string && ch == quote => in_string = false,
+            '#' if !in_string => return &line[..offset],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn parse_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    let inner = value
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })?;
+    if inner.contains(['"', '\'']) {
+        return None;
+    }
+    Some(inner.replace("\\\\", "\\"))
+}
+
+fn parse_string_array(body: &str) -> Result<Vec<String>> {
+    let body = body.trim();
+    let inner = body
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or_else(|| anyhow!("array must be wrapped in [ and ]"))?;
+    let mut values = Vec::new();
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        values.push(
+            parse_string(item)
+                .ok_or_else(|| anyhow!("array entries must be quoted strings, found {item:?}"))?,
+        );
+    }
+    Ok(values)
+}
+
 fn find_config_path() -> Option<PathBuf> {
     let mut current = std::env::current_dir().ok()?;
     loop {
@@ -74,3 +212,6 @@ fn find_config_path() -> Option<PathBuf> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

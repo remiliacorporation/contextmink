@@ -13,24 +13,43 @@ pub(crate) struct CollectedFiles {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) total_seen: usize,
     pub(crate) truncated: bool,
+    /// Git-ignored nested repository roots that were entered anyway, as
+    /// display paths. Empty when no supplement ran.
+    pub(crate) nested_repos_entered: Vec<String>,
 }
+
+pub(crate) struct CollectOptions<'a> {
+    pub(crate) globs: &'a [String],
+    pub(crate) extensions: &'a [String],
+    pub(crate) with_excluded: bool,
+    pub(crate) with_git_ignored: bool,
+    pub(crate) skip_nested_repos: bool,
+    pub(crate) max_scan_files: usize,
+}
+
+/// How many directory levels below a pruned (git-ignored) directory the
+/// nested-repo supplement probes for a `.git` marker. Repos nested deeper
+/// under an ignored plain directory must be passed as explicit roots.
+const NESTED_REPO_PROBE_DEPTH: usize = 1;
+
+/// Bound on nested-repo recursion (a repo inside a repo inside a repo...).
+const NESTED_REPO_MAX_RECURSION: usize = 4;
 
 pub(crate) fn collect_files(
     paths: &[PathBuf],
-    globs: &[String],
-    extensions: &[String],
     config: &ContextConfig,
-    with_excluded: bool,
-    with_git_ignored: bool,
-    max_scan_files: usize,
+    options: &CollectOptions<'_>,
 ) -> Result<CollectedFiles> {
-    let include_matcher = build_optional_globset(globs)?;
-    let extension_matcher = normalize_extensions(extensions);
-    let explicit_excluded_roots = explicit_excluded_roots(paths, config, with_excluded);
-    let mut files = Vec::new();
-    let mut seen = HashSet::new();
-    let mut total_seen = 0usize;
-    let mut truncated = false;
+    let include_matcher = build_optional_globset(options.globs)?;
+    let extension_matcher = normalize_extensions(options.extensions);
+    let explicit_excluded_roots = explicit_excluded_roots(paths, config, options.with_excluded);
+    let mut state = CollectState {
+        files: Vec::new(),
+        seen: HashSet::new(),
+        total_seen: 0,
+        truncated: false,
+        nested_repos_entered: Vec::new(),
+    };
     for root in paths {
         if root.is_file() {
             if file_is_included(
@@ -38,86 +57,240 @@ pub(crate) fn collect_files(
                 &include_matcher,
                 &extension_matcher,
                 config,
-                with_excluded,
+                options.with_excluded,
                 &explicit_excluded_roots,
             ) {
-                let candidate = root.to_path_buf();
-                if !seen.insert(candidate.clone()) {
-                    continue;
-                }
-                total_seen += 1;
-                if files.len() < max_scan_files {
-                    files.push(candidate);
-                } else {
-                    truncated = true;
-                    break;
-                }
+                state.push_file(root.to_path_buf(), options.max_scan_files);
+            }
+            if state.truncated {
+                break;
             }
             continue;
         }
-        let mut walk = WalkBuilder::new(root);
-        walk.hidden(false)
-            .ignore(!with_git_ignored)
-            .git_ignore(!with_git_ignored)
-            .git_exclude(!with_git_ignored)
-            .parents(!with_git_ignored);
-        if !with_excluded {
-            let excludes = config.excludes.clone();
-            let explicit_roots = explicit_excluded_roots.clone();
-            walk.filter_entry(move |entry| {
-                let normalized = normalize_path(entry.path());
-                if is_under_explicit_excluded_root(&normalized, &explicit_roots) {
-                    return true;
-                }
-                if entry.file_type().is_some_and(|kind| kind.is_dir()) {
-                    let normalized = trim_normalized_path(&normalized);
-                    if normalized.is_empty() || normalized == "." {
-                        return true;
-                    }
-                    let probe = format!("{normalized}/__contextmink_probe__");
-                    !excludes.is_match(&normalized) && !excludes.is_match(&probe)
-                } else {
-                    !excludes.is_match(&normalized)
-                }
-            });
-        }
-        for entry in walk.build() {
-            let entry = entry?;
-            if entry.file_type().is_some_and(|kind| kind.is_file()) {
-                if !file_is_included(
-                    entry.path(),
-                    &include_matcher,
-                    &extension_matcher,
-                    config,
-                    with_excluded,
-                    &explicit_excluded_roots,
-                ) {
-                    continue;
-                }
-                let candidate = entry.path().to_path_buf();
-                if !seen.insert(candidate.clone()) {
-                    continue;
-                }
-                total_seen += 1;
-                if files.len() < max_scan_files {
-                    files.push(candidate);
-                } else {
-                    truncated = true;
-                    break;
-                }
-            }
-        }
-        if truncated {
+        walk_root(
+            root,
+            config,
+            options,
+            &include_matcher,
+            &extension_matcher,
+            &explicit_excluded_roots,
+            &mut state,
+            0,
+        )?;
+        if state.truncated {
             break;
         }
     }
-    files.sort();
-    files.dedup();
+    state.files.sort();
+    state.files.dedup();
+    state.nested_repos_entered.sort();
+    state.nested_repos_entered.dedup();
     Ok(CollectedFiles {
-        files,
-        total_seen,
-        truncated,
+        files: state.files,
+        total_seen: state.total_seen,
+        truncated: state.truncated,
+        nested_repos_entered: state.nested_repos_entered,
     })
+}
+
+struct CollectState {
+    files: Vec<PathBuf>,
+    seen: HashSet<PathBuf>,
+    total_seen: usize,
+    truncated: bool,
+    nested_repos_entered: Vec<String>,
+}
+
+impl CollectState {
+    fn push_file(&mut self, candidate: PathBuf, max_scan_files: usize) {
+        if !self.seen.insert(candidate.clone()) {
+            return;
+        }
+        self.total_seen += 1;
+        if self.files.len() < max_scan_files {
+            self.files.push(candidate);
+        } else {
+            self.truncated = true;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_root(
+    root: &Path,
+    config: &ContextConfig,
+    options: &CollectOptions<'_>,
+    include_matcher: &Option<GlobSet>,
+    extension_matcher: &[String],
+    explicit_excluded_roots: &[String],
+    state: &mut CollectState,
+    nesting: usize,
+) -> Result<()> {
+    let mut walk = WalkBuilder::new(root);
+    walk.hidden(false)
+        .ignore(!options.with_git_ignored)
+        .git_ignore(!options.with_git_ignored)
+        .git_exclude(!options.with_git_ignored)
+        .parents(!options.with_git_ignored);
+    if !options.with_excluded {
+        let excludes = config.excludes.clone();
+        let explicit_roots = explicit_excluded_roots.to_vec();
+        walk.filter_entry(move |entry| {
+            let normalized = normalize_path(entry.path());
+            if is_under_explicit_excluded_root(&normalized, &explicit_roots) {
+                return true;
+            }
+            if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                let normalized = trim_normalized_path(&normalized);
+                if normalized.is_empty() || normalized == "." {
+                    return true;
+                }
+                let probe = format!("{normalized}/__contextmink_probe__");
+                !excludes.is_match(&normalized) && !excludes.is_match(&probe)
+            } else {
+                !excludes.is_match(&normalized)
+            }
+        });
+    }
+    let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
+    for entry in walk.build() {
+        let entry = entry?;
+        match entry.file_type() {
+            Some(kind) if kind.is_dir() => {
+                visited_dirs.insert(entry.path().to_path_buf());
+            }
+            Some(kind) if kind.is_file() => {
+                if !file_is_included(
+                    entry.path(),
+                    include_matcher,
+                    extension_matcher,
+                    config,
+                    options.with_excluded,
+                    explicit_excluded_roots,
+                ) {
+                    continue;
+                }
+                state.push_file(entry.path().to_path_buf(), options.max_scan_files);
+                if state.truncated {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Nested-repo supplement: a directory pruned by Git ignore rules that is
+    // itself a git repository root is a workspace member (multi-repo
+    // workspaces routinely git-ignore sibling repos for repo separation), not
+    // a generated artifact. Enter it with its own ignore rules and disclose
+    // the entry in the receipt.
+    if options.with_git_ignored
+        || options.skip_nested_repos
+        || state.truncated
+        || nesting >= NESTED_REPO_MAX_RECURSION
+    {
+        return Ok(());
+    }
+    let mut nested_roots = Vec::new();
+    for dir in &visited_dirs {
+        collect_pruned_repo_roots(
+            dir,
+            &visited_dirs,
+            config,
+            options.with_excluded,
+            explicit_excluded_roots,
+            &mut nested_roots,
+        );
+    }
+    nested_roots.sort();
+    for nested_root in nested_roots {
+        state.nested_repos_entered.push(display_path(&nested_root));
+        walk_root(
+            &nested_root,
+            config,
+            options,
+            include_matcher,
+            extension_matcher,
+            explicit_excluded_roots,
+            state,
+            nesting + 1,
+        )?;
+        if state.truncated {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+/// Find git-repo roots among the unvisited (walker-pruned) children of a
+/// visited directory. Pruned plain directories are probed one level deeper
+/// so a repo directly under an ignored grouping directory is still found.
+fn collect_pruned_repo_roots(
+    dir: &Path,
+    visited_dirs: &HashSet<PathBuf>,
+    config: &ContextConfig,
+    with_excluded: bool,
+    explicit_excluded_roots: &[String],
+    output: &mut Vec<PathBuf>,
+) {
+    probe_children_for_repos(
+        dir,
+        visited_dirs,
+        config,
+        with_excluded,
+        explicit_excluded_roots,
+        NESTED_REPO_PROBE_DEPTH,
+        output,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn probe_children_for_repos(
+    dir: &Path,
+    visited_dirs: &HashSet<PathBuf>,
+    config: &ContextConfig,
+    with_excluded: bool,
+    explicit_excluded_roots: &[String],
+    remaining_probe_depth: usize,
+    output: &mut Vec<PathBuf>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        if visited_dirs.contains(&path) {
+            continue;
+        }
+        if path.file_name().is_some_and(|name| name == ".git") {
+            continue;
+        }
+        if !with_excluded {
+            let normalized = normalize_path(&path);
+            if !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots) {
+                let trimmed = trim_normalized_path(&normalized);
+                let probe = format!("{trimmed}/__contextmink_probe__");
+                if config.excludes.is_match(&trimmed) || config.excludes.is_match(&probe) {
+                    continue;
+                }
+            }
+        }
+        if path.join(".git").exists() {
+            output.push(path);
+        } else if remaining_probe_depth > 0 {
+            probe_children_for_repos(
+                &path,
+                visited_dirs,
+                config,
+                with_excluded,
+                explicit_excluded_roots,
+                remaining_probe_depth - 1,
+                output,
+            );
+        }
+    }
 }
 
 fn explicit_excluded_roots(
@@ -223,19 +396,6 @@ fn normalize_extensions(extensions: &[String]) -> Vec<String> {
             }
         })
         .collect()
-}
-
-pub(crate) fn read_text_file(path: &Path, max_file_bytes: u64) -> Result<Option<String>> {
-    let metadata =
-        fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
-    if metadata.len() > max_file_bytes {
-        return Ok(None);
-    }
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    if bytes.contains(&0) {
-        return Ok(None);
-    }
-    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 fn normalize_path(path: &Path) -> String {

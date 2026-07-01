@@ -11,10 +11,14 @@ use crate::config::ContextConfig;
 use crate::output::{base_receipt, clamp_text, emit_json, write_receipt_checked};
 
 struct RawCapturedStream {
-    bytes: Vec<u8>,
+    /// First `max_bytes` of the stream.
+    head: Vec<u8>,
+    /// Last `max_bytes` of the stream (empty when the head holds everything).
+    tail: Vec<u8>,
+    /// Absolute byte offset where `tail` begins.
+    tail_start: usize,
     total_bytes: usize,
     total_lines: usize,
-    byte_truncated: bool,
 }
 
 struct CapturedStream {
@@ -23,6 +27,9 @@ struct CapturedStream {
     captured_bytes: usize,
     total_lines: usize,
     shown_lines: usize,
+    head_lines: usize,
+    tail_lines: usize,
+    omitted_lines: usize,
     byte_truncated: bool,
     line_truncated: bool,
     char_truncated: bool,
@@ -196,8 +203,13 @@ fn spawn_captured_child(
     }
 }
 
+/// Retain the first and last `max_bytes` of the stream. Tool output puts its
+/// verdict at the end (test summaries, compiler error totals), so keeping
+/// only the head would drop exactly the part an agent needs most.
 fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<RawCapturedStream> {
-    let mut bytes = Vec::with_capacity(max_bytes.min(8192));
+    let mut head = Vec::with_capacity(max_bytes.min(8192));
+    let mut tail: Vec<u8> = Vec::new();
+    let mut tail_start = 0usize;
     let mut total_bytes = 0usize;
     let mut newline_count = 0usize;
     let mut saw_any = false;
@@ -210,7 +222,6 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
             break;
         }
         saw_any = true;
-        total_bytes += read;
         for byte in &buffer[..read] {
             if *byte == b'\n' {
                 newline_count += 1;
@@ -219,19 +230,33 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
                 last_was_newline = false;
             }
         }
-        let remaining = max_bytes.saturating_sub(bytes.len());
-        if remaining > 0 {
-            bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+        let head_remaining = max_bytes.saturating_sub(head.len());
+        if head_remaining > 0 {
+            head.extend_from_slice(&buffer[..read.min(head_remaining)]);
         }
+        if read > head_remaining {
+            let overflow = &buffer[head_remaining..read];
+            let overflow_start = total_bytes + head_remaining;
+            if tail.is_empty() {
+                tail_start = overflow_start;
+            }
+            tail.extend_from_slice(overflow);
+            if tail.len() > max_bytes {
+                let drop = tail.len() - max_bytes;
+                tail.drain(..drop);
+                tail_start += drop;
+            }
+        }
+        total_bytes += read;
     }
 
     let total_lines = newline_count + usize::from(saw_any && !last_was_newline);
-    let byte_truncated = total_bytes > bytes.len();
     Ok(RawCapturedStream {
-        bytes,
+        head,
+        tail,
+        tail_start,
         total_bytes,
         total_lines,
-        byte_truncated,
     })
 }
 
@@ -240,27 +265,131 @@ fn render_captured_stream(
     max_lines: usize,
     max_line_chars: usize,
 ) -> CapturedStream {
-    let decoded = String::from_utf8_lossy(&raw.bytes);
-    let mut lines = Vec::new();
-    let mut char_truncated = false;
-    for line in decoded.lines().take(max_lines) {
-        let line = line.trim_end_matches('\r');
-        if line.chars().count() > max_line_chars {
-            char_truncated = true;
-        }
-        lines.push(clamp_text(line, max_line_chars));
+    let captured_bytes = raw.head.len() + raw.tail.len();
+    let byte_truncated = raw.total_bytes > captured_bytes;
+    // Bytes between the head and the retained tail were dropped whenever the
+    // tail does not start exactly where the head ended.
+    let tail_contiguous = raw.tail.is_empty() || raw.tail_start == raw.head.len();
+
+    let mut clamp_state = ClampState::default();
+    let (head_lines, head_partial_last) = decode_lines(&raw.head);
+    let mut head_lines = head_lines;
+    if !raw.tail.is_empty() && head_partial_last && !tail_contiguous {
+        // The head ends mid-line and the rest of that line was dropped.
+        head_lines.pop();
     }
-    let shown_lines = lines.len();
+    let mut tail_lines = Vec::new();
+    if !raw.tail.is_empty() {
+        let (mut lines, _) = decode_lines(&raw.tail);
+        if !tail_contiguous && !lines.is_empty() {
+            // The first retained tail line is almost certainly partial.
+            lines.remove(0);
+        }
+        tail_lines = lines;
+    }
+
+    let (text, head_shown, tail_shown, omitted_lines) = if tail_lines.is_empty() {
+        if head_lines.len() <= max_lines {
+            let shown = head_lines.len();
+            let rendered = head_lines
+                .iter()
+                .map(|line| clamp_state.clamp(line, max_line_chars))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (rendered, shown, 0usize, 0usize)
+        } else {
+            // Everything fits in the head buffer but exceeds the line budget:
+            // split the budget so the end of the output (summaries, error
+            // totals) stays visible.
+            let head_budget = max_lines / 2;
+            let tail_shown = max_lines - head_budget;
+            let omitted = head_lines.len() - max_lines;
+            let mut parts = Vec::new();
+            parts.extend(
+                head_lines
+                    .iter()
+                    .take(head_budget)
+                    .map(|line| clamp_state.clamp(line, max_line_chars)),
+            );
+            if omitted > 0 {
+                parts.push(format!("[contextmink] ... omitted {omitted} line(s) ..."));
+            }
+            parts.extend(
+                head_lines
+                    .iter()
+                    .skip(head_lines.len() - tail_shown)
+                    .map(|line| clamp_state.clamp(line, max_line_chars)),
+            );
+            (parts.join("\n"), head_budget, tail_shown, omitted)
+        }
+    } else {
+        let head_budget = max_lines / 2;
+        let head_shown = head_lines.len().min(head_budget);
+        let tail_budget = max_lines.saturating_sub(head_shown).max(1);
+        let tail_shown = tail_lines.len().min(tail_budget);
+        let omitted = raw
+            .total_lines
+            .saturating_sub(head_shown)
+            .saturating_sub(tail_shown);
+        let mut parts = Vec::new();
+        parts.extend(
+            head_lines
+                .iter()
+                .take(head_shown)
+                .map(|line| clamp_state.clamp(line, max_line_chars)),
+        );
+        if omitted > 0 {
+            parts.push(format!("[contextmink] ... omitted {omitted} line(s) ..."));
+        }
+        parts.extend(
+            tail_lines
+                .iter()
+                .skip(tail_lines.len() - tail_shown)
+                .map(|line| clamp_state.clamp(line, max_line_chars)),
+        );
+        (parts.join("\n"), head_shown, tail_shown, omitted)
+    };
+
+    let shown_lines = head_shown + tail_shown;
     CapturedStream {
-        text: lines.join("\n"),
+        text,
         total_bytes: raw.total_bytes,
-        captured_bytes: raw.bytes.len(),
+        captured_bytes,
         total_lines: raw.total_lines,
         shown_lines,
-        byte_truncated: raw.byte_truncated,
-        line_truncated: raw.total_lines > shown_lines,
-        char_truncated,
+        head_lines: head_shown,
+        tail_lines: tail_shown,
+        omitted_lines,
+        byte_truncated,
+        line_truncated: omitted_lines > 0,
+        char_truncated: clamp_state.truncated,
     }
+}
+
+#[derive(Default)]
+struct ClampState {
+    truncated: bool,
+}
+
+impl ClampState {
+    fn clamp(&mut self, line: &str, max_line_chars: usize) -> String {
+        if line.chars().count() > max_line_chars {
+            self.truncated = true;
+        }
+        clamp_text(line, max_line_chars)
+    }
+}
+
+/// Decode captured bytes into trimmed lines; the boolean reports whether the
+/// final line lacked a terminating newline (possibly partial content).
+fn decode_lines(bytes: &[u8]) -> (Vec<String>, bool) {
+    let decoded = String::from_utf8_lossy(bytes);
+    let partial_last = !decoded.is_empty() && !decoded.ends_with('\n');
+    let lines = decoded
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_owned())
+        .collect();
+    (lines, partial_last)
 }
 
 fn captured_stream_truncated(stream: &CapturedStream) -> bool {
@@ -282,6 +411,9 @@ fn capture_cap_reason(stdout: &CapturedStream, stderr: &CapturedStream) -> Optio
 fn captured_stream_json(stream: &CapturedStream) -> Value {
     json!({
         "shown_lines": stream.shown_lines,
+        "head_lines": stream.head_lines,
+        "tail_lines": stream.tail_lines,
+        "omitted_lines": stream.omitted_lines,
         "total_lines": stream.total_lines,
         "captured_bytes": stream.captured_bytes,
         "total_bytes": stream.total_bytes,

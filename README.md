@@ -17,25 +17,43 @@ diagnostics, and synchronization should stay in project-native tools.
   and searched without `--with-excluded`. Use `--with-git-ignored` only when
   intentionally inspecting files hidden by Git or `.ignore` rules. On Windows
   shell bridges, prefer `--ext jsonl` over wildcard globs for extension filters.
+- `dirs`: bounded directory overview with recursive file counts per directory,
+  `--depth` levels below each root. Use it to orient in an unfamiliar tree
+  before running `files` or `grep`. Directories that contain no files do not
+  appear.
 - `grep`: print a bounded file/sample summary for a regex or literal pattern.
-  Use `--pattern-file <file>` when regex punctuation would be fragile through a
-  host shell bridge. `--max-count-files` stops content scanning after enough
-  matching files have been found; receipts mark match totals as lower bounds
-  when that cap fires.
+  `total_matches` counts matching lines. Use `--pattern-file <file>` when regex
+  punctuation would be fragile through a host shell bridge; `--glob` / `--ext`
+  to narrow the candidate set; `-i` / `--ignore-case` for case-insensitive
+  matching; `--context N` to include surrounding lines with each sample
+  (context lines print with a `-` separator and count against the sample
+  budget). `--max-count-files` stops content scanning after enough matching
+  files have been found; receipts mark match totals as lower bounds when that
+  cap fires. Content scanning runs on multiple threads with walk-order
+  deterministic output.
 - `grep-terms`: match lines containing all `--term` values by default, or any
   term with `--mode any` / `--any` / `--or`. Use `--term-file <file>` for
   phrase lists when shell quoting or regex punctuation would make inline
-  arguments fragile. `--limit` caps printed files; `--max-matches` /
+  arguments fragile. Accepts the same `--glob` / `--ext` / `-i` / `--context`
+  narrowing as `grep`. `--limit` caps printed files; `--max-matches` /
   `--max-lines` cap printed sample match lines.
-- `slice`: print bounded line windows, or character windows for very long
-  single-line files and pasted attachments.
+- `slice`: print bounded line windows (`--range`, `--start`/`--end`, or
+  `--tail N` for the end of a file), or character windows for very long
+  single-line files and pasted attachments. Receipts report the detected
+  `encoding`.
 - `json-find`: query JSON by key, path, or summarized value without opening the
   whole document.
 - `json-select`: project a JSON document or array to bounded row summaries using
-  JSON Pointer and field selectors. JSONL files are treated as row streams when
-  the file is not one complete JSON document. The launcher preserves
-  slash-leading JSON Pointer selector arguments on Git Bash/Windows so they are
-  not rewritten as host paths before reaching the native binary.
+  JSON Pointer and field selectors. `--where FIELD=VALUE` and
+  `--where-contains FIELD=TEXT` keep only matching rows (repeatable; all must
+  hold; string values compare without JSON quotes). Files named `*.jsonl` are
+  streamed row-by-row without loading the whole file; other files fall back to
+  JSONL parsing when they are not one complete JSON document. A requested or
+  predicate field that is null/missing in every scanned row is reported in
+  `all_null_fields` and as a warning, so selector typos cannot silently project
+  `null`. The launcher preserves slash-leading JSON Pointer selector arguments
+  on Git Bash/Windows so they are not rewritten as host paths before reaching
+  the native binary.
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
   caps and receipt metadata. Prefer `--path <file>` for the DB path;
   positional DB paths and `--db <file>` remain accepted.
@@ -43,15 +61,40 @@ diagnostics, and synchronization should stay in project-native tools.
   from SQLite metadata without hand-written PRAGMA queries. Prefer
   `--path <file>` for the DB path; positional DB paths and `--db <file>` remain
   accepted.
-- `capture` (`run` alias): execute argv directly and print capped stdout/stderr summaries
-  with exit status. Use it only when a command's output cardinality is unknown
-  and the command lacks a better native filter or projection.
+- `capture` (`run` alias): execute argv directly and print capped stdout/stderr
+  summaries with exit status. When output exceeds the line or byte budget, the
+  head and the tail are both kept with an omission marker between them, because
+  tool verdicts (test summaries, error totals) live at the end of output. Use
+  capture only when a command's output cardinality is unknown and the command
+  lacks a better native filter or projection.
 
 Use `--json` when another script or tool should consume the result directly.
 Use `--fail-if-truncated` (aliases: `--fail-on-truncate`,
 `--strict-complete`) when a capped result should stop automation after the
 receipt is emitted. Use `--require-complete-scan` when display caps may be fine
 but scan-capped lower-bound totals should fail.
+
+## Text Encodings
+
+Content scanning and slicing decode by BOM: UTF-16LE/UTF-16BE files (PowerShell
+`Out-File` default on Windows) are decoded and searched instead of being
+skipped as binary, and a UTF-8 BOM is stripped before JSON parsing. Files with
+NUL bytes and no UTF-16 BOM are skipped as binary; UTF-8 decoding is lossy so
+mixed-encoding files still surface their ASCII content.
+
+## Nested Git Repositories
+
+Multi-repo workspaces routinely git-ignore sibling repos for repo separation
+(`.gitignore` or `.git/info/exclude` entries like `myrepo/`). A standard
+git-aware walk silently skips those trees, which makes a broad scan claim
+completeness it does not have. `files`, `dirs`, `grep`, and `grep-terms`
+therefore enter a git-ignored directory that is itself a git repository root
+(it contains `.git`), applying that repository's own ignore rules, and disclose
+every entry in `nested_repos_entered` (capped list) plus
+`nested_repos_entered_total`. Pass `--skip-nested-repos` to restore strict
+Git-scope behavior, or exclude unwanted repos in `.contextmink.toml` (policy
+stays in configuration). Repos nested more than one level below an ignored
+plain directory are not auto-detected; pass them as explicit roots.
 
 ## Install
 
@@ -122,12 +165,15 @@ scripts/contextmink files --path . --max 20
 scripts/contextmink files --path . --max 20 --max-scan-files 5000
 scripts/contextmink files --path vendor --with-git-ignored --max 20
 scripts/contextmink files --path specs/_assets --with-git-ignored --ext json --max 20
+scripts/contextmink dirs crates --depth 2 --max 40
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
+scripts/contextmink grep CMapChunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term "panic" --or src --max-matches 12
 scripts/contextmink slice src/main.rs --range 120:180
+scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
-scripts/contextmink json-select queue.jsonl --field addr --field flags --limit 10
+scripts/contextmink json-select queue.jsonl --field addr --where-contains name=CMap --limit 10
 scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
@@ -155,9 +201,13 @@ Stable receipt fields:
 | `truncated` | whether output was capped |
 | `complete` | `!truncated` |
 | `cap_reason` | why output stopped, or `null` |
+| `duration_ms` | wall-clock cost of the command |
 
-For `grep` and `grep-terms`, `shown` and `total` are file counts. Match,
-sample, scan, and skip counts are reported in dedicated fields. If
+For `grep` and `grep-terms`, `shown` and `total` are file counts and
+`total_matches` counts matching lines. Match, sample, scan, and skip counts are
+reported in dedicated fields; `skipped_files_sample` names the first files that
+were skipped as too large or binary, and a no-match verdict reports
+`no_match_scope: "scanned_subset"` whenever large files went unexamined. If
 `matched_files_total_is_lower_bound` or `total_matches_is_lower_bound` is true,
 the content scan stopped at `--max-count-files`; narrow the query or raise that
 cap before treating match totals as exact.
@@ -168,10 +218,11 @@ result as complete.
 Grep receipts also include `no_match_scope` (`"complete_scope"` or
 `"scanned_subset"`) when no files match.
 
-For `capture`, `shown` and `total` are stdout plus stderr line counts. The
-receipt records the child command's `exit_code` and `success`; `contextmink`
-itself exits successfully when capture succeeds, even if the child command
-failed. `capture` is not a shell, sandbox, retry layer, or read-only guard. On
+For `capture`, `shown` and `total` are stdout plus stderr line counts; each
+stream reports `head_lines`, `tail_lines`, and `omitted_lines` when output was
+split around an omission marker. The receipt records the child command's
+`exit_code` and `success`; `contextmink` itself exits successfully when capture
+succeeds, even if the child command failed. `capture` is not a shell, sandbox, retry layer, or read-only guard. On
 Windows through the Bash launcher, extensionless shell scripts that fail direct
 spawn with "not a Win32 application" are retried through the current Bash
 interpreter as argv, not as a shell string; receipts include `spawn_fallback`
@@ -192,6 +243,10 @@ exclude_globs = [
   "**/node_modules/**",
 ]
 ```
+
+The configuration surface is exactly these two keys; unknown keys, duplicate
+keys, and malformed values are hard errors so a config typo cannot silently
+change scan scope.
 
 Keep repository policy in `.contextmink.toml` and repository instructions, not in the
 binary. Exclude generated or high-output trees from broad scans, then pass an

@@ -2,7 +2,9 @@ mod capture;
 mod cli;
 mod commands;
 mod config;
+mod encoding;
 mod files;
+mod grep_scan;
 mod json_tools;
 mod output;
 mod sqlite;
@@ -15,13 +17,16 @@ use clap::Parser;
 
 use capture::command_capture;
 use cli::{Cli, Command};
-use commands::{command_files, command_grep, command_grep_with_matcher, command_slice};
+use commands::{
+    GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
+};
 use config::load_context_config;
 use json_tools::{command_json_find, command_json_select};
 use sqlite::{command_sqlite, command_sqlite_schema};
 use text::{TextMatcher, collect_terms, resolve_term_mode};
 
 fn main() -> Result<()> {
+    output::mark_command_start();
     let cli = Cli::parse();
     let config = load_context_config(cli.config.as_deref(), cli.no_config)?;
     match &cli.command {
@@ -32,6 +37,7 @@ fn main() -> Result<()> {
             extensions,
             with_excluded,
             with_git_ignored,
+            skip_nested_repos,
             max,
             max_line_chars,
             max_scan_files,
@@ -43,6 +49,29 @@ fn main() -> Result<()> {
             extensions,
             *with_excluded,
             *with_git_ignored,
+            *skip_nested_repos,
+            *max,
+            *max_line_chars,
+            *max_scan_files,
+        ),
+        Command::Dirs {
+            paths,
+            path,
+            depth,
+            with_excluded,
+            with_git_ignored,
+            skip_nested_repos,
+            max,
+            max_line_chars,
+            max_scan_files,
+        } => command_dirs(
+            &cli,
+            &config,
+            &merged_paths(paths, path),
+            *depth,
+            *with_excluded,
+            *with_git_ignored,
+            *skip_nested_repos,
             *max,
             *max_line_chars,
             *max_scan_files,
@@ -52,11 +81,16 @@ fn main() -> Result<()> {
             path,
             pattern_file,
             literal,
+            ignore_case,
+            globs,
+            extensions,
             with_excluded,
             with_git_ignored,
+            skip_nested_repos,
             max_count_files,
             max_files,
             lines_per_file,
+            context,
             max_sample_lines,
             max_line_chars,
             max_scan_files,
@@ -68,15 +102,22 @@ fn main() -> Result<()> {
             path,
             pattern_file.as_deref(),
             *literal,
+            *ignore_case,
+            globs,
+            extensions,
             *with_excluded,
             *with_git_ignored,
-            *max_count_files,
-            *max_files,
-            *lines_per_file,
-            *max_sample_lines,
-            *max_line_chars,
-            *max_scan_files,
-            *max_file_bytes,
+            *skip_nested_repos,
+            &GrepCaps {
+                max_count_files: *max_count_files,
+                max_files: *max_files,
+                lines_per_file: *lines_per_file,
+                context: *context,
+                max_sample_lines: *max_sample_lines,
+                max_line_chars: *max_line_chars,
+                max_scan_files: *max_scan_files,
+                max_file_bytes: *max_file_bytes,
+            },
         ),
         Command::GrepTerms {
             terms,
@@ -84,13 +125,18 @@ fn main() -> Result<()> {
             mode,
             any,
             all,
+            ignore_case,
+            globs,
+            extensions,
             paths,
             path,
             with_excluded,
             with_git_ignored,
+            skip_nested_repos,
             max_count_files,
             max_files,
             lines_per_file,
+            context,
             max_sample_lines,
             max_line_chars,
             max_scan_files,
@@ -102,17 +148,23 @@ fn main() -> Result<()> {
                 &cli,
                 &config,
                 "grep-terms",
-                TextMatcher::Terms { terms, mode },
+                TextMatcher::terms(terms, mode, *ignore_case),
                 &merged_paths(paths, path),
+                globs,
+                extensions,
                 *with_excluded,
                 *with_git_ignored,
-                *max_count_files,
-                *max_files,
-                *lines_per_file,
-                *max_sample_lines,
-                *max_line_chars,
-                *max_scan_files,
-                *max_file_bytes,
+                *skip_nested_repos,
+                &GrepCaps {
+                    max_count_files: *max_count_files,
+                    max_files: *max_files,
+                    lines_per_file: *lines_per_file,
+                    context: *context,
+                    max_sample_lines: *max_sample_lines,
+                    max_line_chars: *max_line_chars,
+                    max_scan_files: *max_scan_files,
+                    max_file_bytes: *max_file_bytes,
+                },
             )
         }
         Command::Slice {
@@ -121,6 +173,7 @@ fn main() -> Result<()> {
             range,
             start,
             end,
+            tail,
             lines,
             max_lines,
             max_line_chars,
@@ -135,6 +188,7 @@ fn main() -> Result<()> {
             range.as_deref(),
             *start,
             *end,
+            *tail,
             *lines,
             *max_lines,
             *max_line_chars,
@@ -170,6 +224,8 @@ fn main() -> Result<()> {
             path,
             array,
             fields,
+            where_exact,
+            where_contains,
             max,
             max_value_chars,
         } => command_json_select(
@@ -180,6 +236,8 @@ fn main() -> Result<()> {
                 .expect("clap requires a JSON input through <FILE> or --path"),
             array.as_deref(),
             fields,
+            where_exact,
+            where_contains,
             *max,
             *max_value_chars,
         ),
