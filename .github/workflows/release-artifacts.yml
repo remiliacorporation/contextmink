@@ -213,6 +213,13 @@ jobs:
           cat > release_body.md <<EOF
           contextmink ${{ steps.ver.outputs.version }}
 
+          Docs/templates refresh only.
+
+          - Make release archive download the primary setup path.
+          - Document project-local binary installs under tools/contextmink/bin/.
+          - Tighten bundled Codex/Claude guidance snippets.
+          - Add Windows launcher guidance for capture of extensionless Bash scripts.
+
           Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64.
           Each archive includes the contextmink binary, setup docs, templates, a manifest, and a SHA-256 checksum.
           EOF
