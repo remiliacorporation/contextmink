@@ -558,6 +558,10 @@ fn open_sqlite_readonly(db: &Path) -> Result<Connection> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .with_context(|| format!("failed to open sqlite DB {}", db.display()))?;
+    // A concurrent writer committing (rollback/TRUNCATE journals) briefly
+    // locks readers out; wait instead of failing with SQLITE_BUSY.
+    conn.busy_timeout(std::time::Duration::from_millis(5000))
+        .context("failed to set sqlite busy timeout")?;
     conn.execute_batch("PRAGMA query_only = ON")
         .context("failed to enable sqlite query_only mode")?;
     Ok(conn)

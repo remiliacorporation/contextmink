@@ -1512,3 +1512,48 @@ fn receipts_carry_duration_ms() {
     let json = parse_json_output(&root, &["--json", "files", ".", "--max", "1"]);
     assert!(json["duration_ms"].is_number());
 }
+
+#[test]
+fn excludes_hold_for_absolute_scan_roots() {
+    let root = fixture_root("absolute-root-policy");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test-profile\"\nexclude_globs = [\"artifacts/**\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("artifacts")).unwrap();
+    fs::write(root.join("artifacts").join("big.log"), "noise\n").unwrap();
+
+    // Anchored excludes must hold even when the scan root is an absolute
+    // path (or the command runs from a subdirectory), not only for
+    // config-root-relative spellings.
+    let absolute_root = root.to_string_lossy().replace('\\', "/");
+    let files = parse_json_output(&root, &["--json", "files", &absolute_root, "--max", "50"]);
+    assert_envelope(&files, "files", "files");
+    let listed = files["files"].as_array().unwrap();
+    assert!(
+        listed
+            .iter()
+            .all(|path| !path.as_str().unwrap().contains("artifacts/")),
+        "absolute-root scan must honor anchored excludes: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|path| path.as_str().unwrap().ends_with("sample.txt"))
+    );
+
+    // An explicit absolute path INTO the excluded tree is still the target.
+    let absolute_excluded = format!("{absolute_root}/artifacts");
+    let explicit = parse_json_output(
+        &root,
+        &["--json", "files", &absolute_excluded, "--max", "10"],
+    );
+    assert_eq!(explicit["total"], 1);
+    assert!(
+        explicit["files"][0]
+            .as_str()
+            .unwrap()
+            .ends_with("artifacts/big.log")
+    );
+}

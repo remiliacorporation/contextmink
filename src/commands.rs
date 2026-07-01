@@ -562,7 +562,7 @@ pub(crate) fn command_grep_with_matcher(
                 )?;
             }
             let cap_reason = if scan_truncated { Some("scan") } else { None };
-            let mut map = grep_receipt_map(
+            let map = grep_receipt_map(
                 command_name,
                 config,
                 0,
@@ -582,7 +582,6 @@ pub(crate) fn command_grep_with_matcher(
                 no_match_scan_incomplete,
                 true,
             );
-            map.insert("files".to_string(), json!([]));
             return write_receipt_checked(cli, map);
         }
         writeln!(stdout, "file_counts:")?;

@@ -246,7 +246,10 @@ exclude_globs = [
 
 The configuration surface is exactly these two keys; unknown keys, duplicate
 keys, and malformed values are hard errors so a config typo cannot silently
-change scan scope.
+change scan scope. Exclude globs are matched against paths relative to the
+config file's directory, so anchored rules like `Data/**` hold even when a
+scan root is passed as an absolute path or the command runs from a
+subdirectory.
 
 Keep repository policy in `.contextmink.toml` and repository instructions, not in the
 binary. Exclude generated or high-output trees from broad scans, then pass an

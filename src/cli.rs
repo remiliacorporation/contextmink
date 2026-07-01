@@ -233,7 +233,11 @@ pub(crate) enum Command {
             help = "Maximum characters per sample line"
         )]
         max_line_chars: usize,
-        #[arg(long, default_value_t = 5000, help = "Maximum candidate files to scan")]
+        #[arg(
+            long,
+            default_value_t = 20_000,
+            help = "Maximum candidate files to scan"
+        )]
         max_scan_files: usize,
         #[arg(
             long,
@@ -340,7 +344,11 @@ pub(crate) enum Command {
             help = "Maximum characters per sample line"
         )]
         max_line_chars: usize,
-        #[arg(long, default_value_t = 5000, help = "Maximum candidate files to scan")]
+        #[arg(
+            long,
+            default_value_t = 20_000,
+            help = "Maximum candidate files to scan"
+        )]
         max_scan_files: usize,
         #[arg(
             long,

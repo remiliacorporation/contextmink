@@ -25,6 +25,10 @@ struct ContextminkConfig {
 pub(crate) struct ContextConfig {
     pub(crate) profile: Option<String>,
     pub(crate) excludes: GlobSet,
+    /// Canonical, `/`-normalized directory of the loaded config file.
+    /// Exclude globs are matched against paths relative to this root, so
+    /// policy holds even when scan roots are absolute or `..`-relative.
+    pub(crate) policy_root: Option<String>,
 }
 
 pub(crate) fn load_context_config(
@@ -32,6 +36,7 @@ pub(crate) fn load_context_config(
     no_config: bool,
 ) -> Result<ContextConfig> {
     let mut raw = ContextminkConfig::default();
+    let mut policy_root = None;
     if !no_config {
         let discovered_config = find_config_path();
         let selected_config = config_path.map(Path::to_path_buf).or(discovered_config);
@@ -40,6 +45,7 @@ pub(crate) fn load_context_config(
                 .with_context(|| format!("failed to read config {}", path.display()))?;
             raw = parse_config(&text)
                 .with_context(|| format!("failed to parse {}", path.display()))?;
+            policy_root = path.parent().and_then(canonical_normalized);
         }
     }
     let mut builder = GlobSetBuilder::new();
@@ -58,7 +64,26 @@ pub(crate) fn load_context_config(
         excludes: builder
             .build()
             .context("failed to build exclude glob set")?,
+        policy_root,
     })
+}
+
+/// Canonicalize a path and render it `/`-normalized without the Windows
+/// verbatim (`\\?\`) prefix. Returns `None` when the path cannot be
+/// canonicalized (nonexistent roots fall back to verbatim path matching).
+pub(crate) fn canonical_normalized(path: &Path) -> Option<String> {
+    match fs::canonicalize(path) {
+        Ok(canonical) => {
+            let text = canonical.to_string_lossy().replace('\\', "/");
+            Some(
+                text.strip_prefix("//?/")
+                    .unwrap_or(&text)
+                    .trim_end_matches('/')
+                    .to_owned(),
+            )
+        }
+        Err(_) => None,
+    }
 }
 
 /// Bespoke parser for the two-key `.contextmink.toml` surface:

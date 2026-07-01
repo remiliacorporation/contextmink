@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
-use crate::config::ContextConfig;
+use crate::config::{ContextConfig, canonical_normalized};
 
 #[derive(Debug)]
 pub(crate) struct CollectedFiles {
@@ -52,8 +52,10 @@ pub(crate) fn collect_files(
     };
     for root in paths {
         if root.is_file() {
+            let mapper = PolicyMapper::for_root(root, config);
             if file_is_included(
                 root,
+                &mapper,
                 &include_matcher,
                 &extension_matcher,
                 config,
@@ -93,6 +95,65 @@ pub(crate) fn collect_files(
     })
 }
 
+/// Maps walker paths (as spelled from a scan root) onto policy paths
+/// relative to the config root, so exclude globs anchored at the repository
+/// root hold no matter how the root argument was spelled (absolute paths,
+/// `..`-relative paths, or scans launched from a subdirectory).
+#[derive(Clone)]
+struct PolicyMapper {
+    given_root: String,
+    /// Config-root-relative prefix for this scan root; `None` when no config
+    /// root applies (no config, or the root lives outside the config tree),
+    /// which falls back to matching the path exactly as spelled.
+    policy_prefix: Option<String>,
+}
+
+impl PolicyMapper {
+    fn for_root(root: &Path, config: &ContextConfig) -> Self {
+        let given_root = trim_normalized_path(&normalize_path(root));
+        let policy_prefix = match (&config.policy_root, canonical_normalized(root)) {
+            (Some(policy_root), Some(canonical_root)) => {
+                if canonical_root == *policy_root {
+                    Some(String::new())
+                } else {
+                    canonical_root
+                        .strip_prefix(&format!("{policy_root}/"))
+                        .map(str::to_owned)
+                }
+            }
+            _ => None,
+        };
+        Self {
+            given_root,
+            policy_prefix,
+        }
+    }
+
+    /// Policy path used for exclude matching. `normalized` must come from
+    /// `normalize_path` on a path yielded under this mapper's root.
+    fn policy_path(&self, normalized: &str) -> String {
+        let trimmed = trim_normalized_path(normalized);
+        let Some(prefix) = &self.policy_prefix else {
+            return trimmed;
+        };
+        let relative = if self.given_root.is_empty() {
+            trimmed.as_str()
+        } else {
+            trimmed
+                .strip_prefix(&self.given_root)
+                .map(|rest| rest.trim_start_matches('/'))
+                .unwrap_or(trimmed.as_str())
+        };
+        if prefix.is_empty() {
+            relative.to_owned()
+        } else if relative.is_empty() {
+            prefix.clone()
+        } else {
+            format!("{prefix}/{relative}")
+        }
+    }
+}
+
 struct CollectState {
     files: Vec<PathBuf>,
     seen: HashSet<PathBuf>,
@@ -126,6 +187,7 @@ fn walk_root(
     state: &mut CollectState,
     nesting: usize,
 ) -> Result<()> {
+    let mapper = PolicyMapper::for_root(root, config);
     let mut walk = WalkBuilder::new(root);
     walk.hidden(false)
         .ignore(!options.with_git_ignored)
@@ -135,20 +197,20 @@ fn walk_root(
     if !options.with_excluded {
         let excludes = config.excludes.clone();
         let explicit_roots = explicit_excluded_roots.to_vec();
+        let filter_mapper = mapper.clone();
         walk.filter_entry(move |entry| {
-            let normalized = normalize_path(entry.path());
-            if is_under_explicit_excluded_root(&normalized, &explicit_roots) {
+            let policy = filter_mapper.policy_path(&normalize_path(entry.path()));
+            if is_under_explicit_excluded_root(&policy, &explicit_roots) {
                 return true;
             }
             if entry.file_type().is_some_and(|kind| kind.is_dir()) {
-                let normalized = trim_normalized_path(&normalized);
-                if normalized.is_empty() || normalized == "." {
+                if policy.is_empty() || policy == "." {
                     return true;
                 }
-                let probe = format!("{normalized}/__contextmink_probe__");
-                !excludes.is_match(&normalized) && !excludes.is_match(&probe)
+                let probe = format!("{policy}/__contextmink_probe__");
+                !excludes.is_match(&policy) && !excludes.is_match(&probe)
             } else {
-                !excludes.is_match(&normalized)
+                !excludes.is_match(&policy)
             }
         });
     }
@@ -162,6 +224,7 @@ fn walk_root(
             Some(kind) if kind.is_file() => {
                 if !file_is_included(
                     entry.path(),
+                    &mapper,
                     include_matcher,
                     extension_matcher,
                     config,
@@ -194,6 +257,7 @@ fn walk_root(
     for dir in &visited_dirs {
         collect_pruned_repo_roots(
             dir,
+            &mapper,
             &visited_dirs,
             config,
             options.with_excluded,
@@ -224,8 +288,10 @@ fn walk_root(
 /// Find git-repo roots among the unvisited (walker-pruned) children of a
 /// visited directory. Pruned plain directories are probed one level deeper
 /// so a repo directly under an ignored grouping directory is still found.
+#[allow(clippy::too_many_arguments)]
 fn collect_pruned_repo_roots(
     dir: &Path,
+    mapper: &PolicyMapper,
     visited_dirs: &HashSet<PathBuf>,
     config: &ContextConfig,
     with_excluded: bool,
@@ -234,6 +300,7 @@ fn collect_pruned_repo_roots(
 ) {
     probe_children_for_repos(
         dir,
+        mapper,
         visited_dirs,
         config,
         with_excluded,
@@ -246,6 +313,7 @@ fn collect_pruned_repo_roots(
 #[allow(clippy::too_many_arguments)]
 fn probe_children_for_repos(
     dir: &Path,
+    mapper: &PolicyMapper,
     visited_dirs: &HashSet<PathBuf>,
     config: &ContextConfig,
     with_excluded: bool,
@@ -268,11 +336,10 @@ fn probe_children_for_repos(
             continue;
         }
         if !with_excluded {
-            let normalized = normalize_path(&path);
-            if !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots) {
-                let trimmed = trim_normalized_path(&normalized);
-                let probe = format!("{trimmed}/__contextmink_probe__");
-                if config.excludes.is_match(&trimmed) || config.excludes.is_match(&probe) {
+            let policy = mapper.policy_path(&normalize_path(&path));
+            if !is_under_explicit_excluded_root(&policy, explicit_excluded_roots) {
+                let probe = format!("{policy}/__contextmink_probe__");
+                if config.excludes.is_match(&policy) || config.excludes.is_match(&probe) {
                     continue;
                 }
             }
@@ -282,6 +349,7 @@ fn probe_children_for_repos(
         } else if remaining_probe_depth > 0 {
             probe_children_for_repos(
                 &path,
+                mapper,
                 visited_dirs,
                 config,
                 with_excluded,
@@ -304,13 +372,14 @@ fn explicit_excluded_roots(
     paths
         .iter()
         .filter_map(|path| {
-            let normalized = trim_normalized_path(&normalize_path(path));
-            if normalized.is_empty() || normalized == "." {
+            let mapper = PolicyMapper::for_root(path, config);
+            let policy = mapper.policy_path(&normalize_path(path));
+            if policy.is_empty() || policy == "." {
                 return None;
             }
-            let probe = format!("{normalized}/__contextmink_probe__");
-            if config.excludes.is_match(&normalized) || config.excludes.is_match(&probe) {
-                Some(normalized)
+            let probe = format!("{policy}/__contextmink_probe__");
+            if config.excludes.is_match(&policy) || config.excludes.is_match(&probe) {
+                Some(policy)
             } else {
                 None
             }
@@ -320,6 +389,7 @@ fn explicit_excluded_roots(
 
 fn file_is_included(
     path: &Path,
+    mapper: &PolicyMapper,
     include_matcher: &Option<GlobSet>,
     extension_matcher: &[String],
     config: &ContextConfig,
@@ -327,11 +397,13 @@ fn file_is_included(
     explicit_excluded_roots: &[String],
 ) -> bool {
     let normalized = normalize_path(path);
-    if !with_excluded
-        && config.excludes.is_match(&normalized)
-        && !is_under_explicit_excluded_root(&normalized, explicit_excluded_roots)
-    {
-        return false;
+    if !with_excluded {
+        let policy = mapper.policy_path(&normalized);
+        if config.excludes.is_match(&policy)
+            && !is_under_explicit_excluded_root(&policy, explicit_excluded_roots)
+        {
+            return false;
+        }
     }
     if let Some(include_matcher) = include_matcher {
         let basename = path
