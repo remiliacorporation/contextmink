@@ -18,34 +18,121 @@ replacement for project-native tools.
   launcher. On Windows, Git Bash works. Without Bash, call the release binary
   directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml -- ...`.
 
+## Release Archives
+
+Release archives are published at
+<https://github.com/remiliacorporation/contextmink/releases>. Download the
+archive for the host platform:
+
+- `contextmink-<version>-windows-x86_64.zip`
+- `contextmink-<version>-macos-x86_64.tar.gz`
+- `contextmink-<version>-macos-arm64.tar.gz`
+- `contextmink-<version>-linux-x86_64.tar.gz`
+
+Each archive includes:
+
+```text
+contextmink(.exe)
+README.md
+SETUP.md
+docs/
+templates/
+manifest.json
+LICENSE
+```
+
+Verify the adjacent `.sha256` checksum when the archive was downloaded through
+automation or mirrored storage.
+
 ## Standalone Binary Install
 
 Use this when the user wants `contextmink` on PATH instead of vendored in each
 repository:
 
-1. Download the release archive for the host platform:
-
-   - `contextmink-<version>-windows-x86_64.zip`
-   - `contextmink-<version>-macos-x86_64.tar.gz`
-   - `contextmink-<version>-macos-arm64.tar.gz`
-   - `contextmink-<version>-linux-x86_64.tar.gz`
-
-2. Verify the adjacent `.sha256` checksum if the archive was downloaded outside
-   GitHub's release UI.
-
-3. Unpack the archive and run:
+1. Unpack the release archive.
+2. Put `contextmink(.exe)` on `PATH`, or run it from the unpacked directory.
+3. Verify:
 
    ```bash
    contextmink files --path . --max 20
    ```
 
-The binary can still use a repository-local `.contextmink.toml`; it searches
-upward from the current directory.
+The binary can use a repository-local `.contextmink.toml`; it searches upward
+from the current directory.
 
-## Vendored Integration
+## Project Binary Integration
 
-Use this pattern when the target repository should carry its own copy of the
-tool:
+Use this when a target repository should carry a local `scripts/contextmink`
+entrypoint without requiring users or agents to build from source.
+
+1. Unpack the release archive next to, or outside, the target repository.
+
+2. In the target repository, create the local binary directory:
+
+   ```bash
+   mkdir -p tools/contextmink/bin scripts
+   ```
+
+3. Copy the release binary into the target repository:
+
+   ```bash
+   cp /path/to/unpacked/contextmink tools/contextmink/bin/contextmink
+   # Windows binary name:
+   # cp /path/to/unpacked/contextmink.exe tools/contextmink/bin/contextmink.exe
+   ```
+
+4. Copy the release launcher:
+
+   ```bash
+   cp /path/to/unpacked/templates/scripts/contextmink scripts/contextmink
+   chmod +x scripts/contextmink
+   ```
+
+5. Copy and edit the config:
+
+   ```bash
+   cp /path/to/unpacked/templates/.contextmink.toml .contextmink.toml
+   ```
+
+   Keep only repo-local high-output paths. Good candidates include generated
+   build directories, vendored dependencies, caches, exported reports, large
+   binary asset trees, and tool output directories. These excludes keep broad
+   scans quiet; callers can still pass an explicit file or subdirectory inside
+   an excluded tree when that tree is the target.
+
+6. Install the agent guidance:
+
+   - Codex: merge `templates/AGENTS.contextmink.md` into the target
+     repository's `AGENTS.md` or equivalent Codex guidance file.
+   - Claude: merge `templates/CLAUDE.contextmink.md` into the target
+     repository's `CLAUDE.md` or equivalent Claude guidance file.
+
+7. Verify from the target repository root:
+
+   ```bash
+   scripts/contextmink files --path . --max 20
+   scripts/contextmink grep contextmink --path . --limit 5
+   ```
+
+For agent-assisted setup, give the agent the unpacked release directory and the
+target repository path, then ask it to perform steps 2-7 and keep repository
+specific policy in `.contextmink.toml` plus the target repository instructions.
+
+Useful agent prompt:
+
+```text
+Set up contextmink in this repository from the unpacked release directory at
+<path>. Do not build from source. Copy the binary into tools/contextmink/bin/,
+copy templates/scripts/contextmink to scripts/contextmink, create or update
+.contextmink.toml with repo-appropriate high-output excludes, merge the
+AGENTS/CLAUDE contextmink instruction snippet into the project guidance file,
+and verify with scripts/contextmink files --path . --max 20.
+```
+
+## Source Vendored Integration
+
+Use this pattern only when the target repository should carry and build its own
+copy of the Rust crate:
 
 1. Copy this repository's Rust crate into the target repository at
    `tools/contextmink/`.
@@ -59,8 +146,8 @@ tool:
    ```
 
    The launcher uses `tools/contextmink/target/release/contextmink(.exe)` when
-   it builds from source. If the repository should avoid requiring Rust, copy a
-   release binary to `tools/contextmink/bin/contextmink(.exe)` instead.
+   it builds from source. For the no-build path, use Project Binary Integration
+   instead.
 
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
 

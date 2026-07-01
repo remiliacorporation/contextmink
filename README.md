@@ -55,8 +55,10 @@ but scan-capped lower-bound totals should fail.
 
 ## Install
 
-Download the release archive for your platform from GitHub Releases and unpack
-it. Put `contextmink` on your `PATH`, or run it from the unpacked directory:
+Download the release archive for your platform from
+[GitHub Releases](https://github.com/remiliacorporation/contextmink/releases)
+and unpack it. Put `contextmink` on your `PATH`, or run it from the unpacked
+directory:
 
 ```bash
 contextmink files --path . --max 20
@@ -68,6 +70,35 @@ templates, a manifest, and a SHA-256 checksum.
 
 Release builds include bundled SQLite support for portability.
 
+## Add To A Project
+
+End users do not need Rust or Cargo. For a project-local install, unpack the
+release archive and copy the binary plus templates into the target repository:
+
+```text
+target-repo/
+  scripts/contextmink
+  tools/contextmink/bin/contextmink(.exe)
+  .contextmink.toml
+```
+
+Use the files from the release archive:
+
+1. Copy `contextmink(.exe)` to `tools/contextmink/bin/contextmink(.exe)`.
+2. Copy `templates/scripts/contextmink` to `scripts/contextmink`.
+3. Copy `templates/.contextmink.toml` to `.contextmink.toml` and edit excludes.
+4. Merge `templates/AGENTS.contextmink.md` into `AGENTS.md` for Codex, and/or
+   `templates/CLAUDE.contextmink.md` into `CLAUDE.md` for Claude.
+5. Verify from the target repository root:
+
+   ```bash
+   scripts/contextmink files --path . --max 20
+   ```
+
+This is the recommended setup for agent-driven project integration: give the
+agent the unpacked release directory and ask it to perform those copy/merge
+steps for the target repository. See [SETUP.md](SETUP.md) for the full guide.
+
 ## Build From Source
 
 ```bash
@@ -77,7 +108,7 @@ target/release/contextmink files --path . --max 20
 ```
 
 `contextmink` uses Rust edition 2024 and requires a recent stable Rust
-toolchain. To add it to another repository, follow [SETUP.md](SETUP.md).
+toolchain only when building from source.
 
 ## Examples
 
