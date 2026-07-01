@@ -54,7 +54,7 @@ tool:
 
    ```bash
    scripts/contextmink files --path . --max 20
-   scripts/contextmink grep contextmink . --max-files 5
+   scripts/contextmink grep contextmink --path . --max-files 5
    ```
 
    The first run may build the release binary. Build output is sent to stderr
@@ -129,10 +129,10 @@ different integration mechanism.
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
   `json-select`; it preserves slash-leading JSON Pointer selectors while still
   leaving normal file path handling to the shell/runtime boundary.
-- Prefer `sqlite-schema <db>` or `sqlite-schema --path <db>` before ad hoc
-  SQLite queries against unfamiliar databases.
-- Prefer `sqlite --sql-file <file>` for read-only SQL containing shell-fragile
-  operators or quotes.
+- Prefer `sqlite-schema --path <db>` before ad hoc SQLite queries against
+  unfamiliar databases.
+- Prefer `sqlite --path <db> --sql-file <file>` for read-only SQL containing
+  shell-fragile operators or quotes.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no better
   native bound exists; read the child `exit_code`/`success` fields in the
