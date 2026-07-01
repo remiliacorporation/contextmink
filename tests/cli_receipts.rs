@@ -9,7 +9,7 @@ fn fixture_root(name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
     let root = base.join(format!("contextmink-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&root); // guardrail: allow-ignore-result cleanup is best-effort for reused test temp dirs
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join(".contextmink.toml"),
@@ -91,6 +91,53 @@ fn json_commands_share_receipt_envelope() {
     );
     assert_envelope(&json_find, "json-find", "matches");
     assert_eq!(json_find["total"], 2);
+}
+
+#[test]
+fn slice_accepts_named_path_alias() {
+    let root = fixture_root("slice-path-alias");
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "slice", "--path", "sample.txt", "--range", "2:2"],
+    );
+    assert_envelope(&json, "slice", "lines");
+    assert_eq!(json["path"], "sample.txt");
+    assert_eq!(json["lines"][0]["line"], 2);
+    assert_eq!(json["lines"][0]["text"], "alpha");
+}
+
+#[test]
+fn json_commands_accept_named_path_alias() {
+    let root = fixture_root("json-path-alias");
+
+    let find = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-find",
+            "--path",
+            "sidecar.json",
+            "--key-contains",
+            "mode",
+        ],
+    );
+    assert_envelope(&find, "json-find", "matches");
+    assert_eq!(find["total"], 2);
+
+    let select = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "--path",
+            "sidecar.json",
+            "--field",
+            "/mode",
+        ],
+    );
+    assert_envelope(&select, "json-select", "rows");
+    assert_eq!(select["rows"][0]["fields"]["/mode"], "\"demo\"");
 }
 
 #[test]
@@ -295,6 +342,19 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 
     assert_envelope(&files, "files", "files");
     assert_eq!(files["shown"], 1);
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0], "queue/work.jsonl");
+}
+
+#[test]
+fn files_accepts_named_path_without_default_root() {
+    let root = fixture_root("files-path-alias");
+    fs::create_dir_all(root.join("queue")).unwrap();
+    fs::write(root.join("queue").join("work.jsonl"), "{}\n").unwrap();
+
+    let files = parse_json_output(&root, &["--json", "files", "--path", "queue"]);
+
+    assert_envelope(&files, "files", "files");
     assert_eq!(files["total"], 1);
     assert_eq!(files["files"][0], "queue/work.jsonl");
 }
@@ -639,6 +699,17 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
 }
 
 #[test]
+fn grep_accepts_named_search_paths() {
+    let root = fixture_root("grep-path-alias");
+
+    let json = parse_json_output(&root, &["--json", "grep", "alpha", "--path", "sample.txt"]);
+    assert_envelope(&json, "grep", "files");
+    assert_eq!(json["shown"], 1);
+    assert_eq!(json["total_matches"], 2);
+    assert_eq!(json["files"][0]["path"], "sample.txt");
+}
+
+#[test]
 fn json_select_projects_array_fields_without_jq_filters() {
     let root = fixture_root("json-select");
 
@@ -813,7 +884,7 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
         &[
             "--json",
             "sqlite",
-            "--db",
+            "--path",
             "sample.sqlite",
             "--sql-file",
             "query.sql",
@@ -843,7 +914,7 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
     assert!(
         String::from_utf8(duplicate_db.stderr)
             .unwrap()
-            .contains("either positional <DB> or --db <DB>, not both")
+            .contains("either positional <DB> or --db/--path <DB>, not both")
     );
 }
 
@@ -866,7 +937,7 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         &[
             "--json",
             "sqlite-schema",
-            "--db",
+            "--path",
             "schema.sqlite",
             "--table",
             "child",

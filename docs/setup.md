@@ -53,7 +53,7 @@ tool:
 5. Verify the integration from the target repository root:
 
    ```bash
-   scripts/contextmink files . --max 20
+   scripts/contextmink files --path . --max 20
    scripts/contextmink grep contextmink . --max-files 5
    ```
 
@@ -68,7 +68,7 @@ repository:
 
 ```bash
 cargo install --path .
-contextmink files . --max 20
+contextmink files --path . --max 20
 ```
 
 The binary can still use a repository-local `.contextmink.toml`; it
@@ -129,8 +129,8 @@ different integration mechanism.
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
   `json-select`; it preserves slash-leading JSON Pointer selectors while still
   leaving normal file path handling to the shell/runtime boundary.
-- Prefer `sqlite-schema <db>` or `sqlite-schema --db <db>` before ad hoc SQLite
-  queries against unfamiliar databases.
+- Prefer `sqlite-schema <db>` or `sqlite-schema --path <db>` before ad hoc
+  SQLite queries against unfamiliar databases.
 - Prefer `sqlite --sql-file <file>` for read-only SQL containing shell-fragile
   operators or quotes.
 - Prefer a domain command's native compact/projection/limit flags first. Use

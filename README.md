@@ -33,10 +33,11 @@ diagnostics, and synchronization should stay in project-native tools.
   slash-leading JSON Pointer selector arguments on Git Bash/Windows so they are
   not rewritten as host paths before reaching the native binary.
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
-  caps and receipt metadata. The DB path may be positional or `--db <file>`.
+  caps and receipt metadata. The DB path may be positional, `--db <file>`, or
+  `--path <file>`.
 - `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
   from SQLite metadata without hand-written PRAGMA queries. The DB path may be
-  positional or `--db <file>`.
+  positional, `--db <file>`, or `--path <file>`.
 - `capture` (`run` alias): execute argv directly and print capped stdout/stderr summaries
   with exit status. Use it only when a command's output cardinality is unknown
   and the command lacks a better native filter or projection.
@@ -52,7 +53,7 @@ but scan-capped lower-bound totals should fail.
 ```bash
 cargo test
 cargo build --release
-target/release/contextmink files . --max 20
+target/release/contextmink files --path . --max 20
 ```
 
 `contextmink` uses Rust edition 2024 and requires a recent stable Rust
@@ -63,8 +64,8 @@ Release builds include bundled SQLite support for portability.
 ## Examples
 
 ```bash
-scripts/contextmink files . --max 20
-scripts/contextmink files . --max 20 --max-scan-files 5000
+scripts/contextmink files --path . --max 20
+scripts/contextmink files --path . --max 20 --max-scan-files 5000
 scripts/contextmink files vendor --with-git-ignored --max 20
 scripts/contextmink grep --pattern-file pattern.txt src tests --max-files 8
 scripts/contextmink grep-terms --term "TODO" --term "panic" --or src
@@ -73,7 +74,7 @@ scripts/contextmink json-find report.json --key-contains error --max 10
 scripts/contextmink json-select report.json --array /rows --field id --field /status
 scripts/contextmink json-select queue.jsonl --field addr --field flags --limit 10
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --max-rows 20
-scripts/contextmink sqlite-schema --db state.sqlite --name-contains user --max-tables 8
+scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compact-target query
 ```

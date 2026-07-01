@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -62,7 +62,13 @@ struct Cli {
 enum Command {
     /// List candidate files with configured excludes and a display cap.
     Files {
-        #[arg(default_value = ".", help = "Files or directories to enumerate")]
+        #[arg(value_name = "PATH", help = "Files or directories to enumerate")]
+        paths: Vec<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "PATH",
+            help = "Additional file or directory to enumerate"
+        )]
         path: Vec<PathBuf>,
         #[arg(
             long = "glob",
@@ -109,6 +115,12 @@ enum Command {
             help = "PATTERN followed by optional PATHs, or only PATHs with --pattern-file"
         )]
         args: Vec<String>,
+        #[arg(
+            long = "path",
+            value_name = "PATH",
+            help = "Additional file or directory to search"
+        )]
+        path: Vec<PathBuf>,
         #[arg(
             long = "pattern-file",
             value_name = "FILE",
@@ -234,8 +246,19 @@ enum Command {
     },
     /// Print a bounded line or character window from one text file.
     Slice {
-        #[arg(help = "Text file to slice")]
-        file: PathBuf,
+        #[arg(
+            value_name = "FILE",
+            required_unless_present = "path",
+            help = "Text file to slice"
+        )]
+        file: Option<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "FILE",
+            conflicts_with = "file",
+            help = "Text file to slice"
+        )]
+        path: Option<PathBuf>,
         #[arg(long, help = "One-based inclusive line range START:END")]
         range: Option<String>,
         #[arg(long, default_value_t = 1, help = "First one-based line to print")]
@@ -271,8 +294,19 @@ enum Command {
     },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
-        #[arg(help = "JSON or JSONL file to inspect")]
-        file: PathBuf,
+        #[arg(
+            value_name = "FILE",
+            required_unless_present = "path",
+            help = "JSON or JSONL file to inspect"
+        )]
+        file: Option<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "FILE",
+            conflicts_with = "file",
+            help = "JSON or JSONL file to inspect"
+        )]
+        path: Option<PathBuf>,
         #[arg(long, help = "Match object keys containing this text")]
         key_contains: Vec<String>,
         #[arg(long, help = "Match object keys with this regex")]
@@ -300,8 +334,19 @@ enum Command {
     /// Project JSON root or array rows to bounded field summaries.
     #[command(name = "json-select")]
     JsonSelect {
-        #[arg(help = "JSON or JSONL file to project")]
-        file: PathBuf,
+        #[arg(
+            value_name = "FILE",
+            required_unless_present = "path",
+            help = "JSON or JSONL file to project"
+        )]
+        file: Option<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "FILE",
+            conflicts_with = "file",
+            help = "JSON or JSONL file to project"
+        )]
+        path: Option<PathBuf>,
         #[arg(
             long,
             value_name = "POINTER",
@@ -332,10 +377,15 @@ enum Command {
     Sqlite {
         #[arg(
             value_name = "DB",
-            help = "SQLite database file; may also be passed with --db"
+            help = "SQLite database file; may also be passed with --db/--path"
         )]
         positional_db: Option<PathBuf>,
-        #[arg(long = "db", value_name = "DB", help = "SQLite database file")]
+        #[arg(
+            long = "db",
+            alias = "path",
+            value_name = "DB",
+            help = "SQLite database file"
+        )]
         db: Option<PathBuf>,
         #[arg(long, help = "Read-only SQL query to run")]
         sql: Option<String>,
@@ -370,10 +420,15 @@ enum Command {
     SqliteSchema {
         #[arg(
             value_name = "DB",
-            help = "SQLite database file; may also be passed with --db"
+            help = "SQLite database file; may also be passed with --db/--path"
         )]
         positional_db: Option<PathBuf>,
-        #[arg(long = "db", value_name = "DB", help = "SQLite database file")]
+        #[arg(
+            long = "db",
+            alias = "path",
+            value_name = "DB",
+            help = "SQLite database file"
+        )]
         db: Option<PathBuf>,
         #[arg(
             long = "table",
@@ -592,6 +647,7 @@ fn main() -> Result<()> {
     let config = load_context_config(cli.config.as_deref(), cli.no_config)?;
     match &cli.command {
         Command::Files {
+            paths,
             path,
             globs,
             with_excluded,
@@ -602,7 +658,7 @@ fn main() -> Result<()> {
         } => command_files(
             &cli,
             &config,
-            path,
+            &merged_paths(paths, path),
             globs,
             *with_excluded,
             *with_git_ignored,
@@ -612,6 +668,7 @@ fn main() -> Result<()> {
         ),
         Command::Grep {
             args,
+            path,
             pattern_file,
             literal,
             with_excluded,
@@ -627,6 +684,7 @@ fn main() -> Result<()> {
             &cli,
             &config,
             args,
+            path,
             pattern_file.as_deref(),
             *literal,
             *with_excluded,
@@ -678,6 +736,7 @@ fn main() -> Result<()> {
         }
         Command::Slice {
             file,
+            path,
             range,
             start,
             end,
@@ -689,7 +748,9 @@ fn main() -> Result<()> {
         } => command_slice(
             &cli,
             &config,
-            file,
+            file.as_deref()
+                .or(path.as_deref())
+                .expect("clap requires a slice file through <FILE> or --path"),
             range.as_deref(),
             *start,
             *end,
@@ -701,6 +762,7 @@ fn main() -> Result<()> {
         ),
         Command::JsonFind {
             file,
+            path,
             key_contains,
             key_regex,
             path_contains,
@@ -711,7 +773,9 @@ fn main() -> Result<()> {
         } => command_json_find(
             &cli,
             &config,
-            file,
+            file.as_deref()
+                .or(path.as_deref())
+                .expect("clap requires a JSON input through <FILE> or --path"),
             key_contains,
             key_regex.as_deref(),
             path_contains,
@@ -722,6 +786,7 @@ fn main() -> Result<()> {
         ),
         Command::JsonSelect {
             file,
+            path,
             array,
             fields,
             max,
@@ -729,7 +794,9 @@ fn main() -> Result<()> {
         } => command_json_select(
             &cli,
             &config,
-            file,
+            file.as_deref()
+                .or(path.as_deref())
+                .expect("clap requires a JSON input through <FILE> or --path"),
             array.as_deref(),
             fields,
             *max,
@@ -809,11 +876,11 @@ fn resolve_db_path<'a>(
 ) -> Result<&'a Path> {
     match (positional_db, named_db) {
         (Some(_), Some(_)) => Err(anyhow!(
-            "{command_name} accepts either positional <DB> or --db <DB>, not both"
+            "{command_name} accepts either positional <DB> or --db/--path <DB>, not both"
         )),
         (Some(path), None) | (None, Some(path)) => Ok(path.as_path()),
         (None, None) => Err(anyhow!(
-            "{command_name} requires a SQLite database path as <DB> or --db <DB>"
+            "{command_name} requires a SQLite database path as <DB> or --db/--path <DB>"
         )),
     }
 }
@@ -1276,6 +1343,7 @@ fn command_grep(
     cli: &Cli,
     config: &ContextConfig,
     args: &[String],
+    named_paths: &[PathBuf],
     pattern_file: Option<&Path>,
     literal: bool,
     with_excluded: bool,
@@ -1289,12 +1357,15 @@ fn command_grep(
     max_file_bytes: u64,
 ) -> Result<()> {
     let (pattern, effective_paths) = if pattern_file.is_some() {
-        (None, string_args_to_paths(args))
+        (None, merged_paths(&string_args_to_paths(args), named_paths))
     } else {
         let Some((pattern, paths)) = args.split_first() else {
             return Err(anyhow!("grep requires PATTERN or --pattern-file <file>"));
         };
-        (Some(pattern.as_str()), string_args_to_paths(paths))
+        (
+            Some(pattern.as_str()),
+            merged_paths(&string_args_to_paths(paths), named_paths),
+        )
     };
     let pattern = collect_single_text_source("grep pattern", pattern, pattern_file, true)?;
     let matcher = TextMatcher::new(&pattern, literal)?;
@@ -1317,11 +1388,7 @@ fn command_grep(
 }
 
 fn string_args_to_paths(args: &[String]) -> Vec<PathBuf> {
-    if args.is_empty() {
-        vec![PathBuf::from(".")]
-    } else {
-        args.iter().map(PathBuf::from).collect()
-    }
+    args.iter().map(PathBuf::from).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2652,7 +2719,7 @@ fn collect_files(
     let include_matcher = build_optional_globset(globs)?;
     let explicit_excluded_roots = explicit_excluded_roots(paths, config, with_excluded);
     let mut files = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = HashSet::new();
     let mut total_seen = 0usize;
     let mut truncated = false;
     for root in paths {
@@ -2684,6 +2751,26 @@ fn collect_files(
             .git_ignore(!with_git_ignored)
             .git_exclude(!with_git_ignored)
             .parents(!with_git_ignored);
+        if !with_excluded {
+            let excludes = config.excludes.clone();
+            let explicit_roots = explicit_excluded_roots.clone();
+            walk.filter_entry(move |entry| {
+                let normalized = normalize_path(entry.path());
+                if is_under_explicit_excluded_root(&normalized, &explicit_roots) {
+                    return true;
+                }
+                if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                    let normalized = trim_normalized_path(&normalized);
+                    if normalized.is_empty() || normalized == "." {
+                        return true;
+                    }
+                    let probe = format!("{normalized}/__contextmink_probe__");
+                    !excludes.is_match(&normalized) && !excludes.is_match(&probe)
+                } else {
+                    !excludes.is_match(&normalized)
+                }
+            });
+        }
         for entry in walk.build() {
             let entry = entry?;
             if entry.file_type().is_some_and(|kind| kind.is_file()) {
