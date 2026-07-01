@@ -17,6 +17,8 @@ replacement for project-native tools.
 - A POSIX-compatible shell is needed only for the optional `scripts/contextmink`
   launcher. On Windows, Git Bash works. Without Bash, call the release binary
   directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml -- ...`.
+  For `capture` of extensionless repository scripts on Windows, use the launcher;
+  it supplies the Bash interpreter needed for script fallback.
 
 ## Release Archives
 
@@ -46,8 +48,7 @@ automation or mirrored storage.
 
 ## Standalone Binary Install
 
-Use this when the user wants `contextmink` on PATH instead of vendored in each
-repository:
+This installs `contextmink` on `PATH` instead of vendoring it per repository:
 
 1. Unpack the release archive.
 2. Put `contextmink(.exe)` on `PATH`, or run it from the unpacked directory.
@@ -60,10 +61,18 @@ repository:
 The binary can use a repository-local `.contextmink.toml`; it searches upward
 from the current directory.
 
+On Windows, direct `contextmink.exe` can run built-in commands and native
+executables. Use Project Binary Integration when `capture` needs to run
+extensionless Bash scripts from the repository.
+
 ## Project Binary Integration
 
-Use this when a target repository should carry a local `scripts/contextmink`
-entrypoint without requiring users or agents to build from source.
+This gives a target repository a local `scripts/contextmink` entrypoint without
+a source build.
+
+Use this layout for Windows repositories that expect agents to run `capture`
+around extensionless Bash scripts. The launcher supplies the Bash interpreter
+for script fallback.
 
 1. Unpack the release archive next to, or outside, the target repository.
 
@@ -100,7 +109,7 @@ entrypoint without requiring users or agents to build from source.
    scans quiet; callers can still pass an explicit file or subdirectory inside
    an excluded tree when that tree is the target.
 
-6. Install the agent guidance:
+6. Merge repository guidance:
 
    - Codex: merge `templates/AGENTS.contextmink.md` into the target
      repository's `AGENTS.md` or equivalent Codex guidance file.
@@ -114,19 +123,15 @@ entrypoint without requiring users or agents to build from source.
    scripts/contextmink grep contextmink --path . --limit 5
    ```
 
-For agent-assisted setup, give the agent the unpacked release directory and the
-target repository path, then ask it to perform steps 2-7 and keep repository
-specific policy in `.contextmink.toml` plus the target repository instructions.
-
-Useful agent prompt:
+Delegated setup prompt:
 
 ```text
-Set up contextmink in this repository from the unpacked release directory at
-<path>. Do not build from source. Copy the binary into tools/contextmink/bin/,
-copy templates/scripts/contextmink to scripts/contextmink, create or update
-.contextmink.toml with repo-appropriate high-output excludes, merge the
-AGENTS/CLAUDE contextmink instruction snippet into the project guidance file,
-and verify with scripts/contextmink files --path . --max 20.
+Set up contextmink in <target-repo> from the unpacked release at <path>. Use
+the release binary, not a source build. Install
+tools/contextmink/bin/contextmink(.exe), scripts/contextmink, and
+.contextmink.toml with repo-appropriate high-output excludes. Merge the
+AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with
+scripts/contextmink files --path . --max 20.
 ```
 
 ## Source Vendored Integration
@@ -146,8 +151,8 @@ copy of the Rust crate:
    ```
 
    The launcher uses `tools/contextmink/target/release/contextmink(.exe)` when
-   it builds from source. For the no-build path, use Project Binary Integration
-   instead.
+   it builds from source. For release binary installs, use Project Binary
+   Integration instead.
 
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
 
@@ -213,19 +218,19 @@ the local policy clearer for future maintainers.
 
 ## Instruction Rule
 
-Do not copy prose from this setup guide by hand. Use the maintained templates:
+Use the maintained snippets rather than copying setup prose into project
+guidance:
 
 - `templates/AGENTS.contextmink.md` for Codex-facing guidance.
 - `templates/CLAUDE.contextmink.md` for Claude-facing guidance.
 
-The template files are intentionally kept equivalent by tests so behavior does
-not drift between instruction surfaces.
+Tests keep the two snippets equivalent so Codex and Claude guidance do not
+drift.
 
 Do not create a separate contextmink skill or slash command by default.
-The bounded-output rule should be visible before broad reads start; an on-demand
-skill is easier to miss and adds another instruction surface to keep in
-sync. Use the short Codex/Claude snippets above unless a host tool requires a
-different integration mechanism.
+Put the bounded-output rule in always-loaded project guidance so it applies
+before broad reads start. Use host-specific integration only when the host
+requires it.
 
 ## Operational Notes
 

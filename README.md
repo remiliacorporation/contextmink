@@ -70,10 +70,16 @@ templates, a manifest, and a SHA-256 checksum.
 
 Release builds include bundled SQLite support for portability.
 
+On Windows repositories that use extensionless Bash scripts, use the
+project-local `scripts/contextmink` launcher below for `capture`; it supplies the
+Bash interpreter needed for script fallback. The raw `contextmink.exe` is fine
+for built-in commands and native executables.
+
 ## Add To A Project
 
-End users do not need Rust or Cargo. For a project-local install, unpack the
-release archive and copy the binary plus templates into the target repository:
+Rust and Cargo are not required for release installs. For a project-local
+install, unpack the release archive and copy the binary plus templates into the
+target repository:
 
 ```text
 target-repo/
@@ -95,9 +101,8 @@ Use the files from the release archive:
    scripts/contextmink files --path . --max 20
    ```
 
-This is the recommended setup for agent-driven project integration: give the
-agent the unpacked release directory and ask it to perform those copy/merge
-steps for the target repository. See [SETUP.md](SETUP.md) for the full guide.
+For delegated setup, give the agent the unpacked release directory and target
+repository path. The full checklist is in [SETUP.md](SETUP.md).
 
 ## Build From Source
 

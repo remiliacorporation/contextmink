@@ -1,7 +1,34 @@
 ### Bounded Output
 
-Use `scripts/contextmink` for broad or uncertain file/text/JSON/SQLite/command-output reads before opening raw output in the transcript. Start with `files` or `grep`; prefer `files --ext json`/`--extension jsonl` for extension filters when commands cross Windows-to-Bash boundaries, because wildcard globs can be expanded before contextmink receives them. Use `grep --pattern-file <file>` for shell-fragile regex, use `grep-terms` for shell-fragile token or phrase searches (`--or`/`--any` for alternatives; `--term-file` for phrase lists; `--limit` and `--max-matches` for output caps), use `slice` for exact line windows, use `json-find` for discovery inside sidecars/reports/manifests/logs, use `json-select` for bounded JSON/JSONL row and field projection, use `sqlite-schema --path <db>` for table/column/index discovery, and use `sqlite --path <db> --sql-file <file>` for read-only DB inspection when shell quoting would otherwise become the task. Prefer a domain command's native compact/projection/limit flags first; use `capture -- <command> ...` (or its `run` alias) only when output size is uncertain and no better native bound exists, then read the child `exit_code`/`success` fields in the receipt. Configured excludes keep broad scans quiet; pass an explicit file or subdirectory when an excluded tree is the target, and use `--with-excluded` only when the whole command should include files matched by contextmink's exclude globs. Use `--with-git-ignored` only when intentionally inspecting files hidden by Git or `.ignore` rules. Treat a `CONTEXTMINK_RECEIPT` with `"truncated": true` or `"complete": false` as capped output and narrow the query; add `--fail-if-truncated`/`--strict-complete` when truncation should make automation fail after the receipt is emitted, or `--require-complete-scan` when scan-capped lower-bound totals should fail. When `cap_reason` is `"scan"`, `candidate_files_total_is_lower_bound` is true, or grep match-total lower-bound fields are true, totals and no-match results only describe the scanned subset.
+Use `scripts/contextmink` when a file/text/JSON/SQLite/command-output read may
+produce more output than the transcript should carry.
 
-Do not route everything through `contextmink`. Direct commands are appropriate when the output is already known to be small or structurally bounded, such as `git status --short`, `git diff --stat`, one exact small file, a focused test command, or a domain tool that already emits compact/limited records. If output turns out broader than expected, discard that result and rerun through `contextmink` with narrower paths or caps.
-
-`contextmink` is only a generic transcript guard. Prefer project-native tools for domain-specific parsing, validation, indexing, diagnostics, or synchronization.
+- Start with `files` or `grep` for candidate discovery. Prefer
+  `files --ext json` / `--extension jsonl` across Windows-to-Bash boundaries
+  because wildcard globs can expand before contextmink receives them.
+- Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
+  for literal tokens or phrases (`--or` / `--any`, `--term-file`, `--limit`,
+  `--max-matches`).
+- Use `slice`, `json-find`, `json-select`, `sqlite-schema`, and
+  `sqlite --sql-file` for bounded reads instead of opening whole large files,
+  reports, or databases.
+- Prefer a domain command's native compact/projection/limit flags first. Use
+  `capture -- <command> ...` or `run` only when output size is uncertain and no
+  native bound exists; read the child `exit_code`/`success` fields in the
+  receipt.
+- Configured excludes keep broad scans quiet. Pass an explicit file or
+  subdirectory when an excluded tree is the target. Use `--with-excluded` to
+  include files matched by contextmink exclude globs, and `--with-git-ignored`
+  only for files hidden by Git or `.ignore` rules.
+- Treat a `CONTEXTMINK_RECEIPT` with `"truncated": true` or `"complete": false`
+  as capped output and narrow the query. Use `--fail-if-truncated` /
+  `--strict-complete` for automation that requires full displayed output, or
+  `--require-complete-scan` when scan-capped totals should fail. When
+  `cap_reason` is `"scan"` or lower-bound fields are true, totals and no-match
+  results cover only the scanned subset.
+- Direct commands are fine when output is already known to be small or
+  structurally bounded, such as `git status --short`, `git diff --stat`, one
+  exact small file, a focused test command, or a domain tool that emits compact
+  records.
+- Keep domain-specific parsing, validation, indexing, diagnostics, and
+  synchronization in project-native tools.
