@@ -6,6 +6,7 @@ mod encoding;
 mod files;
 mod grep_scan;
 mod json_tools;
+mod outline;
 mod output;
 mod sqlite;
 mod text;
@@ -22,6 +23,7 @@ use commands::{
 };
 use config::load_context_config;
 use json_tools::{command_json_find, command_json_select};
+use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
 use text::{TextMatcher, collect_terms, resolve_term_mode};
 
@@ -194,6 +196,30 @@ fn main() -> Result<()> {
             *max_line_chars,
             *char_start,
             *chars,
+        ),
+        Command::Outline {
+            file,
+            path,
+            lang,
+            prefix,
+            pattern,
+            contains,
+            ignore_case,
+            max_items,
+            max_line_chars,
+        } => command_outline(
+            &cli,
+            &config,
+            file.as_deref()
+                .or(path.as_deref())
+                .expect("clap requires an outline file through <FILE> or --path"),
+            lang.as_deref(),
+            prefix.as_deref(),
+            pattern.as_deref(),
+            contains,
+            *ignore_case,
+            *max_items,
+            *max_line_chars,
         ),
         Command::JsonFind {
             file,

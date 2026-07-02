@@ -7,15 +7,24 @@ produce more output than the transcript should carry.
   for candidate discovery. Prefer `files --ext json` / `--extension jsonl`
   across Windows-to-Bash boundaries because wildcard globs can expand before
   contextmink receives them.
+- Read source files through `outline` then `slice`, not dump windows. A named
+  file is still reconnaissance while the answer's location inside it is
+  unknown: `outline <file>` maps declaration lines with line numbers
+  (`--contains TEXT` filters rows; `--lang`, `--prefix <text>`, or
+  `--pattern <regex>` cover unrecognized extensions), then
+  `slice --range START:END` prints the region. `slice` replaces `sed -n` /
+  `cat` / `head` file windows; its defaults (120-line window, 220-line
+  ceiling) are the point — narrow an oversized read with `outline` or
+  `grep --context` instead of raising `--max-lines`.
 - Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
   for literal tokens or phrases (`--or` / `--any`, `--term-file`, `--limit`,
   `--max-matches`). Narrow either with `--glob` / `--ext`, add `-i` for
   case-insensitive matching, and `--context N` when the surrounding lines
   would otherwise need a follow-up `slice`.
-- Use `slice` (including `--tail N` for the end of logs), `json-find`,
-  `json-select` (with `--where FIELD=VALUE` / `--where-contains FIELD=TEXT`
-  row filters), `sqlite-schema`, and `sqlite --sql-file` for bounded reads
-  instead of opening whole large files, reports, or databases.
+- Use `slice --tail N` for the end of logs, `json-find`, `json-select` (with
+  `--where FIELD=VALUE` / `--where-contains FIELD=TEXT` row filters),
+  `sqlite-schema`, and `sqlite --sql-file` for bounded reads instead of
+  opening whole large files, reports, or databases.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` or `run` only when output size is uncertain and no
   native bound exists; read the child `exit_code`/`success` fields in the
@@ -35,8 +44,11 @@ produce more output than the transcript should carry.
   `no_match_scope: "scanned_subset"` or a `json-select` with `all_null_fields`
   entries needs a narrower or corrected query, not a conclusion.
 - Direct commands are fine when output is already known to be small or
-  structurally bounded, such as `git status --short`, `git diff --stat`, one
-  exact small file, a focused test command, or a domain tool that emits compact
-  records.
+  structurally bounded: `git status --short`, `git diff --stat`, a focused
+  test command, a domain tool that emits compact records, or one exact file
+  region already known to fit a slice window (about 120 lines). Above that,
+  the read is reconnaissance — go through `outline`/`grep`/`slice`. Knowing
+  the range you chose does not make the output small; choosing a large range
+  is the failure the caps exist to catch.
 - Keep domain-specific parsing, validation, indexing, diagnostics, and
   synchronization in project-native tools.

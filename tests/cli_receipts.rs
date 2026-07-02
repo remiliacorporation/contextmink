@@ -108,6 +108,103 @@ fn slice_accepts_named_path_alias() {
 }
 
 #[test]
+fn outline_maps_declarations_with_receipt_envelope() {
+    let root = fixture_root("outline-envelope");
+    fs::write(
+        root.join("sample.rs"),
+        concat!(
+            "use std::io;\n",
+            "\n",
+            "pub struct Frame {\n",
+            "    depth: usize,\n",
+            "}\n",
+            "\n",
+            "impl Frame {\n",
+            "    pub fn render(&self) {\n",
+            "        let local = 1;\n",
+            "    }\n",
+            "\n",
+            "    fn cull_hidden(&mut self) {}\n",
+            "}\n",
+            "\n",
+            "mod tests;\n",
+        ),
+    )
+    .unwrap();
+
+    let json = parse_json_output(&root, &["--json", "outline", "sample.rs"]);
+    assert_envelope(&json, "outline", "items");
+    assert_eq!(json["language"], "rust");
+    assert_eq!(json["path"], "sample.rs");
+    assert_eq!(json["total_lines"], 15);
+    assert_eq!(json["total"], 5);
+    assert_eq!(json["declaration_lines_total"], 5);
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["items"][0]["line"], 3);
+    assert_eq!(json["items"][0]["text"], "pub struct Frame {");
+    assert_eq!(json["items"][2]["text"], "    pub fn render(&self) {");
+
+    let filtered = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "outline",
+            "--path",
+            "sample.rs",
+            "--contains",
+            "CULL",
+            "--ignore-case",
+        ],
+    );
+    assert_eq!(filtered["total"], 1);
+    assert_eq!(filtered["declaration_lines_total"], 5);
+    assert_eq!(
+        filtered["items"][0]["text"],
+        "    fn cull_hidden(&mut self) {}"
+    );
+
+    let capped = parse_json_output(
+        &root,
+        &["--json", "outline", "sample.rs", "--max-items", "2"],
+    );
+    assert_eq!(capped["truncated"], true);
+    assert_eq!(capped["cap_reason"], "max_items");
+    assert_eq!(capped["shown"], 2);
+    assert_eq!(capped["total"], 5);
+
+    let human = run_contextmink(&root, &["outline", "sample.rs", "--limit", "2"]);
+    assert!(human.contains("[contextmink] outline path=sample.rs language=rust total_lines=15"));
+    assert!(human.contains("3: pub struct Frame {"));
+    assert!(human.contains("capped outline at 2 items"));
+    assert!(human.contains("CONTEXTMINK_RECEIPT "));
+}
+
+#[test]
+fn outline_fails_fast_without_language_heuristic() {
+    let root = fixture_root("outline-unknown");
+
+    let output = run_contextmink_raw(&root, &["outline", "sample.txt"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--lang"), "stderr: {stderr}");
+
+    let custom = parse_json_output(
+        &root,
+        &["--json", "outline", "sample.txt", "--pattern", "^alpha"],
+    );
+    assert_eq!(custom["language"], "pattern");
+    assert_eq!(custom["total"], 2);
+
+    let prefixed = parse_json_output(
+        &root,
+        &["--json", "outline", "sample.txt", "--prefix", "alpha"],
+    );
+    assert_eq!(prefixed["language"], "prefix");
+    assert_eq!(prefixed["total"], 2);
+    assert_eq!(prefixed["items"][0]["line"], 1);
+}
+
+#[test]
 fn json_commands_accept_named_path_alias() {
     let root = fixture_root("json-path-alias");
 

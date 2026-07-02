@@ -1,9 +1,9 @@
 # contextmink
 
 `contextmink` is a transcript guard for command-line code work. It provides
-bounded ways to list files, search text, read line windows, inspect JSON, run
-read-only SQLite queries, and capture unknown-size command output without
-dumping large outputs into the conversation.
+bounded ways to list files, search text, map file structure, read line
+windows, inspect JSON, run read-only SQLite queries, and capture unknown-size
+command output without dumping large outputs into the conversation.
 
 It is deliberately generic. Project-specific parsing, validation, indexing,
 diagnostics, and synchronization should stay in project-native tools.
@@ -32,15 +32,35 @@ diagnostics, and synchronization should stay in project-native tools.
   cap fires. Content scanning runs on multiple threads with walk-order
   deterministic output.
 - `grep-terms`: match lines containing all `--term` values by default, or any
-  term with `--mode any` / `--any` / `--or`. Use `--term-file <file>` for
-  phrase lists when shell quoting or regex punctuation would make inline
-  arguments fragile. Accepts the same `--glob` / `--ext` / `-i` / `--context`
+  term with `--mode any` / `--any` / `--or`. This is the preferred search form
+  when the query is tokens rather than structure — no regex syntax to quote,
+  and ASCII case-insensitive matching folds bytes without allocating. Use
+  `--term-file <file>` for phrase lists when shell quoting or regex
+  punctuation would make inline arguments fragile. Accepts the same `--glob` / `--ext` / `-i` / `--context`
   narrowing as `grep`. `--limit` caps printed files; `--max-matches` /
   `--max-lines` cap printed sample match lines.
-- `slice`: print bounded line windows (`--range`, `--start`/`--end`, or
-  `--tail N` for the end of a file), or character windows for very long
-  single-line files and pasted attachments. Receipts report the detected
-  `encoding`.
+- `slice`: the guarded file-read primitive. Print bounded line windows
+  (`--range`, `--start`/`--end`, or `--tail N` for the end of a file), or
+  character windows for very long single-line files and pasted attachments.
+  Use it where `sed -n`, `cat`, or `head` windows would otherwise dump file
+  content into the transcript. The defaults (120-line window, 220-line
+  `--max-lines` ceiling) are deliberate: a read that wants more than one
+  window is reconnaissance — locate the region with `outline` or
+  `grep --context` first instead of raising the caps. Receipts report the
+  detected `encoding` and the file's `total_lines`.
+- `outline`: map declaration-shaped lines in one source file — functions,
+  types, impls, classes, headings — as `line: text` rows, so a large file can
+  be navigated for tens of lines of output instead of dumped in windows. Each
+  built-in language rule (Rust, Python, JavaScript/TypeScript, Go, C/C++,
+  Java, C#, Kotlin, shell, Lua, Ruby, Markdown, TOML, INI, YAML, SQL DDL,
+  MediaWiki wikitext) is a hand-written token classifier, not a parser and
+  not a regex: rows can include false positives
+  and indentation conveys nesting. Extensionless scripts resolve through
+  their `#!` shebang line (bash/sh/zsh, python, lua, ruby, node). `--lang`
+  overrides detection, `--prefix <text>` outlines any other format by literal
+  line prefix (after indentation), `--pattern <regex>` remains as the
+  full-power escape hatch, and `--contains TEXT` (with `-i`) filters rows. Use it before `slice` when
+  the file is known but the location of the answer inside it is not.
 - `json-find`: query JSON by key, path, or summarized value without opening the
   whole document.
 - `json-select`: project a JSON document or array to bounded row summaries using
@@ -53,7 +73,9 @@ diagnostics, and synchronization should stay in project-native tools.
   `all_null_fields` and as a warning, so selector typos cannot silently project
   `null`. The launcher preserves slash-leading JSON Pointer selector arguments
   on Git Bash/Windows so they are not rewritten as host paths before reaching
-  the native binary.
+  the native binary; it gives the same protection to slash-bearing
+  `--pattern`, `--prefix`, `--contains`, and `--term` values, which MSYS would
+  otherwise rewrite or collapse (`^// PART` becomes `^/ PART` without it).
 - `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
   caps and receipt metadata. A runaway query is interrupted after
   `--timeout-secs` (default 60; 0 disables) so it fails accountably instead
@@ -113,6 +135,11 @@ Release archives are built for Windows x64, macOS Intel, macOS ARM, and Linux
 x64. Each archive includes the binary, setup docs, repository instruction
 templates, a manifest, and a SHA-256 checksum.
 
+The binary is self-contained on every platform: PowerShell, cmd, WSL, and
+POSIX shells all invoke it directly. Nothing in contextmink requires Git Bash,
+the `scripts/contextmink` launcher, or the optional Windows bridge — those
+exist only for repositories that deliberately keep their scripts Bash-first.
+
 Release builds include bundled SQLite support for portability.
 
 On Windows repositories that use extensionless Bash scripts, use the
@@ -140,7 +167,16 @@ Use the files from the release archive:
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml` and edit excludes.
 4. Merge `templates/AGENTS.contextmink.md` into `AGENTS.md` for Codex, and/or
    `templates/CLAUDE.contextmink.md` into `CLAUDE.md` for Claude.
-5. Verify from the target repository root:
+5. Optional, only for Bash-first repositories driven by a PowerShell-hosted
+   agent on Windows: copy `contextmink-bridge.exe` (Windows archive only) next
+   to the contextmink binary — a native PowerShell -> Git Bash bridge that
+   discovers Git Bash itself, spawns direct commands with zero MSYS argument
+   rewriting, and accepts argv through `--argv-b64` (a single base64 token
+   PowerShell cannot mangle) or `--argfile`. The `templates/scripts/codex-bash.sh`
+   script launcher covers the same ground for setups that prefer a shell
+   entrypoint. Repositories on pure PowerShell or WSL skip this entirely and
+   invoke the contextmink binary directly. See [docs/setup.md](docs/setup.md).
+6. Verify from the target repository root:
 
    ```bash
    scripts/contextmink files --path . --max 20
@@ -171,6 +207,10 @@ scripts/contextmink dirs crates --depth 2 --max 40
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
 scripts/contextmink grep CMapChunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term "panic" --or src --max-matches 12
+scripts/contextmink outline src/renderer.rs
+scripts/contextmink outline src/renderer.rs --contains cull -i
+scripts/contextmink outline vendor/header.h --lang c --limit 60
+scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-find report.json --key-contains error --max 10

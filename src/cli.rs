@@ -411,6 +411,71 @@ pub(crate) enum Command {
         )]
         chars: usize,
     },
+    /// Map declaration-shaped lines in one source file for orientation.
+    ///
+    /// An outline is structured grep over per-language declaration heuristics,
+    /// not a parser: use it to locate the right region of a large file, then
+    /// read that region with `slice`.
+    Outline {
+        #[arg(
+            value_name = "FILE",
+            required_unless_present = "path",
+            help = "Source file to outline"
+        )]
+        file: Option<PathBuf>,
+        #[arg(
+            long = "path",
+            value_name = "FILE",
+            conflicts_with = "file",
+            help = "Source file to outline"
+        )]
+        path: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "LANG",
+            conflicts_with_all = ["prefix", "pattern"],
+            help = "Language heuristic to use instead of the file extension"
+        )]
+        lang: Option<String>,
+        #[arg(
+            long,
+            value_name = "TEXT",
+            conflicts_with = "pattern",
+            help = "Outline lines that start with this literal text after indentation, instead of a language heuristic"
+        )]
+        prefix: Option<String>,
+        #[arg(
+            long,
+            value_name = "REGEX",
+            help = "Custom declaration-line regex instead of a built-in language heuristic"
+        )]
+        pattern: Option<String>,
+        #[arg(
+            long = "contains",
+            value_name = "TEXT",
+            help = "Only keep outline rows containing this text; repeatable, all must hold"
+        )]
+        contains: Vec<String>,
+        #[arg(
+            long = "ignore-case",
+            short = 'i',
+            help = "Match --contains case-insensitively"
+        )]
+        ignore_case: bool,
+        #[arg(
+            long,
+            alias = "limit",
+            default_value_t = 120,
+            help = "Maximum outline rows to print"
+        )]
+        max_items: usize,
+        #[arg(
+            long,
+            default_value_t = 220,
+            help = "Maximum characters per printed row"
+        )]
+        max_line_chars: usize,
+    },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
         #[arg(

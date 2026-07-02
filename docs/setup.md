@@ -4,7 +4,8 @@ This guide is for adding `contextmink` to an existing repository.
 
 `contextmink` is a transcript guard. Use it before broad file, text, line-slice,
 JSON, read-only SQLite, or unknown-size command-output reads when the output
-cardinality is unknown or host-shell quoting would become the task. It is not a
+cardinality is unknown, when a known file must be navigated beyond one bounded
+window, or when host-shell quoting would become the task. It is not a
 replacement for project-native tools.
 
 ## Prerequisites
@@ -136,6 +137,72 @@ AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with
 scripts/contextmink files --path . --max 20.
 ```
 
+## Optional: PowerShell -> Git Bash Bridge (Windows + Codex-style hosts)
+
+Nothing in contextmink requires a bridge, Git Bash, or the
+`scripts/contextmink` launcher: the contextmink binary is native on every
+platform, and PowerShell, cmd, and WSL invoke it directly. Skip this section
+unless the repository deliberately keeps its scripts Bash-first for
+cross-platform authoring and is driven by a PowerShell-hosted agent.
+
+Such repositories have two bridge options. Both exist because Windows has two
+distinct argv hazards; neither hazard exists on POSIX hosts, where agents
+should run bash and commands directly.
+
+**Native binary (preferred on Windows).** The Windows release archive carries
+`contextmink-bridge.exe`. It locates Git Bash itself (no hardcoded path on the
+agent side), spawns direct commands natively with zero MSYS argument
+rewriting, and accepts argv through channels PowerShell cannot mangle:
+
+```powershell
+# Direct command; slash-bearing args arrive verbatim:
+& tools\contextmink\bin\contextmink-bridge.exe -- <program> <args...>
+# Repository bash script, Git Bash discovered automatically:
+& tools\contextmink\bin\contextmink-bridge.exe --script scripts/some_tool.sh <args...>
+# Lossless single-token argv channel (immune to PowerShell 5.1 quote loss):
+$argv = @('grep', '-n', 'he said "hi"', 'notes.md')
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [char]0)))
+& tools\contextmink\bin\contextmink-bridge.exe --argv-b64 $b64
+```
+
+`--print-argv` shows exactly what survived the PowerShell boundary;
+`--argfile <file>` (one argument per line) is the file-based alternative;
+`--cwd` and `--login` work as in the script bridge. Relative paths resolve
+from `CONTEXTMINK_BRIDGE_ROOT`, else the first ancestor of the binary with
+`.git` or `.contextmink.toml`.
+
+**Script launcher (bash-first setups).** Install the template when the
+repository prefers a shell entrypoint or must not carry a second binary:
+
+```bash
+cp /path/to/unpacked/templates/scripts/codex-bash.sh scripts/codex-bash.sh
+chmod +x scripts/codex-bash.sh
+```
+
+The agent then invokes Git Bash by absolute path with argv-safe forms instead
+of `bash -lc "<string>"`:
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" scripts/codex-bash.sh -- <program> <args...>
+& "C:\Program Files\Git\bin\bash.exe" scripts/codex-bash.sh --script scripts/some_tool.sh <args...>
+```
+
+The bridge handles the two distinct Windows argv hazards separately:
+
+- PowerShell 5.1 drops embedded quotes and merges arguments at the
+  PowerShell -> bash boundary. Diagnose with `--print-argv`; pass fragile
+  argv through `--argfile <file>` (one argument per line, no quoting).
+- MSYS rewrites or collapses slash-bearing arguments (regex patterns,
+  POSIX-looking switches) at the bash -> native-exe boundary. Pass
+  `--no-msys-conversion` when a native child must receive argv verbatim.
+
+`--cwd <dir>` selects the working directory, `--login` supplies a login-shell
+environment argv-safely, and a built-in warn-only trip-wire flags raw content
+dumps (`sed -n` windows, `cat` on large files) toward `contextmink
+outline`/`slice`. Without a command form the launcher opens an interactive
+shell only on a real terminal; a headless agent gets a usage error instead of
+a hang.
+
 ## Source Vendored Integration
 
 Use this pattern only when the target repository should carry and build its own
@@ -229,6 +296,11 @@ guidance:
 Tests keep the two snippets equivalent so Codex and Claude guidance do not
 drift.
 
+The snippets invoke the repo-local `scripts/contextmink` launcher form.
+Repositories that skip the Bash launcher (pure PowerShell or WSL setups)
+should replace those references with direct `contextmink` binary invocation
+when merging; the policy content is shell-agnostic.
+
 Do not create a separate contextmink skill or slash command by default.
 Put the bounded-output rule in always-loaded project guidance so it applies
 before broad reads start. Use host-specific integration only when the host
@@ -261,16 +333,23 @@ requires it.
   `--with-excluded` is also set.
 - Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
   punctuation or spaces.
-- Prefer `slice --range START:END` before opening large files, and
-  `slice --tail N` for the end of logs.
+- Read known files through `outline` then `slice` instead of dump windows:
+  `outline <file>` maps declaration lines with line numbers (`--contains TEXT`
+  filters rows; `--lang`, `--prefix <text>`, or `--pattern <regex>` cover
+  unrecognized extensions), then `slice --range START:END` prints the located
+  region. Use `slice --tail N` for the end of logs. Keep slice's default caps;
+  narrow an oversized read with `outline` or `grep --context` instead of
+  raising `--max-lines`.
 - Prefer `json-find` over opening whole JSON reports, and `json-select` for
   bounded row/field projection from JSON arrays or JSONL row files
   (`--where FIELD=VALUE` / `--where-contains FIELD=TEXT` filter rows; a field
   reported in `all_null_fields` is a selector typo or shape mismatch, not
   evidence).
 - On Git Bash/Windows, use the `scripts/contextmink` launcher for
-  `json-select`; it preserves slash-leading JSON Pointer selectors while still
-  leaving normal file path handling to the shell/runtime boundary.
+  `json-select` and for slash-bearing `--pattern` / `--prefix` / `--contains`
+  / `--term` values; it preserves slash-leading JSON Pointer selectors and
+  shields those values from MSYS path rewriting while still leaving normal
+  file path handling to the shell/runtime boundary.
 - Prefer `sqlite-schema --path <db>` before ad hoc SQLite queries against
   unfamiliar databases.
 - Prefer `sqlite --path <db> --sql-file <file>` for read-only SQL containing

@@ -71,7 +71,7 @@ impl TextMatcher {
                 ignore_case,
             } => {
                 if *ignore_case {
-                    text.to_lowercase().contains(pattern)
+                    contains_ignore_case(text, pattern)
                 } else {
                     text.contains(pattern)
                 }
@@ -82,16 +82,16 @@ impl TextMatcher {
                 mode,
                 ignore_case,
             } => {
-                let lowered;
-                let haystack = if *ignore_case {
-                    lowered = text.to_lowercase();
-                    lowered.as_str()
+                if *ignore_case {
+                    match mode {
+                        TermMode::All => terms.iter().all(|term| contains_ignore_case(text, term)),
+                        TermMode::Any => terms.iter().any(|term| contains_ignore_case(text, term)),
+                    }
                 } else {
-                    text
-                };
-                match mode {
-                    TermMode::All => terms.iter().all(|term| haystack.contains(term)),
-                    TermMode::Any => terms.iter().any(|term| haystack.contains(term)),
+                    match mode {
+                        TermMode::All => terms.iter().all(|term| text.contains(term.as_str())),
+                        TermMode::Any => terms.iter().any(|term| text.contains(term.as_str())),
+                    }
                 }
             }
         }
@@ -120,6 +120,38 @@ impl TextMatcher {
             | Self::Terms { ignore_case, .. } => *ignore_case,
         }
     }
+}
+
+/// Case-insensitive substring test against a needle that is already
+/// lowercased. ASCII needles fold haystack bytes in place without allocating
+/// (a UTF-8 continuation byte is >= 0x80 and never folds to ASCII, so byte
+/// comparison cannot false-match mid-codepoint); non-ASCII needles fall back
+/// to a Unicode lowercase of the haystack.
+pub(crate) fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if !needle_lower.is_ascii() {
+        return haystack.to_lowercase().contains(needle_lower);
+    }
+    let haystack = haystack.as_bytes();
+    let needle = needle_lower.as_bytes();
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    let first = needle[0];
+    'candidates: for start in 0..=haystack.len() - needle.len() {
+        if haystack[start].to_ascii_lowercase() != first {
+            continue;
+        }
+        for (offset, expected) in needle.iter().enumerate().skip(1) {
+            if haystack[start + offset].to_ascii_lowercase() != *expected {
+                continue 'candidates;
+            }
+        }
+        return true;
+    }
+    false
 }
 
 pub(crate) fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<Vec<String>> {
