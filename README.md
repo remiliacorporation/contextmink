@@ -1,236 +1,116 @@
 # contextmink
 
-`contextmink` is a transcript guard for command-line code work. It provides
-bounded ways to list files, search text, map file structure, read line
-windows, inspect JSON, run read-only SQLite queries, and capture unknown-size
-command output without dumping large outputs into the conversation.
+A transcript guard for agent-driven code work. Every command lists, searches,
+reads, or inspects with hard output caps and ends with a machine-readable
+receipt stating whether the result was complete. Agents get bounded evidence
+instead of flooded context; humans can read the same receipts to see what an
+agent saw.
 
-It is deliberately generic. Project-specific parsing, validation, indexing,
-diagnostics, and synchronization should stay in project-native tools.
-
-## Commands
-
-- `files`: list candidate files with hard caps and configured excludes. Include
-  globs match either the displayed path or the basename, so `--glob '*.jsonl'`
-  works inside an explicit queue directory. Configured excludes apply to broad
-  scans, but an explicit path inside an excluded tree is treated as the target
-  and searched without `--with-excluded`. Use `--with-git-ignored` only when
-  intentionally inspecting files hidden by Git or `.ignore` rules. On Windows
-  shell bridges, prefer `--ext jsonl` over wildcard globs for extension filters.
-- `dirs`: bounded directory overview with recursive file counts per directory,
-  `--depth` levels below each root. Use it to orient in an unfamiliar tree
-  before running `files` or `grep`. Directories that contain no files do not
-  appear.
-- `grep`: print a bounded file/sample summary for a regex or literal pattern.
-  `total_matches` counts matching lines. Use `--pattern-file <file>` when regex
-  punctuation would be fragile through a host shell bridge; `--glob` / `--ext`
-  to narrow the candidate set; `-i` / `--ignore-case` for case-insensitive
-  matching; `--context N` to include surrounding lines with each sample
-  (context lines print with a `-` separator and count against the sample
-  budget). `--max-count-files` stops content scanning after enough matching
-  files have been found; receipts mark match totals as lower bounds when that
-  cap fires. Content scanning runs on multiple threads with walk-order
-  deterministic output.
-- `grep-terms`: match lines containing all `--term` values by default, or any
-  term with `--mode any` / `--any` / `--or`. This is the preferred search form
-  when the query is tokens rather than structure — no regex syntax to quote,
-  and ASCII case-insensitive matching folds bytes without allocating. Use
-  `--term-file <file>` for phrase lists when shell quoting or regex
-  punctuation would make inline arguments fragile. Accepts the same `--glob` / `--ext` / `-i` / `--context`
-  narrowing as `grep`. `--limit` caps printed files; `--max-matches` /
-  `--max-lines` cap printed sample match lines.
-- `slice`: the guarded file-read primitive. Print bounded line windows
-  (`--range`, `--start`/`--end`, or `--tail N` for the end of a file), or
-  character windows for very long single-line files and pasted attachments.
-  Use it where `sed -n`, `cat`, or `head` windows would otherwise dump file
-  content into the transcript. The defaults (120-line window, 220-line
-  `--max-lines` ceiling) are deliberate: a read that wants more than one
-  window is reconnaissance — locate the region with `outline` or
-  `grep --context` first instead of raising the caps. Receipts report the
-  detected `encoding` and the file's `total_lines`.
-- `outline`: map declaration-shaped lines in one source file — functions,
-  types, impls, classes, headings — as `line: text` rows, so a large file can
-  be navigated for tens of lines of output instead of dumped in windows. Each
-  built-in language rule (Rust, Python, JavaScript/TypeScript, Go, C/C++,
-  Java, C#, Kotlin, shell, Lua, Ruby, Markdown, TOML, INI, YAML, SQL DDL,
-  MediaWiki wikitext) is a hand-written token classifier, not a parser and
-  not a regex: rows can include false positives
-  and indentation conveys nesting. Extensionless scripts resolve through
-  their `#!` shebang line (bash/sh/zsh, python, lua, ruby, node). `--lang`
-  overrides detection, `--prefix <text>` outlines any other format by literal
-  line prefix (after indentation), `--pattern <regex>` remains as the
-  full-power escape hatch, and `--contains TEXT` (with `-i`) filters rows. Use it before `slice` when
-  the file is known but the location of the answer inside it is not.
-- `json-find`: query JSON by key, path, or summarized value without opening the
-  whole document.
-- `json-select`: project a JSON document or array to bounded row summaries using
-  JSON Pointer and field selectors. `--where FIELD=VALUE` and
-  `--where-contains FIELD=TEXT` keep only matching rows (repeatable; all must
-  hold; string values compare without JSON quotes). Files named `*.jsonl` are
-  streamed row-by-row without loading the whole file; other files fall back to
-  JSONL parsing when they are not one complete JSON document. A requested or
-  predicate field that is null/missing in every scanned row is reported in
-  `all_null_fields` and as a warning, so selector typos cannot silently project
-  `null`. The launcher preserves slash-leading JSON Pointer selector arguments
-  on Git Bash/Windows so they are not rewritten as host paths before reaching
-  the native binary; it gives the same protection to slash-bearing
-  `--pattern`, `--prefix`, `--contains`, and `--term` values, which MSYS would
-  otherwise rewrite or collapse (`^// PART` becomes `^/ PART` without it).
-- `sqlite`: run a read-only query from `--sql` or `--sql-file <file>` with row
-  caps and receipt metadata. A runaway query is interrupted after
-  `--timeout-secs` (default 60; 0 disables) so it fails accountably instead
-  of hanging until the calling shell kills it. Prefer `--path <file>` for the
-  DB path; positional DB paths and `--db <file>` remain accepted.
-- `sqlite-schema`: summarize SQLite tables, columns, indexes, and foreign keys
-  from SQLite metadata without hand-written PRAGMA queries. Prefer
-  `--path <file>` for the DB path; positional DB paths and `--db <file>` remain
-  accepted.
-- `capture` (`run` alias): execute argv directly and print capped stdout/stderr
-  summaries with exit status. When output exceeds the line or byte budget, the
-  head and the tail are both kept with an omission marker between them, because
-  tool verdicts (test summaries, error totals) live at the end of output. Use
-  capture only when a command's output cardinality is unknown and the command
-  lacks a better native filter or projection.
-
-Use `--json` when another script or tool should consume the result directly.
-Use `--fail-if-truncated` (aliases: `--fail-on-truncate`,
-`--strict-complete`) when a capped result should stop automation after the
-receipt is emitted. Use `--require-complete-scan` when display caps may be fine
-but scan-capped lower-bound totals should fail.
-
-## Text Encodings
-
-Content scanning and slicing decode by BOM: UTF-16LE/UTF-16BE files (PowerShell
-`Out-File` default on Windows) are decoded and searched instead of being
-skipped as binary, and a UTF-8 BOM is stripped before JSON parsing. Files with
-NUL bytes and no UTF-16 BOM are skipped as binary; UTF-8 decoding is lossy so
-mixed-encoding files still surface their ASCII content.
-
-## Nested Git Repositories
-
-Multi-repo workspaces routinely git-ignore sibling repos for repo separation
-(`.gitignore` or `.git/info/exclude` entries like `myrepo/`). A standard
-git-aware walk silently skips those trees, which makes a broad scan claim
-completeness it does not have. `files`, `dirs`, `grep`, and `grep-terms`
-therefore enter a git-ignored directory that is itself a git repository root
-(it contains `.git`), applying that repository's own ignore rules, and disclose
-every entry in `nested_repos_entered` (capped list) plus
-`nested_repos_entered_total`. Pass `--skip-nested-repos` to restore strict
-Git-scope behavior, or exclude unwanted repos in `.contextmink.toml` (policy
-stays in configuration). Repos nested more than one level below an ignored
-plain directory are not auto-detected; pass them as explicit roots.
+Project-specific parsing, validation, indexing, and diagnostics belong in
+project-native tools, not here.
 
 ## Install
 
-Download the release archive for your platform from
-[GitHub Releases](https://github.com/remiliacorporation/contextmink/releases)
-and unpack it. Put `contextmink` on your `PATH`, or run it from the unpacked
-directory:
+Download the archive for your platform from
+[GitHub Releases](https://github.com/remiliacorporation/contextmink/releases),
+unpack it, and put `contextmink` on `PATH` or run it in place:
 
 ```bash
 contextmink files --path . --max 20
 ```
 
-Release archives are built for Windows x64, macOS Intel, macOS ARM, and Linux
-x64. Each archive includes the binary, setup docs, repository instruction
-templates, a manifest, and a SHA-256 checksum.
+Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
+SQLite bundled. The binary runs directly from PowerShell, cmd, WSL, or any
+POSIX shell.
 
-The binary is self-contained on every platform: PowerShell, cmd, WSL, and
-POSIX shells all invoke it directly. Nothing in contextmink requires Git Bash,
-the `scripts/contextmink` launcher, or the optional Windows bridge — those
-exist only for repositories that deliberately keep their scripts Bash-first.
+To build from source instead: `cargo build --release` (stable Rust, edition
+2024).
 
-Release builds include bundled SQLite support for portability.
+## Add to a project
 
-On Windows repositories that use extensionless Bash scripts, use the
-project-local `scripts/contextmink` launcher below for `capture`; it supplies the
-Bash interpreter needed for script fallback. The raw `contextmink.exe` is fine
-for built-in commands and native executables.
+Copy from the unpacked archive into the target repository:
 
-## Add To A Project
+1. `contextmink(.exe)` to `tools/contextmink/bin/`.
+2. `templates/scripts/contextmink` to `scripts/contextmink`. The launcher
+   picks or builds the right binary and smooths Git Bash argument handling on
+   Windows.
+3. `templates/.contextmink.toml` to `.contextmink.toml`; edit the excludes to
+   your high-output trees.
+4. `templates/AGENTS.contextmink.md` into `AGENTS.md` (Codex) and/or
+   `templates/CLAUDE.contextmink.md` into `CLAUDE.md` (Claude). These carry
+   the usage policy agents follow.
+5. Verify: `scripts/contextmink files --path . --max 20`
 
-Rust and Cargo are not required for release installs. For a project-local
-install, unpack the release archive and copy the binary plus templates into the
-target repository:
+Variants (standalone binary, vendored source, delegated setup) and the
+Windows bridge are covered in [docs/setup.md](docs/setup.md).
 
-```text
-target-repo/
-  scripts/contextmink
-  tools/contextmink/bin/contextmink(.exe)
-  .contextmink.toml
-```
+## Commands
 
-Use the files from the release archive:
+`contextmink <command> --help` is the authoritative flag reference; the list
+below is the short map.
 
-1. Copy `contextmink(.exe)` to `tools/contextmink/bin/contextmink(.exe)`.
-2. Copy `templates/scripts/contextmink` to `scripts/contextmink`.
-3. Copy `templates/.contextmink.toml` to `.contextmink.toml` and edit excludes.
-4. Merge `templates/AGENTS.contextmink.md` into `AGENTS.md` for Codex, and/or
-   `templates/CLAUDE.contextmink.md` into `CLAUDE.md` for Claude.
-5. Optional, only for Bash-first repositories driven by a PowerShell-hosted
-   agent on Windows: copy `contextmink-bridge.exe` (Windows archive only) next
-   to the contextmink binary — a native PowerShell -> Git Bash bridge that
-   discovers Git Bash itself, spawns direct commands with zero MSYS argument
-   rewriting, and accepts argv through `--argv-b64` (a single base64 token
-   PowerShell cannot mangle) or `--argfile`. The `templates/scripts/codex-bash.sh`
-   script launcher covers the same ground for setups that prefer a shell
-   entrypoint. Repositories on pure PowerShell or WSL skip this entirely and
-   invoke the contextmink binary directly. See [docs/setup.md](docs/setup.md).
-6. Verify from the target repository root:
+- `dirs` — directory overview with recursive file counts, `--depth` levels
+  deep. Orientation before `files` or `grep`.
+- `files` — list candidate files. `--glob` and `--ext` filter; configured
+  excludes apply to broad scans, while explicit paths bypass them.
+- `grep` — bounded match summary for a regex or `--literal` pattern.
+  `--pattern-file` for shell-fragile regex, `--glob`/`--ext` to narrow, `-i`,
+  `--context N`, `--limit`, `--max-matches`.
+- `grep-terms` — match lines containing every `--term` value (`--or` for
+  any). Token search without regex quoting; `--term-file` for phrase lists;
+  same narrowing flags as `grep`.
+- `outline` — declaration map of one source file, printed as `line: text`
+  rows (functions, types, headings). 19 built-in languages via token
+  classifiers, shebang detection for extensionless scripts. `--lang`
+  overrides detection, `--prefix <text>` matches literal line starts,
+  `--pattern <regex>` covers anything else, `--contains` filters rows.
+- `slice` — bounded line window from one file: `--range START:END`,
+  `--tail N`, or a character window for very long single-line files.
+  Defaults to a 120-line window with a 220-line ceiling; receipts report
+  `encoding` and `total_lines`.
+- `json-find` — locate JSON values by key, path, or summarized value.
+- `json-select` — project JSON or JSONL rows to selected fields via JSON
+  Pointer. `--where FIELD=VALUE` and `--where-contains FIELD=TEXT` filter
+  rows; `*.jsonl` streams without loading; fields null in every scanned row
+  are flagged in `all_null_fields`.
+- `sqlite` — read-only query from `--sql` or `--sql-file` with row caps and
+  a `--timeout-secs` watchdog (default 60).
+- `sqlite-schema` — tables, columns, indexes, and foreign keys of a
+  database.
+- `capture` (alias `run`) — execute argv and print capped stdout/stderr with
+  the exit status. Truncation keeps both head and tail, since verdicts sit at
+  the end of tool output.
 
-   ```bash
-   scripts/contextmink files --path . --max 20
-   ```
-
-For delegated setup, give the agent the unpacked release directory and target
-repository path. The full checklist is in [SETUP.md](SETUP.md).
-
-## Build From Source
-
-```bash
-cargo test
-cargo build --release
-target/release/contextmink files --path . --max 20
-```
-
-`contextmink` uses Rust edition 2024 and requires a recent stable Rust
-toolchain only when building from source.
+Global flags: `--json` emits one JSON object for machine consumption;
+`--fail-if-truncated` exits nonzero on capped output;
+`--require-complete-scan` exits nonzero when scan caps made totals lower
+bounds.
 
 ## Examples
 
 ```bash
-scripts/contextmink files --path . --max 20
-scripts/contextmink files --path . --max 20 --max-scan-files 5000
-scripts/contextmink files --path vendor --with-git-ignored --max 20
-scripts/contextmink files --path specs/_assets --with-git-ignored --ext json --max 20
 scripts/contextmink dirs crates --depth 2 --max 40
-scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
+scripts/contextmink files --path specs --ext json --max 20
+scripts/contextmink files --path vendor --with-git-ignored --max 20
 scripts/contextmink grep CMapChunk src --ext rs --context 2 --limit 8
-scripts/contextmink grep-terms --term "--flag-like" --term "panic" --or src --max-matches 12
-scripts/contextmink outline src/renderer.rs
+scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
+scripts/contextmink grep-terms --term "--flag-like" --term panic --or src --max-matches 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
-scripts/contextmink outline vendor/header.h --lang c --limit 60
 scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
-scripts/contextmink json-find report.json --key-contains error --max 10
-scripts/contextmink json-select report.json --array /rows --field id --field /status
 scripts/contextmink json-select queue.jsonl --field addr --where-contains name=CMap --limit 10
 scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
-scripts/contextmink --fail-if-truncated run --max-lines 40 -- some-tool --compact-target query
 ```
 
 ## Receipts
 
-Every human-readable command ends with `CONTEXTMINK_RECEIPT ` followed by JSON.
-If a receipt has `"truncated": true` or `"complete": false`, the output is
-capped. Narrow the path, glob, pattern, or slice and run again.
-With strict completion flags, contextmink still emits the receipt and then exits
-nonzero when the requested completeness condition fails.
-
-Stable receipt fields:
+Every command ends with `CONTEXTMINK_RECEIPT` followed by JSON (under
+`--json`, the receipt is the output object). `"truncated": true` or
+`"complete": false` means the output was capped: narrow the query and rerun.
+The strict flags emit the receipt first, then exit nonzero.
 
 | field | meaning |
 | --- | --- |
@@ -245,30 +125,47 @@ Stable receipt fields:
 | `cap_reason` | why output stopped, or `null` |
 | `duration_ms` | wall-clock cost of the command |
 
-For `grep` and `grep-terms`, `shown` and `total` are file counts and
-`total_matches` counts matching lines. Match, sample, scan, and skip counts are
-reported in dedicated fields; `skipped_files_sample` names the first files that
-were skipped as too large or binary, and a no-match verdict reports
-`no_match_scope: "scanned_subset"` whenever large files went unexamined. If
-`matched_files_total_is_lower_bound` or `total_matches_is_lower_bound` is true,
-the content scan stopped at `--max-count-files`; narrow the query or raise that
-cap before treating match totals as exact.
-When `cap_reason` is `"scan"`, `candidate_files_total_is_lower_bound` is true,
-or grep match-total lower-bound fields are true, totals and no-match results
-only describe the scanned subset. Narrow the path/glob/query before treating the
-result as complete.
-Grep receipts also include `no_match_scope` (`"complete_scope"` or
-`"scanned_subset"`) when no files match.
+Search receipts add match, scan, and skip counts. Lower-bound fields
+(`candidate_files_total_is_lower_bound`, `matched_files_total_is_lower_bound`,
+`total_matches_is_lower_bound`) mean a scan cap fired and totals describe only
+the scanned subset; `no_match_scope` says whether a no-match verdict covered
+the `"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
+files skipped as too large or binary. Capture receipts record the child's
+`exit_code` and `success` (contextmink itself exits zero when capture worked,
+even if the child failed) plus per-stream head, tail, and omitted line
+counts.
 
-For `capture`, `shown` and `total` are stdout plus stderr line counts; each
-stream reports `head_lines`, `tail_lines`, and `omitted_lines` when output was
-split around an omission marker. The receipt records the child command's
-`exit_code` and `success`; `contextmink` itself exits successfully when capture
-succeeds, even if the child command failed. `capture` is not a shell, sandbox, retry layer, or read-only guard. On
-Windows through the Bash launcher, extensionless shell scripts that fail direct
-spawn with "not a Win32 application" are retried through the current Bash
-interpreter as argv, not as a shell string; receipts include `spawn_fallback`
-and `effective_argv` when that happens.
+## Behavior notes
+
+- Encoding is BOM-driven: UTF-16LE/BE files (the PowerShell `Out-File`
+  default) are decoded and searched, a UTF-8 BOM is stripped before JSON
+  parsing, and files with NUL bytes and no UTF-16 BOM are skipped as binary.
+- Broad scans enter git-ignored directories that are themselves repository
+  roots, apply that repository's own ignore rules, and disclose each entry in
+  `nested_repos_entered`. Multi-repo workspaces would otherwise report
+  complete scans that silently skipped sibling repos. `--skip-nested-repos`
+  restores strict Git scope; repos nested below an ignored plain directory
+  are not auto-detected and need explicit roots.
+- Outline rows come from line-shape heuristics, not a parser: false
+  positives are possible and indentation conveys nesting.
+
+## Windows
+
+The binary itself needs no shell. Two optional pieces serve repositories
+whose scripts are Bash-first while the agent runs in PowerShell:
+
+- `contextmink-bridge.exe` (Windows archive only) runs commands and repo bash
+  scripts from PowerShell: it locates Git Bash itself, spawns direct commands
+  without MSYS argument rewriting, and takes argv as `--argv-b64` or
+  `--argfile` so PowerShell 5.1 quoting cannot corrupt arguments.
+  `--print-argv` shows exactly what arrived.
+- `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for
+  repositories that do not want a second binary.
+
+The `scripts/contextmink` launcher additionally shields slash-bearing
+`--pattern`, `--prefix`, `--contains`, `--term`, and JSON Pointer values from
+MSYS rewriting on Git Bash. Setup and boundary details:
+[docs/setup.md](docs/setup.md).
 
 ## Configuration
 
@@ -286,31 +183,22 @@ exclude_globs = [
 ]
 ```
 
-The configuration surface is exactly these two keys; unknown keys, duplicate
-keys, and malformed values are hard errors so a config typo cannot silently
-change scan scope. Exclude globs are matched against paths relative to the
-config file's directory, so anchored rules like `Data/**` hold even when a
-scan root is passed as an absolute path or the command runs from a
-subdirectory.
-
-Keep repository policy in `.contextmink.toml` and repository instructions, not in the
-binary. Exclude generated or high-output trees from broad scans, then pass an
-explicit subdirectory or file when that tree is the target.
-`--with-excluded` includes files matched by contextmink's built-in and
-configured exclude globs for the whole command. It does not disable Git ignore
-rules; pass an explicit path when an ignored artifact tree is the target.
+These two keys are the whole surface; unknown keys, duplicate keys, and
+malformed values are hard errors. Exclude globs match paths relative to the
+config file's directory, so anchored rules hold from any working directory.
+Excludes quiet broad scans only: pass an explicit file or subdirectory when
+an excluded tree is the target, or `--with-excluded` to lift the globs for
+one command. Git ignore rules are separate; `--with-git-ignored` lifts those.
 
 ## Scope
 
 Add to this tool only when the failure mode is generic transcript overflow or
-host-shell friction from file enumeration, text search, line slicing, JSON
-inspection, read-only SQLite inspection/schema summarization, or bounded capture
-of otherwise unknown command output. If behavior needs domain knowledge, a
-schema beyond the data being selected, a compiler, an indexer, a runtime, or a
-specialized parser, extend that domain tool instead.
+host-shell friction in file enumeration, text search, line slicing, JSON
+inspection, read-only SQLite inspection, or bounded capture of unknown
+command output. Anything needing domain knowledge, a schema, a compiler, an
+indexer, a runtime, or a real parser belongs in the domain tool.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The distribution also carries
-[LICENSE-SSL](LICENSE-SSL) and [LICENSE-VPL](LICENSE-VPL); both accompany every
-release archive and mirror sync.
+MIT. See [LICENSE](LICENSE). [LICENSE-SSL](LICENSE-SSL) and
+[LICENSE-VPL](LICENSE-VPL) accompany every release archive and mirror sync.

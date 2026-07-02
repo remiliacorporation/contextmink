@@ -13,8 +13,8 @@ produce more output than the transcript should carry.
   (`--contains TEXT` filters rows; `--lang`, `--prefix <text>`, or
   `--pattern <regex>` cover unrecognized extensions), then
   `slice --range START:END` prints the region. `slice` replaces `sed -n` /
-  `cat` / `head` file windows; its defaults (120-line window, 220-line
-  ceiling) are the point — narrow an oversized read with `outline` or
+  `cat` / `head` file windows. Keep its default caps (120-line window,
+  220-line ceiling); narrow an oversized read with `outline` or
   `grep --context` instead of raising `--max-lines`.
 - Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
   for literal tokens or phrases (`--or` / `--any`, `--term-file`, `--limit`,

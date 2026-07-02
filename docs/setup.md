@@ -139,15 +139,10 @@ scripts/contextmink files --path . --max 20.
 
 ## Optional: PowerShell -> Git Bash Bridge (Windows + Codex-style hosts)
 
-Nothing in contextmink requires a bridge, Git Bash, or the
-`scripts/contextmink` launcher: the contextmink binary is native on every
-platform, and PowerShell, cmd, and WSL invoke it directly. Skip this section
-unless the repository deliberately keeps its scripts Bash-first for
-cross-platform authoring and is driven by a PowerShell-hosted agent.
-
-Such repositories have two bridge options. Both exist because Windows has two
-distinct argv hazards; neither hazard exists on POSIX hosts, where agents
-should run bash and commands directly.
+The contextmink binary needs none of this — it runs natively from any shell.
+This section applies only to repositories that keep their scripts Bash-first
+while the agent runs in PowerShell. Two bridge options exist because Windows
+has two distinct argv hazards; neither exists on POSIX hosts.
 
 **Native binary (preferred on Windows).** The Windows release archive carries
 `contextmink-bridge.exe`. It locates Git Bash itself (no hardcoded path on the
@@ -310,61 +305,20 @@ requires it.
 
 ## Operational Notes
 
-- Start with `dirs --depth 2` to orient in an unfamiliar tree before running
-  `files` or `grep`.
-- For extension filtering, prefer `files --ext json` / `--extension jsonl`
-  (also available on `grep` and `grep-terms`) over wildcard globs when
-  commands cross Windows-to-Bash boundaries. Wildcards can be expanded before
-  contextmink receives them.
-- Prefer `grep --pattern-file <file>` when regex punctuation is shell-fragile.
-  Add `-i` for case-insensitive matching and `--context N` when the
-  surrounding lines would otherwise need a follow-up `slice`.
-- Broad scans enter git-ignored nested repository roots and disclose them in
-  `nested_repos_entered`; pass `--skip-nested-repos` for strict Git scope, or
-  exclude unwanted repos in `.contextmink.toml`.
-- For `grep` and `grep-terms`, use `--limit` to cap printed matching files,
-  `--max-matches` / `--max-lines` to cap printed sample match lines, and
-  `--max-count-files` only when it is acceptable for match totals to become
-  lower bounds after enough matching files are found.
-- Pass an explicit file or subdirectory for artifact lookups inside configured
-  high-output trees. Use `--with-excluded` only when the whole command should
-  include files matched by contextmink's built-in and configured exclude globs.
-  It does not disable Git ignore rules.
-- Use `--with-git-ignored` only when intentionally inspecting a Git-ignored
-  vendor, cache, or artifact tree. Contextmink exclude globs still apply unless
-  `--with-excluded` is also set.
-- Prefer `grep-terms --term-file <file>` when phrases contain shell-fragile
-  punctuation or spaces.
-- Read known files through `outline` then `slice` instead of dump windows:
-  `outline <file>` maps declaration lines with line numbers (`--contains TEXT`
-  filters rows; `--lang`, `--prefix <text>`, or `--pattern <regex>` cover
-  unrecognized extensions), then `slice --range START:END` prints the located
-  region. Use `slice --tail N` for the end of logs. Keep slice's default caps;
-  narrow an oversized read with `outline` or `grep --context` instead of
-  raising `--max-lines`.
-- Prefer `json-find` over opening whole JSON reports, and `json-select` for
-  bounded row/field projection from JSON arrays or JSONL row files
-  (`--where FIELD=VALUE` / `--where-contains FIELD=TEXT` filter rows; a field
-  reported in `all_null_fields` is a selector typo or shape mismatch, not
-  evidence).
-- On Git Bash/Windows, use the `scripts/contextmink` launcher for
-  `json-select` and for slash-bearing `--pattern` / `--prefix` / `--contains`
-  / `--term` values; it preserves slash-leading JSON Pointer selectors and
-  shields those values from MSYS path rewriting while still leaving normal
-  file path handling to the shell/runtime boundary.
-- Prefer `sqlite-schema --path <db>` before ad hoc SQLite queries against
-  unfamiliar databases.
-- Prefer `sqlite --path <db> --sql-file <file>` for read-only SQL containing
-  shell-fragile operators or quotes.
-- Prefer a domain command's native compact/projection/limit flags first. Use
-  `capture -- <command> ...` only when output size is uncertain and no better
-  native bound exists; read the child `exit_code`/`success` fields in the
-  receipt. Truncated captures keep both the head and the tail of the output.
-  On Windows, the Bash launcher lets `capture` retry extensionless shell
-  scripts through the current Bash interpreter without shell-string parsing.
-- Treat capped receipts as `complete: false`. When `cap_reason` is `scan` or
-  `candidate_files_total_is_lower_bound` is true, totals and no-match results
-  only describe the scanned subset; narrow and rerun.
+Usage policy lives in the instruction templates merged into project guidance;
+flag details live in `contextmink <command> --help`. This section covers only
+host mechanics the templates do not:
+
+- Windows-to-Bash boundaries can expand wildcard globs before contextmink
+  receives them; that is why the templates steer toward `--ext` over
+  `--glob '*.<ext>'` there.
+- The `scripts/contextmink` launcher shields slash-leading JSON Pointer
+  selectors and slash-bearing `--pattern` / `--prefix` / `--contains` /
+  `--term` values from MSYS path rewriting on Git Bash, while leaving normal
+  file paths to the shell.
+- On Windows, the launcher lets `capture` retry extensionless shell scripts
+  through the current Bash interpreter as argv, not as a shell string;
+  receipts disclose `spawn_fallback` and `effective_argv` when that happens.
 - Keep repository-specific policy in `.contextmink.toml` and repository
   instructions, not in `contextmink` source code.
 
@@ -379,10 +333,12 @@ tools/contextmink/Cargo.toml
 tools/contextmink/Cargo.lock
 tools/contextmink/README.md
 tools/contextmink/SETUP.md
+tools/contextmink/CHANGELOG.md
 tools/contextmink/docs/
 tools/contextmink/scripts/
 tools/contextmink/templates/
 tools/contextmink/.github/
+tools/contextmink/.gitattributes
 tools/contextmink/.gitignore
 tools/contextmink/LICENSE
 tools/contextmink/LICENSE-SSL
