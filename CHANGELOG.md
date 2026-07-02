@@ -6,8 +6,19 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Added
+
+- `grep`/`grep-terms` `--quiet`: suppresses per-file match content and file lists and emits only the receipt (totals, caps, truncation, scan-scope fields), for existence/count checks that do not need the matching lines. The receipt is unchanged apart from a `quiet: true` disclosure.
+- `contextmink-bridge --print-root`: prints the resolved bridge root (`CONTEXTMINK_BRIDGE_ROOT`, else the policy/`.git` anchor) and exits, so a silently wrong anchoring root is inspectable.
+
+### Changed
+
+- `contextmink-bridge` no longer falls back to Cygwin (`C:\cygwin64`) or MSYS2 (`C:\msys64`) bash when Git Bash is missing: those shells have different path and file-locking semantics and must not silently substitute for Git Bash. `CONTEXTMINK_BASH` remains the explicit override for exotic hosts.
+
 ### Fixed
 
+- `contextmink-bridge --argv-b64` no longer drops a trailing empty argument: the documented PowerShell encoder (`$argv -join [char]0`) never emits a trailing NUL, so the old drop-one-empty-tail compensation only ever destroyed a genuine trailing empty argument.
+- `outline` no longer drops TS/JS annotated arrow bindings such as `const f: () => void = () => {}`: the assignment scan now skips `=>` arrows (including inside generics like `Array<() => void>`) and `==`/`===`/`<=`/`>=` sequences when locating the binding's `=`.
 - Windows release archives now write the `.sha256` checksum file with LF line endings, so `sha256sum -c` on POSIX shells verifies it without stripping carriage returns. The 0.3.0 Windows checksum file carries CRLF; strip `\r` before verifying it.
 
 ## [0.3.0] - 2026-07-02

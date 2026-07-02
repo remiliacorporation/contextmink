@@ -87,6 +87,44 @@ fn print_argv_reports_exact_arguments_for_every_channel() {
 }
 
 #[test]
+fn argv_b64_trailing_empty_argument_survives_round_trip() {
+    // The documented encoder (`$argv -join [char]0`) emits no trailing NUL,
+    // so a trailing empty argument is genuine and must not be dropped.
+    let token = encode_argv_b64(&["prog", "keep", ""]);
+    let output = run_bridge(&["--print-argv", "--argv-b64", &token]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "argv[0]=prog\nargv[1]=keep\nargv[2]=\n"
+    );
+}
+
+#[test]
+fn print_root_discloses_resolved_root() {
+    // Env override wins and is disclosed verbatim.
+    let root = temp_root("print-root");
+    let output = Command::new(bridge_exe())
+        .env("CONTEXTMINK_BRIDGE_ROOT", &root)
+        .arg("--print-root")
+        .output()
+        .expect("failed to spawn contextmink-bridge");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim_end(),
+        root.to_string_lossy()
+    );
+
+    // Without the override the exe-anchored resolution still discloses a
+    // real directory (the policy/.git anchor varies by checkout layout).
+    let output = run_bridge(&["--print-root"]);
+    assert!(output.status.success());
+    let disclosed = String::from_utf8(output.stdout).unwrap();
+    let disclosed = disclosed.trim_end();
+    assert!(!disclosed.is_empty());
+    assert!(Path::new(disclosed).is_dir(), "disclosed: {disclosed}");
+}
+
+#[test]
 fn direct_spawn_runs_child_and_propagates_exit_code() {
     let output = run_bridge(&["--", contextmink_exe(), "--help"]);
     assert!(output.status.success());

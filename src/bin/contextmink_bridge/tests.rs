@@ -1,7 +1,33 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{decode_base64, resolve_root_from_exe_dir, sed_window_span};
+use super::{
+    assemble_argv, decode_base64, resolve_root_from_exe_dir, sed_window_span,
+    windows_bash_candidates,
+};
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut token = String::new();
+    for chunk in bytes.chunks(3) {
+        let mut buffer = 0u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            buffer |= u32::from(*byte) << (16 - 8 * index);
+        }
+        for position in 0..=chunk.len() {
+            let shift = 18 - 6 * position;
+            token.push(ALPHABET[((buffer >> shift) & 0x3f) as usize] as char);
+        }
+    }
+    token
+}
+
+fn assemble_argv_b64(argv: &[&str]) -> Result<Vec<String>, String> {
+    let token = encode_base64(argv.join("\0").as_bytes());
+    assemble_argv("--argv-b64", vec![token], std::path::Path::new("."))
+        .map(|(_, argv)| argv)
+        .map_err(|error| error.message)
+}
 
 fn temp_tree(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("bridge-root-{name}-{}", std::process::id()));
@@ -58,19 +84,43 @@ fn base64_decodes_standard_urlsafe_and_padded_forms() {
     assert!(decode_base64("a!b").unwrap_err().contains("0x21"));
 
     let argv = "printf\0%s\0he said \"hi\"\0^// PART";
-    let mut token = String::new();
-    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in argv.as_bytes().chunks(3) {
-        let mut buffer = 0u32;
-        for (index, byte) in chunk.iter().enumerate() {
-            buffer |= u32::from(*byte) << (16 - 8 * index);
-        }
-        for position in 0..=chunk.len() {
-            let shift = 18 - 6 * position;
-            token.push(alphabet.as_bytes()[((buffer >> shift) & 0x3f) as usize] as char);
-        }
-    }
+    let token = encode_base64(argv.as_bytes());
     assert_eq!(decode_base64(&token).unwrap(), argv.as_bytes());
+}
+
+#[test]
+fn argv_b64_preserves_every_argument_including_trailing_empty() {
+    // `$argv -join [char]0` never emits a trailing NUL, so a trailing empty
+    // entry is a genuine argument and must survive the round-trip.
+    assert_eq!(
+        assemble_argv_b64(&["prog", "keep", ""]).unwrap(),
+        vec!["prog".to_owned(), "keep".to_owned(), String::new()]
+    );
+    assert_eq!(
+        assemble_argv_b64(&["prog", "", "mid-empty"]).unwrap(),
+        vec!["prog".to_owned(), String::new(), "mid-empty".to_owned()]
+    );
+
+    // Degenerate payloads (empty, single NUL) still decode to no arguments.
+    assert!(assemble_argv_b64(&[]).unwrap_err().contains("no arguments"));
+    assert!(
+        assemble_argv_b64(&["", ""])
+            .unwrap_err()
+            .contains("no arguments")
+    );
+}
+
+#[test]
+fn windows_bash_candidates_are_git_for_windows_only() {
+    // Cygwin/MSYS2 bash have different path and locking semantics and must
+    // never silently substitute for Git Bash (CONTEXTMINK_BASH is the
+    // explicit override for exotic hosts).
+    for candidate in windows_bash_candidates() {
+        let lower = candidate.to_string_lossy().to_ascii_lowercase();
+        assert!(lower.contains(r"git\bin\bash.exe"), "candidate: {lower}");
+        assert!(!lower.contains("cygwin"), "candidate: {lower}");
+        assert!(!lower.contains("msys"), "candidate: {lower}");
+    }
 }
 
 #[test]

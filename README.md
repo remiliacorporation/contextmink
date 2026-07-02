@@ -55,10 +55,13 @@ below is the short map.
   excludes apply to broad scans, while explicit paths bypass them.
 - `grep` — bounded match summary for a regex or `--literal` pattern.
   `--pattern-file` for shell-fragile regex, `--glob`/`--ext` to narrow, `-i`,
-  `--context N`, `--limit`, `--max-matches`.
+  `--context N`, `--limit`, `--max-matches`. `--quiet` suppresses per-file
+  match content and file lists and emits only the receipt (totals, caps,
+  truncation, scan-scope fields) — for existence/count checks that do not
+  need the matching lines.
 - `grep-terms` — match lines containing every `--term` value (`--or` for
   any). Token search without regex quoting; `--term-file` for phrase lists;
-  same narrowing flags as `grep`.
+  same narrowing flags as `grep`, including `--quiet`.
 - `outline` — declaration map of one source file, printed as `line: text`
   rows (functions, types, headings). 19 built-in languages via token
   classifiers, shebang detection for extensionless scripts. `--lang`
@@ -155,10 +158,12 @@ The binary itself needs no shell. Two optional pieces serve repositories
 whose scripts are Bash-first while the agent runs in PowerShell:
 
 - `contextmink-bridge.exe` (Windows archive only) runs commands and repo bash
-  scripts from PowerShell: it locates Git Bash itself, spawns direct commands
-  without MSYS argument rewriting, and takes argv as `--argv-b64` or
-  `--argfile` so PowerShell 5.1 quoting cannot corrupt arguments.
-  `--print-argv` shows exactly what arrived.
+  scripts from PowerShell: it locates Git Bash itself (Git for Windows only;
+  Cygwin/MSYS2 never substitute silently — point `CONTEXTMINK_BASH` at an
+  exotic shell explicitly), spawns direct commands without MSYS argument
+  rewriting, and takes argv as `--argv-b64` or `--argfile` so PowerShell 5.1
+  quoting cannot corrupt arguments. `--print-argv` shows exactly what
+  arrived; `--print-root` shows the resolved bridge root.
 - `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for
   repositories that do not want a second binary.
 

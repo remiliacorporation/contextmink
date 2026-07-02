@@ -48,6 +48,9 @@ fn usage() -> String {
      \x20 --login         Run the command through a Git Bash login shell\n\
      \x20                 (argv-safe; no command text is shell-reparsed).\n\
      \x20 --print-argv    Print the assembled argv one entry per line and exit.\n\
+     \x20 --print-root    Print the resolved bridge root (CONTEXTMINK_BRIDGE_ROOT,\n\
+     \x20                 else the policy/.git anchor described under --cwd) and\n\
+     \x20                 exit.\n\
      \n\
      Channels for PowerShell-fragile arguments:\n\
      \x20 --argv-b64: base64 of the UTF-8 argv joined with NUL. One token has\n\
@@ -105,6 +108,13 @@ fn run(args: Vec<String>) -> Result<i32, BridgeError> {
             }
             "--login" => login = true,
             "--print-argv" => print_argv = true,
+            "--print-root" => {
+                // Disclose the resolved root before any command form is
+                // required: a silently wrong root is the failure mode of the
+                // anchoring chain.
+                println!("{}", bridge_root().display());
+                return Ok(0);
+            }
             "--help" | "-h" => {
                 print!("{}", usage());
                 return Ok(0);
@@ -261,16 +271,14 @@ fn assemble_argv(
                 .map_err(|error| fail(EXIT_USAGE, format!("invalid --argv-b64 token: {error}")))?;
             let joined = String::from_utf8(bytes)
                 .map_err(|_| fail(EXIT_USAGE, "--argv-b64 payload is not valid UTF-8"))?;
-            let argv: Vec<String> = joined
-                .split('\0')
-                .map(str::to_owned)
-                .filter(|arg| !arg.is_empty() || joined != "\0")
-                .collect();
-            let argv: Vec<String> = if argv.last().is_some_and(String::is_empty) {
-                // A trailing NUL produces one empty tail entry; drop it.
-                argv[..argv.len() - 1].to_vec()
+            // The documented encoder (`$argv -join [char]0`) never emits a
+            // trailing NUL, so every split entry — including a trailing empty
+            // string — is a genuine argument. Only a payload that is empty or
+            // a single NUL carries no arguments at all.
+            let argv: Vec<String> = if joined.is_empty() || joined == "\0" {
+                Vec::new()
             } else {
-                argv
+                joined.split('\0').map(str::to_owned).collect()
             };
             if argv.is_empty() {
                 return Err(fail(
@@ -394,19 +402,26 @@ fn locate_bash() -> Option<PathBuf> {
         }
     }
     if cfg!(windows) {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Some(program_files) = std::env::var_os("ProgramFiles") {
-            candidates.push(PathBuf::from(program_files).join(r"Git\bin\bash.exe"));
-        }
-        candidates.push(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
-        candidates.push(PathBuf::from(r"C:\Program Files (x86)\Git\bin\bash.exe"));
-        candidates.push(PathBuf::from(r"C:\cygwin64\bin\bash.exe"));
-        candidates.push(PathBuf::from(r"C:\msys64\usr\bin\bash.exe"));
-        candidates.into_iter().find(|candidate| candidate.is_file())
+        windows_bash_candidates()
+            .into_iter()
+            .find(|candidate| candidate.is_file())
     } else {
         // PATH resolution is safe off Windows; there is no WSL shadow.
         Some(PathBuf::from("bash"))
     }
+}
+
+/// Git-for-Windows installs only. Cygwin and MSYS2 bash have different path
+/// and file-locking semantics and must not silently substitute for Git Bash;
+/// exotic hosts point CONTEXTMINK_BASH at their shell explicitly.
+fn windows_bash_candidates() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        candidates.push(PathBuf::from(program_files).join(r"Git\bin\bash.exe"));
+    }
+    candidates.push(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
+    candidates.push(PathBuf::from(r"C:\Program Files (x86)\Git\bin\bash.exe"));
+    candidates
 }
 
 /// Warn (never block) when argv is a raw content dump a bounded read would

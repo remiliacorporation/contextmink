@@ -298,7 +298,7 @@ fn js_function_binding(rest: &str) -> bool {
     }
     let mut rest = rest[name..].trim_start();
     if let Some(annotation) = rest.strip_prefix(':') {
-        match annotation.find('=') {
+        match annotation_assignment(annotation) {
             Some(eq) => rest = &annotation[eq..],
             None => return false,
         }
@@ -316,6 +316,36 @@ fn js_function_binding(rest: &str) -> bool {
     }
     let param = ident_span(value, js_ident_start, js_ident_char);
     param > 0 && value[param..].trim_start().starts_with("=>")
+}
+
+/// Byte offset of the assignment `=` inside a type annotation. The annotation
+/// itself may contain `=` bytes that are not the binding's assignment —
+/// arrows (`() => void`, also nested as in `Array<() => void>`), equality
+/// runs (`==`/`===`), and comparisons (`<=`/`>=`/`!=`) — so those are skipped.
+fn annotation_assignment(annotation: &str) -> Option<usize> {
+    let bytes = annotation.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'=' {
+            index += 1;
+            continue;
+        }
+        match bytes.get(index + 1) {
+            // Arrow: `=` immediately followed by `>` is a function type.
+            Some(b'>') => index += 2,
+            // Equality run: swallow `==` and `===` whole.
+            Some(b'=') => {
+                index += 1;
+                while bytes.get(index) == Some(&b'=') {
+                    index += 1;
+                }
+            }
+            // Comparison tail: the `=` of `<=`, `>=`, or `!=`.
+            _ if index > 0 && matches!(bytes[index - 1], b'<' | b'>' | b'!') => index += 1,
+            _ => return Some(index),
+        }
+    }
+    None
 }
 
 fn go_declaration(line: &str) -> bool {

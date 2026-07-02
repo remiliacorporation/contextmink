@@ -322,6 +322,7 @@ pub(crate) fn command_grep(
     with_excluded: bool,
     with_git_ignored: bool,
     skip_nested_repos: bool,
+    quiet: bool,
     caps: &GrepCaps,
 ) -> Result<()> {
     let (pattern, effective_paths) = if pattern_file.is_some() {
@@ -348,6 +349,7 @@ pub(crate) fn command_grep(
         with_excluded,
         with_git_ignored,
         skip_nested_repos,
+        quiet,
         caps,
     )
 }
@@ -368,6 +370,7 @@ pub(crate) fn command_grep_with_matcher(
     with_excluded: bool,
     with_git_ignored: bool,
     skip_nested_repos: bool,
+    quiet: bool,
     caps: &GrepCaps,
 ) -> Result<()> {
     if caps.max_count_files == 0 {
@@ -530,7 +533,13 @@ pub(crate) fn command_grep_with_matcher(
             "no_match_scope".to_string(),
             json!(no_match_scope(matches.is_empty(), no_match_scan_incomplete)),
         );
-        map.insert("files".to_string(), json!(files_json));
+        // --quiet suppresses only the match content; every receipt field
+        // above (totals, lower bounds, caps, scan scope) is still emitted.
+        if quiet {
+            map.insert("quiet".to_string(), json!(true));
+        } else {
+            map.insert("files".to_string(), json!(files_json));
+        }
         emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
@@ -562,7 +571,7 @@ pub(crate) fn command_grep_with_matcher(
                 )?;
             }
             let cap_reason = if scan_truncated { Some("scan") } else { None };
-            let map = grep_receipt_map(
+            let mut map = grep_receipt_map(
                 command_name,
                 config,
                 0,
@@ -582,41 +591,54 @@ pub(crate) fn command_grep_with_matcher(
                 no_match_scan_incomplete,
                 true,
             );
+            if quiet {
+                map.insert("quiet".to_string(), json!(true));
+            }
             return write_receipt_checked(cli, map);
         }
-        writeln!(stdout, "file_counts:")?;
-        for row in matches.iter().take(files_shown) {
-            writeln!(
-                stdout,
-                "  {}:{}",
-                clamp_text(&display_path(&row.path), caps.max_line_chars),
-                row.count
-            )?;
+        // --quiet suppresses only the match content below; the shown/capped
+        // accounting still runs so the receipt is identical either way.
+        if !quiet {
+            writeln!(stdout, "file_counts:")?;
+            for row in matches.iter().take(files_shown) {
+                writeln!(
+                    stdout,
+                    "  {}:{}",
+                    clamp_text(&display_path(&row.path), caps.max_line_chars),
+                    row.count
+                )?;
+            }
         }
         let mut sample_total = 0usize;
         let mut sample_capped = false;
         if caps.lines_per_file > 0 && files_shown > 0 {
-            writeln!(stdout, "sample_lines:")?;
+            if !quiet {
+                writeln!(stdout, "sample_lines:")?;
+            }
             'samples: for row in matches.iter().take(files_shown) {
                 for sample in &row.samples {
                     if sample_total >= caps.max_sample_lines {
-                        writeln!(
-                            stdout,
-                            "[contextmink] capped sample lines at {}; narrow the query.",
-                            caps.max_sample_lines
-                        )?;
+                        if !quiet {
+                            writeln!(
+                                stdout,
+                                "[contextmink] capped sample lines at {}; narrow the query.",
+                                caps.max_sample_lines
+                            )?;
+                        }
                         sample_capped = true;
                         break 'samples;
                     }
-                    let separator = if sample.is_match { ':' } else { '-' };
-                    writeln!(
-                        stdout,
-                        "  {}:{}{}{}",
-                        clamp_text(&display_path(&row.path), caps.max_line_chars),
-                        sample.line,
-                        separator,
-                        sample.text
-                    )?;
+                    if !quiet {
+                        let separator = if sample.is_match { ':' } else { '-' };
+                        writeln!(
+                            stdout,
+                            "  {}:{}{}{}",
+                            clamp_text(&display_path(&row.path), caps.max_line_chars),
+                            sample.line,
+                            separator,
+                            sample.text
+                        )?;
+                    }
                     sample_total += 1;
                 }
             }
@@ -636,7 +658,7 @@ pub(crate) fn command_grep_with_matcher(
                 "[contextmink] capped grep output or scan; narrow the path or pattern before treating this as complete."
             )?;
         }
-        let map = grep_receipt_map(
+        let mut map = grep_receipt_map(
             command_name,
             config,
             files_shown,
@@ -656,6 +678,9 @@ pub(crate) fn command_grep_with_matcher(
             no_match_scan_incomplete,
             false,
         );
+        if quiet {
+            map.insert("quiet".to_string(), json!(true));
+        }
         write_receipt_checked(cli, map)
     }
 }

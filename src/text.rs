@@ -126,8 +126,14 @@ impl TextMatcher {
 /// lowercased. ASCII needles fold haystack bytes in place without allocating
 /// (a UTF-8 continuation byte is >= 0x80 and never folds to ASCII, so byte
 /// comparison cannot false-match mid-codepoint); non-ASCII needles fall back
-/// to a Unicode lowercase of the haystack.
+/// to a Unicode lowercase of the haystack. The ASCII fast path deliberately
+/// diverges from full Unicode case folding: only ASCII letters fold, so a
+/// haystack U+212A KELVIN SIGN no longer matches an ASCII 'k' needle.
 pub(crate) fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    debug_assert!(
+        !needle_lower.bytes().any(|byte| byte.is_ascii_uppercase()),
+        "contains_ignore_case needle must be pre-lowercased: {needle_lower:?}"
+    );
     if needle_lower.is_empty() {
         return true;
     }

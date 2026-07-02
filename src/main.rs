@@ -89,6 +89,7 @@ fn main() -> Result<()> {
             with_excluded,
             with_git_ignored,
             skip_nested_repos,
+            quiet,
             max_count_files,
             max_files,
             lines_per_file,
@@ -110,6 +111,7 @@ fn main() -> Result<()> {
             *with_excluded,
             *with_git_ignored,
             *skip_nested_repos,
+            *quiet,
             &GrepCaps {
                 max_count_files: *max_count_files,
                 max_files: *max_files,
@@ -135,6 +137,7 @@ fn main() -> Result<()> {
             with_excluded,
             with_git_ignored,
             skip_nested_repos,
+            quiet,
             max_count_files,
             max_files,
             lines_per_file,
@@ -157,6 +160,7 @@ fn main() -> Result<()> {
                 *with_excluded,
                 *with_git_ignored,
                 *skip_nested_repos,
+                *quiet,
                 &GrepCaps {
                     max_count_files: *max_count_files,
                     max_files: *max_files,

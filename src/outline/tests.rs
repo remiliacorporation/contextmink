@@ -199,6 +199,8 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
             "const onEvent = async (event) => {",
             "let handler = function (event) {",
             "const forward = event => dispatch(event);",
+            "const dispatch: () => void = () => {",
+            "const build: Array<() => void> = () => {",
         ],
     );
     assert_skips(
@@ -207,6 +209,7 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
             "  const total = rows.length;",
             "  value === expected;",
             "return callback(value);",
+            "const flag: boolean = value === expected;",
         ],
     );
 

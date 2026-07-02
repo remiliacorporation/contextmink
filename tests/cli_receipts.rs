@@ -1700,3 +1700,137 @@ fn sqlite_timeout_interrupts_runaway_queries() {
     );
     assert_eq!(ok["rows"][0]["fields"]["one"], "1");
 }
+
+#[test]
+fn grep_quiet_suppresses_match_content_but_keeps_receipt_fields() {
+    let root = fixture_root("grep-quiet");
+
+    // JSON: no "files" array, but every receipt field is still present and
+    // identical to a non-quiet run.
+    let loud = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
+    let quiet = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt", "--quiet"]);
+    assert_envelope(&quiet, "grep", "files");
+    assert!(quiet.get("files").is_none());
+    assert_eq!(quiet["quiet"], true);
+    assert!(loud["files"].is_array());
+    for field in [
+        "shown",
+        "total",
+        "matched_files_total",
+        "matched_files_total_is_lower_bound",
+        "total_matches",
+        "total_matches_is_lower_bound",
+        "sample_lines_shown",
+        "candidate_files_total",
+        "candidate_files_scanned",
+        "content_files_scanned",
+        "candidate_files_total_is_lower_bound",
+        "cap_reason",
+        "skipped_large_or_binary",
+        "no_match_scope",
+    ] {
+        assert_eq!(quiet[field], loud[field], "field: {field}");
+    }
+
+    // Text: no file_counts/sample_lines blocks, receipt line intact.
+    let human = run_contextmink(&root, &["grep", "alpha", "sample.txt", "--quiet"]);
+    assert!(!human.contains("file_counts:"), "output: {human}");
+    assert!(!human.contains("sample_lines:"), "output: {human}");
+    let receipt = human
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("CONTEXTMINK_RECEIPT ")
+        .unwrap();
+    let receipt: Value = serde_json::from_str(receipt).unwrap();
+    assert_envelope(&receipt, "grep", "files");
+    assert_eq!(receipt["quiet"], true);
+    assert_eq!(receipt["total_matches"], loud["total_matches"]);
+    assert_eq!(receipt["sample_lines_shown"], loud["sample_lines_shown"]);
+}
+
+#[test]
+fn grep_quiet_no_match_still_reports_scan_scope() {
+    let root = fixture_root("grep-quiet-nomatch");
+    fs::write(root.join("extra_a.txt"), "alpha\n").unwrap();
+    fs::write(root.join("extra_b.txt"), "alpha\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "not-present",
+            ".",
+            "--quiet",
+            "--max-scan-files",
+            "1",
+        ],
+    );
+    assert_envelope(&json, "grep", "files");
+    assert_eq!(json["quiet"], true);
+    assert_eq!(json["cap_reason"], "scan");
+    assert_eq!(json["no_match_scope"], "scanned_subset");
+    assert_eq!(json["candidate_files_total_is_lower_bound"], true);
+
+    let human = run_contextmink(&root, &["grep", "not-present", "sample.txt", "--quiet"]);
+    assert!(human.contains("no_matches"), "output: {human}");
+    let receipt = human
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("CONTEXTMINK_RECEIPT ")
+        .unwrap();
+    let receipt: Value = serde_json::from_str(receipt).unwrap();
+    assert_eq!(receipt["quiet"], true);
+    assert_eq!(receipt["no_match_scope"], "complete_scope");
+}
+
+#[test]
+fn grep_terms_quiet_composes_with_or_mode() {
+    let root = fixture_root("grep-terms-quiet");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--term",
+            "alpha",
+            "--term",
+            "nowhere",
+            "--or",
+            "sample.txt",
+            "--quiet",
+        ],
+    );
+    assert_envelope(&json, "grep-terms", "files");
+    assert_eq!(json["quiet"], true);
+    assert!(json.get("files").is_none());
+    assert_eq!(json["matched_files_total"], 1);
+    assert_eq!(json["total_matches"], 2);
+
+    let human = run_contextmink(
+        &root,
+        &[
+            "grep-terms",
+            "--term",
+            "alpha",
+            "--term",
+            "beta",
+            "sample.txt",
+            "--quiet",
+        ],
+    );
+    assert!(!human.contains("file_counts:"), "output: {human}");
+    assert!(!human.contains("sample_lines:"), "output: {human}");
+    let receipt = human
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("CONTEXTMINK_RECEIPT ")
+        .unwrap();
+    let receipt: Value = serde_json::from_str(receipt).unwrap();
+    assert_envelope(&receipt, "grep-terms", "files");
+    assert_eq!(receipt["quiet"], true);
+}

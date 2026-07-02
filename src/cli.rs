@@ -202,6 +202,11 @@ pub(crate) enum Command {
         skip_nested_repos: bool,
         #[arg(
             long,
+            help = "Suppress per-file match content and file lists; emit only the receipt (totals, caps, truncation, scan-scope fields)"
+        )]
+        quiet: bool,
+        #[arg(
+            long,
             visible_alias = "max-matched-files",
             default_value_t = 80,
             help = "Maximum matching files to count before stopping content scan"
@@ -311,6 +316,11 @@ pub(crate) enum Command {
             help = "Do not enter git-ignored nested repository roots during broad scans"
         )]
         skip_nested_repos: bool,
+        #[arg(
+            long,
+            help = "Suppress per-file match content and file lists; emit only the receipt (totals, caps, truncation, scan-scope fields)"
+        )]
+        quiet: bool,
         #[arg(
             long,
             visible_alias = "max-matched-files",
