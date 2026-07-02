@@ -20,6 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # contextmink-bridge is Windows-purpose (PowerShell argv mangling,
+          # MSYS rewriting, Git Bash discovery); POSIX hosts run bash natively,
+          # so only the Windows archive carries the bridge binary. The bridge
+          # still compiles and tests on every platform.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64
@@ -39,6 +43,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             platform: windows-x86_64
             binary_name: contextmink.exe
+            bridge_binary_name: contextmink-bridge.exe
             archive_ext: zip
 
     steps:
@@ -111,6 +116,7 @@ jobs:
           $archive = "dist/${{ steps.names.outputs.archive }}"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $bundle
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bridge_binary_name }}" $bundle
           Copy-Item README.md,SETUP.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
           Copy-Item -Recurse docs $bundle
           Copy-Item -Recurse templates $bundle
@@ -120,6 +126,7 @@ jobs:
             target = "${{ matrix.target }}"
             platform = "${{ matrix.platform }}"
             binary = "${{ matrix.binary_name }}"
+            bridge_binary = "${{ matrix.bridge_binary_name }}"
             archive = "${{ steps.names.outputs.archive }}"
           } | ConvertTo-Json
           Set-Content -Path "$bundle/manifest.json" -Value $manifest -NoNewline
@@ -156,6 +163,10 @@ jobs:
           $bundle = "dist/${{ steps.names.outputs.bundle }}"
           $binary = "$bundle/${{ matrix.binary_name }}"
           if (!(Test-Path $binary)) { throw "release binary missing" }
+          $bridge = "$bundle/${{ matrix.bridge_binary_name }}"
+          if (!(Test-Path $bridge)) { throw "bridge binary missing" }
+          $bridgeHelp = & $bridge --help | Out-String
+          if ($bridgeHelp -notmatch "argv-b64") { throw "bridge help missing argv-b64" }
           if (!(Test-Path "$bundle/README.md")) { throw "README.md missing" }
           if (!(Test-Path "$bundle/SETUP.md")) { throw "SETUP.md missing" }
           if (!(Test-Path "$bundle/LICENSE")) { throw "LICENSE missing" }
@@ -217,26 +228,31 @@ jobs:
           cat > release_body.md <<EOF
           contextmink ${{ steps.ver.outputs.version }}
 
-          Agent-recon fidelity release.
+          File-read discipline release.
 
-          - Broad scans enter git-ignored nested repository roots and disclose
-            them in receipts (multi-repo workspaces no longer report false
-            completeness); opt out with --skip-nested-repos.
-          - BOM-driven decoding: UTF-16LE/BE files are searched instead of
-            skipped as binary; UTF-8 BOM no longer breaks JSON parsing.
-          - New dirs subcommand for bounded tree orientation.
-          - grep/grep-terms: --glob/--ext filters, -i, --context N, named
-            skipped-file samples, honest no-match scope, parallel
-            walk-order-deterministic content scan.
-          - slice --tail N and encoding receipts; json-select --where /
-            --where-contains row filters, all_null_fields typo audit, and
-            streamed *.jsonl input; capture keeps head and tail of truncated
-            output; every receipt carries duration_ms.
-          - Bespoke fail-fast config parser: unknown or duplicate
-            .contextmink.toml keys are hard errors.
+          - New outline subcommand: declaration-line maps for large source
+            files via hand-written token classifiers (Rust, Python, JS/TS,
+            Go, C/C++, Java, C#, Kotlin, shell, Lua, Ruby, Markdown, TOML,
+            INI, YAML, SQL DDL, MediaWiki wikitext), shebang detection for
+            extensionless scripts, --contains row filters, --prefix literal
+            matcher, --pattern regex escape hatch.
+          - slice reframed as the guarded file-read primitive (outline to
+            locate, slice to read; defaults are the point).
+          - Allocation-free ASCII case folding for literal and grep-terms
+            ignore-case matching; regex remains only in user-supplied
+            patterns.
+          - New contextmink-bridge binary (Windows archive only): native
+            PowerShell -> Git Bash bridge with --argv-b64 (single-token
+            lossless argv channel, immune to PowerShell 5.1 quote mangling),
+            --argfile, --print-argv, automatic Git Bash discovery, no MSYS
+            argument rewriting in direct mode, and a content-dump trip-wire.
+            The codex-bash.sh template ships on every platform for
+            bash-first setups.
+          - Launcher shields slash-bearing --pattern/--prefix/--contains/
+            --term values from MSYS rewriting on Git Bash/Windows.
 
           Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64.
-          Each archive includes the contextmink binary, setup docs, templates, licenses, a manifest, and a SHA-256 checksum.
+          Each archive includes the contextmink binary, setup docs, templates, licenses, a manifest, and a SHA-256 checksum; the Windows archive also carries contextmink-bridge.
           EOF
 
       - name: Create GitHub Release
