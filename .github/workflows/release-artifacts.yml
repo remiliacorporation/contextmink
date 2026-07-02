@@ -132,7 +132,8 @@ jobs:
           Set-Content -Path "$bundle/manifest.json" -Value $manifest -NoNewline
           Compress-Archive -Path "$bundle/*" -DestinationPath $archive -Force
           $hash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
-          Set-Content -Path "${archive}.sha256" -Value "$hash  ${{ steps.names.outputs.archive }}"
+          # LF, no BOM: sha256sum -c on POSIX shells trips over CRLF filenames.
+          [System.IO.File]::WriteAllText("${archive}.sha256", "$hash  ${{ steps.names.outputs.archive }}`n")
 
       - name: Verify packaged release (Unix)
         if: runner.os != 'Windows'
