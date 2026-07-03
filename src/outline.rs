@@ -125,6 +125,11 @@ const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
         extensions: &["json", "jsonc"],
         classify: json_declaration,
     },
+    OutlineLanguage {
+        name: "xml",
+        extensions: &["xml", "xsd", "xaml"],
+        classify: xml_declaration,
+    },
 ];
 
 fn ident_start(ch: char) -> bool {
@@ -669,6 +674,7 @@ fn lua_ident_char(ch: char) -> bool {
 }
 
 fn lua_declaration(line: &str) -> bool {
+    let unindented = !line.starts_with(char::is_whitespace);
     let mut rest = line.trim_start();
     if let Some(after) = strip_keyword_ws(rest, "local") {
         rest = after;
@@ -684,7 +690,16 @@ fn lua_declaration(line: &str) -> bool {
     let Some(after) = after.strip_prefix('=') else {
         return false;
     };
-    starts_keyword(after.trim_start(), "function")
+    let value = after.trim_start();
+    if starts_keyword(value, "function") {
+        return true;
+    }
+    // Column-0 table roots are module/addon structure (`MyAddon = {}`,
+    // `local p = {}` in Scribunto modules, `T = T or {}`, multi-line
+    // `Defaults = {`); indented table assignments are locals inside
+    // functions and one-liner closed tables (`t = {1, 2}`) are data.
+    let value = value.trim_end();
+    unindented && (value.ends_with('{') || value.ends_with("{}"))
 }
 
 fn ruby_declaration(line: &str) -> bool {
@@ -763,6 +778,58 @@ fn json_declaration(line: &str) -> bool {
         return false;
     };
     matches!(value.trim(), "{" | "[")
+}
+
+/// Indent budget for "shallow" XML elements: document-section tags sit
+/// within the first levels regardless of 2-space, 4-space, or tab style.
+const XML_SHALLOW_INDENT_COLUMNS: usize = 4;
+
+/// Element-open tags that name addressable structure: any element carrying
+/// a boundary-checked `name`/`id` attribute (FrameXML frames, MSBuild
+/// targets, Android views), plus shallow block-opening elements that map
+/// document sections (`<page>` in MediaWiki exports, `<PropertyGroup>`).
+/// Closing tags, comments, processing instructions, CDATA, deep unnamed
+/// markup, and shallow leaf content (self-closing or closed on the same
+/// line, like `<Size x="1"/>` or `<title>x</title>`) stay out.
+fn xml_declaration(line: &str) -> bool {
+    let rest = line.trim_start();
+    let Some(after) = rest.strip_prefix('<') else {
+        return false;
+    };
+    if !after.starts_with(ident_start) {
+        return false;
+    }
+    if xml_has_name_or_id_attribute(rest) {
+        return true;
+    }
+    let indent: usize = line[..line.len() - rest.len()]
+        .chars()
+        .map(|ch| if ch == '\t' { 4 } else { 1 })
+        .sum();
+    let opens_block = !rest.trim_end().ends_with("/>") && !rest.contains("</");
+    indent <= XML_SHALLOW_INDENT_COLUMNS && opens_block
+}
+
+/// `name="..."`/`id="..."` (or single-quoted) at an attribute boundary —
+/// preceded by whitespace or a namespace `:` — so `filename="..."` does not
+/// count.
+fn xml_has_name_or_id_attribute(rest: &str) -> bool {
+    let lower = rest.to_ascii_lowercase();
+    ["name=\"", "id=\"", "name='", "id='"].iter().any(|needle| {
+        let mut start = 0;
+        while let Some(pos) = lower[start..].find(needle) {
+            let at = start + pos;
+            if lower[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_whitespace() || ch == ':')
+            {
+                return true;
+            }
+            start = at + 1;
+        }
+        false
+    })
 }
 
 /// MediaWiki section headings: `= Title =` through `====== Title ======`,

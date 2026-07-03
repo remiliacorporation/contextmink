@@ -75,9 +75,25 @@ fn python_lua_shell_and_markdown_classifiers_match_declaration_shapes() {
             "function Frame:OnLoad()",
             "local function clamp(value)",
             "Mixin.OnEvent = function(self, event)",
+            // Column-0 table roots: addon/module structure.
+            "MinkTrace = {}",
+            "local p = {}",
+            "MinkTraceDB = MinkTraceDB or {}",
+            "local Defaults = {",
         ],
     );
-    assert_skips("lua", &["    return functional(value)", "local x = 5"]);
+    assert_skips(
+        "lua",
+        &[
+            "    return functional(value)",
+            "local x = 5",
+            // Indented table assignments are locals inside functions;
+            // one-liner closed tables are data.
+            "    local row = {}",
+            "local colors = { 1, 2, 3 }",
+            "VERSION = \"1.0\"",
+        ],
+    );
 
     assert_matches(
         "shell",
@@ -300,6 +316,44 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
 
     assert_matches("ruby", &["def render", "class Renderer", "module Mink"]);
     assert_skips("ruby", &["  render_all!", "defer_work"]);
+}
+
+#[test]
+fn xml_classifier_maps_named_and_shallow_elements() {
+    assert_matches(
+        "xml",
+        &[
+            // Shallow block-opening sections (2-space, 4-space, tab indents).
+            "<Ui xmlns=\"http://www.blizzard.com/wow/ui/\">",
+            "  <page>",
+            "    <revision>",
+            "\t<Frame>",
+            "  <PropertyGroup",
+            // Named/id'd elements at any depth.
+            "\t\t\t<Button name=\"$parentClose\" inherits=\"UIPanelCloseButton\">",
+            "            <Texture name=\"MinkExplorerThumb\" file=\"...\">",
+            "        <Target Name=\"Build\">",
+            "                <TextView android:id=\"@+id/label\">",
+        ],
+    );
+    assert_skips(
+        "xml",
+        &[
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<!-- named comment: name=\"x\" is not an element -->",
+            "        </Frame>",
+            "            <Anchors>",
+            "                <Anchor point=\"TOPLEFT\"/>",
+            "        <Script file=\"minkexplorer.lua\"/>",
+            "            <Size x=\"32\" y=\"32\"/>",
+            "        <input filename=\"page.xml\"/>",
+            "plain text line",
+            // Shallow leaf content: self-closing or closed on the same line.
+            "    <title>Main Page</title>",
+            "  <Size x=\"48\" y=\"28\" />",
+            "  <Anchors><Anchor point=\"TOPLEFT\"/></Anchors>",
+        ],
+    );
 }
 
 #[test]

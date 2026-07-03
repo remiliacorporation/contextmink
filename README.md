@@ -63,11 +63,12 @@ below is the short map.
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
 - `outline` — declaration map of one source file, printed as `line: text`
-  rows (functions, types, headings; for JSON, container-opening keys). 20
-  built-in languages via token classifiers, shebang detection for
-  extensionless scripts. `--lang` overrides detection, `--prefix <text>`
-  matches literal line starts, `--pattern <regex>` covers anything else,
-  `--contains` filters rows.
+  rows (functions, types, headings; for JSON, container-opening keys; for
+  XML, named/id'd elements and shallow block-opening sections). 21 built-in
+  languages via token classifiers, shebang detection for extensionless
+  scripts. `--lang` overrides detection, `--prefix <text>` matches literal
+  line starts, `--pattern <regex>` covers anything else, `--contains`
+  filters rows.
 - `slice` — bounded line window from one file: `--range START:END`,
   `--tail N`, or a character window for very long single-line files.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
