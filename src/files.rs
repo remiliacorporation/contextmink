@@ -245,21 +245,22 @@ fn walk_root(
                         .visited_dirs
                         .insert(entry.into_path());
                 }
-                Some(kind) if kind.is_file() => {
-                    if file_is_included(
-                        entry.path(),
-                        &mapper,
-                        include_matcher,
-                        extension_matcher,
-                        config,
-                        options.with_excluded,
-                        explicit_excluded_roots,
-                    ) {
-                        sink.lock()
-                            .expect("walk sink poisoned")
-                            .files
-                            .push(entry.into_path());
-                    }
+                Some(kind)
+                    if kind.is_file()
+                        && file_is_included(
+                            entry.path(),
+                            &mapper,
+                            include_matcher,
+                            extension_matcher,
+                            config,
+                            options.with_excluded,
+                            explicit_excluded_roots,
+                        ) =>
+                {
+                    sink.lock()
+                        .expect("walk sink poisoned")
+                        .files
+                        .push(entry.into_path());
                 }
                 _ => {}
             }
