@@ -998,6 +998,43 @@ fn grep_stops_content_scan_at_matching_file_cap() {
 }
 
 #[test]
+fn grep_marks_match_totals_lower_bound_when_candidate_scan_is_capped() {
+    let root = fixture_root("grep-scan-cap-match-bounds");
+    let matches = root.join("matches");
+    fs::create_dir_all(&matches).unwrap();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(matches.join(name), "needle\n").unwrap();
+    }
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep-terms",
+            "--term",
+            "needle",
+            "--max-scan-files",
+            "1",
+            "--max-count-files",
+            "10",
+            "--max-files",
+            "10",
+            "matches",
+        ],
+    );
+    assert_envelope(&json, "grep-terms", "files");
+    assert_eq!(json["candidate_files_total"], 3);
+    assert_eq!(json["candidate_files_scanned"], 1);
+    assert_eq!(json["content_files_scanned"], 1);
+    assert_eq!(json["matched_files_total"], 1);
+    assert_eq!(json["matched_files_total_is_lower_bound"], true);
+    assert_eq!(json["total_matches"], 1);
+    assert_eq!(json["total_matches_is_lower_bound"], true);
+    assert_eq!(json["cap_reason"], "scan");
+    assert_eq!(json["truncated"], true);
+}
+
+#[test]
 fn grep_json_honors_global_sample_cap() {
     let root = fixture_root("grep-json-sample-cap");
 

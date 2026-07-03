@@ -26,6 +26,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- `grep`/`grep-terms` now marks `matched_files_total_is_lower_bound` and `total_matches_is_lower_bound` when `--max-scan-files` caps candidate scanning, so a partial scanned prefix cannot look like a complete match count.
 - `contextmink-bridge` direct mode (`--`) now resolves a program spelled as a path (`./gradlew`, `bin/tool`) against `--cwd`, matching POSIX exec semantics. Rust's `Command` resolves relative programs against the parent's working directory, so `--cwd <dir> -- ./script` failed `command not found` before the extensionless-script Git Bash fallback could fire; bare names (`git`) keep PATH lookup, and absolute or rooted spellings are never re-anchored.
 - `contextmink-bridge` `command not found` errors now teach the fix at the point of failure: the message names the resolved path, discloses the `--cwd` resolution when one happened, and points path-like programs at `--script <path>` (which resolves from the bridge root).
 - `contextmink-bridge --argv-b64` no longer drops a trailing empty argument: the documented PowerShell encoder (`$argv -join [char]0`) never emits a trailing NUL, so the old drop-one-empty-tail compensation only ever destroyed a genuine trailing empty argument.

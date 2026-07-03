@@ -454,8 +454,10 @@ pub(crate) fn command_grep_with_matcher(
             FileScan::NoMatch => {}
         }
     }
-    let matched_files_total_is_lower_bound =
+    let content_match_capped =
         matches.len() >= caps.max_count_files && content_files_scanned < candidate_files_scanned;
+    let matched_files_total_is_lower_bound =
+        scan_truncated || content_match_capped || skipped_large > 0;
     let total_matches_is_lower_bound = matched_files_total_is_lower_bound;
     let files_shown = min(matches.len(), caps.max_files);
     // A no-match verdict only covers scanned content: a capped candidate
