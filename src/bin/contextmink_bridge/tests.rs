@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{
-    assemble_argv, decode_base64, resolve_root_from_exe_dir, sed_window_span,
-    windows_bash_candidates,
+    assemble_argv, decode_base64, not_found_message, resolve_program, resolve_root_from_exe_dir,
+    sed_window_span, windows_bash_candidates,
 };
 
 fn encode_base64(bytes: &[u8]) -> String {
@@ -121,6 +121,57 @@ fn windows_bash_candidates_are_git_for_windows_only() {
         assert!(!lower.contains("cygwin"), "candidate: {lower}");
         assert!(!lower.contains("msys"), "candidate: {lower}");
     }
+}
+
+#[test]
+fn pathlike_programs_resolve_against_cwd_and_bare_names_keep_path_lookup() {
+    let cwd = std::path::Path::new("/ws/sub");
+    // POSIX exec semantics: a separator makes the name a path relative to
+    // the child's working directory.
+    assert_eq!(resolve_program("./gradlew", cwd), "/ws/sub/gradlew");
+    assert_eq!(resolve_program("bin/tool", cwd), "/ws/sub/bin/tool");
+    // Bare names go through PATH lookup untouched.
+    assert_eq!(resolve_program("git", cwd), "git");
+    // Absolute and rooted spellings are never re-anchored.
+    let absolute = if cfg!(windows) {
+        r"C:\ws\tool.exe"
+    } else {
+        "/ws/tool"
+    };
+    assert_eq!(resolve_program(absolute, cwd), absolute);
+    assert_eq!(resolve_program("/rooted/tool", cwd), "/rooted/tool");
+    #[cfg(windows)]
+    assert_eq!(resolve_program(r".\gradlew", cwd), "/ws/sub/gradlew");
+}
+
+#[test]
+fn not_found_messages_teach_script_mode_for_pathlike_programs() {
+    let message = not_found_message("./gradlew", "/ws/sub/gradlew");
+    assert!(message.contains("command not found: /ws/sub/gradlew"));
+    assert!(message.contains("from ./gradlew, resolved against --cwd"));
+    assert!(message.contains("--script"));
+    // Bare names get no misleading script-mode steer.
+    let message = not_found_message("gti", "gti");
+    assert_eq!(message, "command not found: gti");
+}
+
+/// End-to-end regression for the original failure: `--cwd <dir> -- ./script`
+/// must resolve the program against `--cwd` and then ride the
+/// ERROR_BAD_EXE_FORMAT fallback through Git Bash (present on Windows CI and
+/// every supported dev host; the bridge is meaningless without it).
+#[cfg(windows)]
+#[test]
+fn direct_mode_runs_relative_extensionless_script_under_cwd() {
+    let root = temp_tree("cwd-script");
+    fs::write(root.join("probe"), "#!/bin/sh\nexit 42\n").unwrap();
+    let code = super::run(vec![
+        "--cwd".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--".to_owned(),
+        "./probe".to_owned(),
+    ])
+    .unwrap();
+    assert_eq!(code, 42);
 }
 
 #[test]

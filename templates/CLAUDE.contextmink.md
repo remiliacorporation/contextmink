@@ -39,8 +39,9 @@ produce more output than the transcript should carry.
   as capped output and narrow the query. Use `--fail-if-truncated` /
   `--strict-complete` for automation that requires full displayed output, or
   `--require-complete-scan` when scan-capped totals should fail. When
-  `cap_reason` is `"scan"` or lower-bound fields are true, totals and no-match
-  results cover only the scanned subset. A no-match grep with
+  `cap_reason` is `"scan"` or match-side lower-bound fields are true, match
+  totals and no-match results cover only the scanned subset (candidate file
+  totals stay exact). A no-match grep with
   `no_match_scope: "scanned_subset"` or a `json-select` with `all_null_fields`
   entries needs a narrower or corrected query, not a conclusion.
 - Direct commands are fine when output is already known to be small or

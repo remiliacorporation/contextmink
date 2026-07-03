@@ -41,6 +41,7 @@ pub(crate) fn command_capture(
     max_lines: usize,
     max_bytes: usize,
     max_line_chars: usize,
+    fail_with_child: bool,
     argv: &[String],
 ) -> Result<()> {
     if max_lines == 0 {
@@ -115,7 +116,9 @@ pub(crate) fn command_capture(
         let mut object = map;
         object.insert("stdout_text".to_string(), json!(stdout.text));
         object.insert("stderr_text".to_string(), json!(stderr.text));
-        return emit_json(Value::Object(object));
+        emit_json(Value::Object(object))?;
+        exit_with_child(fail_with_child, &status)?;
+        return Ok(());
     }
 
     let mut out = io::stdout();
@@ -159,7 +162,29 @@ pub(crate) fn command_capture(
             "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming command scope."
         )?;
     }
-    write_receipt_checked(cli, map)
+    write_receipt_checked(cli, map)?;
+    exit_with_child(fail_with_child, &status)
+}
+
+/// Opt-in child-status propagation for shell chaining. The receipt (carrying
+/// `exit_code`/`success`) has already been emitted; a failed child then
+/// becomes contextmink's own exit so `capture --fail-with-child -- cmd &&
+/// next` gates on the child instead of always proceeding.
+fn exit_with_child(fail_with_child: bool, status: &std::process::ExitStatus) -> Result<()> {
+    if !fail_with_child || status.success() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    let code = status.code().unwrap_or_else(|| {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().map_or(1, |signal| 128 + signal)
+    });
+    #[cfg(not(unix))]
+    let code = status.code().unwrap_or(1);
+    io::stdout()
+        .flush()
+        .context("failed to flush stdout before propagating child exit")?;
+    std::process::exit(code);
 }
 
 fn spawn_captured_child(

@@ -162,7 +162,7 @@ fn config_and_markup_classifiers_match_structure_lines() {
 }
 
 #[test]
-fn c_family_classifier_matches_definitions_not_prototypes() {
+fn c_family_classifier_matches_definitions_prototypes_and_members() {
     assert_matches(
         "c",
         &[
@@ -173,15 +173,30 @@ fn c_family_classifier_matches_definitions_not_prototypes() {
             "void CWorldScene_CullGlobalMapObjDefGroups(float* bounds, int pass)",
             "template <typename T>",
             "CGxDevice::~CGxDevice()",
+            // Prototypes carry a header's structure.
+            "int prototype_only(int value);",
+            "void CMap_GetFacets(C3Vector const* min, C3Vector const* max);",
+            // Indented class members, nested aggregates, and access labels.
+            "    virtual void Render(CGxBatch* batch) = 0;",
+            "    void Resize(int width, int height) {",
+            "    struct SubRange {",
+            "public:",
+            "    private:",
+            // Operator overloads name themselves with punctuation.
+            "bool operator==(const C3Vector& other) const;",
+            "    T& operator[](size_t index) {",
         ],
     );
     assert_skips(
         "c",
         &[
-            "int prototype_only(int value);",
             "    call_site(value);",
+            "    ns::qualified_call(value);",
             "// void commentary(int x)",
             "return frame(count)",
+            "    if (bounds->contains(point)) {",
+            "    int x = compute(value);",
+            "    result += accumulate(rows);",
         ],
     );
 }
@@ -201,6 +216,15 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
             "const forward = event => dispatch(event);",
             "const dispatch: () => void = () => {",
             "const build: Array<() => void> = () => {",
+            // Class and object-literal method heads.
+            "  render(frame, camera) {",
+            "  async load(url) {",
+            "  static create(options) {",
+            "  get frameCount() {",
+            "  #recompute() {",
+            "  constructor(device) {",
+            "  map<T>(fn: (row: Row) => T): T[] {",
+            "  update() {}",
         ],
     );
     assert_skips(
@@ -210,6 +234,13 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
             "  value === expected;",
             "return callback(value);",
             "const flag: boolean = value === expected;",
+            // Calls end with `;`/`)`; object-argument and callback calls
+            // leave the parentheses unbalanced before the trailing `{`.
+            "  render(frame);",
+            "  fetch(url, {",
+            "  it('renders', () => {",
+            "  if (ready) {",
+            "  while (frames.pop()) {",
         ],
     );
 
@@ -229,11 +260,20 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
             "public final class Renderer {",
             "    private static int frameCount(FrameState state) {",
             "public @interface Inject {",
+            // Package-private members and constructors.
+            "    void run() {",
+            "    Frame nextFrame(long deadline) throws TimeoutException {",
+            "    public Renderer(Device device) {",
         ],
     );
     assert_skips(
         "java",
-        &["        state.frameCount(1);", "return frame(count);"],
+        &[
+            "        state.frameCount(1);",
+            "return frame(count);",
+            "        throw new IllegalStateException(reason);",
+            "        builder.append(row).append(sep);",
+        ],
     );
 
     assert_matches(
@@ -260,6 +300,31 @@ fn js_go_and_java_family_classifiers_match_declaration_shapes() {
 
     assert_matches("ruby", &["def render", "class Renderer", "module Mink"]);
     assert_skips("ruby", &["  render_all!", "defer_work"]);
+}
+
+#[test]
+fn json_classifier_maps_container_keys_only() {
+    assert_matches(
+        "json",
+        &[
+            "  \"textures\": [",
+            "\"diagnostics\": {",
+            "        \"nested\": {",
+            "  \"key with \\\"quote\\\"\": [",
+        ],
+    );
+    assert_skips(
+        "json",
+        &[
+            "  \"mode\": \"demo\",",
+            "  \"count\": 3,",
+            "  \"flags\": [1, 2, 3],",
+            "  \"empty\": {},",
+            "{",
+            "  ],",
+            "  \"unterminated",
+        ],
+    );
 }
 
 #[test]

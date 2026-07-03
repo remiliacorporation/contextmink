@@ -701,6 +701,11 @@ pub(crate) enum Command {
         )]
         max_line_chars: usize,
         #[arg(
+            long,
+            help = "Exit with the child's exit code when it fails (receipt is still emitted); default keeps exit 0 with the child status only in the receipt"
+        )]
+        fail_with_child: bool,
+        #[arg(
             required = true,
             trailing_var_arg = true,
             allow_hyphen_values = true,

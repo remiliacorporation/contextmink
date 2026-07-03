@@ -10,8 +10,15 @@ use crate::config::{ContextConfig, canonical_normalized};
 
 #[derive(Debug)]
 pub(crate) struct CollectedFiles {
+    /// Sorted candidate files, capped at `max_scan_files`.
     pub(crate) files: Vec<PathBuf>,
+    /// Exact deduplicated candidate count. Enumeration always completes (the
+    /// cap bounds downstream scanning, not the count), so this is never a
+    /// lower bound.
     pub(crate) total_seen: usize,
+    /// `files` was capped at `max_scan_files`; the surviving subset is the
+    /// sorted prefix, so truncation is deterministic and independent of walk
+    /// order or root spelling.
     pub(crate) truncated: bool,
     /// Git-ignored nested repository roots that were entered anyway, as
     /// display paths. Empty when no supplement ran.
@@ -46,8 +53,6 @@ pub(crate) fn collect_files(
     let mut state = CollectState {
         files: Vec::new(),
         seen: HashSet::new(),
-        total_seen: 0,
-        truncated: false,
         nested_repos_entered: Vec::new(),
     };
     for root in paths {
@@ -62,10 +67,7 @@ pub(crate) fn collect_files(
                 options.with_excluded,
                 &explicit_excluded_roots,
             ) {
-                state.push_file(root.to_path_buf(), options.max_scan_files);
-            }
-            if state.truncated {
-                break;
+                state.push_file(root.to_path_buf());
             }
             continue;
         }
@@ -79,18 +81,23 @@ pub(crate) fn collect_files(
             &mut state,
             0,
         )?;
-        if state.truncated {
-            break;
-        }
     }
+    // Enumeration runs to completion before the cap applies: totals stay
+    // exact and a capped list is the sorted prefix, deterministic no matter
+    // how walk order interleaved.
     state.files.sort();
     state.files.dedup();
     state.nested_repos_entered.sort();
     state.nested_repos_entered.dedup();
+    let total_seen = state.files.len();
+    let truncated = total_seen > options.max_scan_files;
+    if truncated {
+        state.files.truncate(options.max_scan_files);
+    }
     Ok(CollectedFiles {
         files: state.files,
-        total_seen: state.total_seen,
-        truncated: state.truncated,
+        total_seen,
+        truncated,
         nested_repos_entered: state.nested_repos_entered,
     })
 }
@@ -157,21 +164,13 @@ impl PolicyMapper {
 struct CollectState {
     files: Vec<PathBuf>,
     seen: HashSet<PathBuf>,
-    total_seen: usize,
-    truncated: bool,
     nested_repos_entered: Vec<String>,
 }
 
 impl CollectState {
-    fn push_file(&mut self, candidate: PathBuf, max_scan_files: usize) {
-        if !self.seen.insert(candidate.clone()) {
-            return;
-        }
-        self.total_seen += 1;
-        if self.files.len() < max_scan_files {
+    fn push_file(&mut self, candidate: PathBuf) {
+        if self.seen.insert(candidate.clone()) {
             self.files.push(candidate);
-        } else {
-            self.truncated = true;
         }
     }
 }
@@ -214,42 +213,76 @@ fn walk_root(
             }
         });
     }
-    let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
-    for entry in walk.build() {
-        let entry = entry?;
-        match entry.file_type() {
-            Some(kind) if kind.is_dir() => {
-                visited_dirs.insert(entry.path().to_path_buf());
-            }
-            Some(kind) if kind.is_file() => {
-                if !file_is_included(
-                    entry.path(),
-                    &mapper,
-                    include_matcher,
-                    extension_matcher,
-                    config,
-                    options.with_excluded,
-                    explicit_excluded_roots,
-                ) {
-                    continue;
+    // Parallel enumeration: entries arrive in nondeterministic order and are
+    // merged into deterministic sorted-and-capped output by `collect_files`.
+    // The walk always completes, so candidate totals are exact.
+    struct WalkSink {
+        files: Vec<PathBuf>,
+        visited_dirs: HashSet<PathBuf>,
+        error: Option<ignore::Error>,
+    }
+    let sink = std::sync::Mutex::new(WalkSink {
+        files: Vec::new(),
+        visited_dirs: HashSet::new(),
+        error: None,
+    });
+    walk.build_parallel().run(|| {
+        Box::new(|entry| {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    let mut sink = sink.lock().expect("walk sink poisoned");
+                    if sink.error.is_none() {
+                        sink.error = Some(error);
+                    }
+                    return ignore::WalkState::Quit;
                 }
-                state.push_file(entry.path().to_path_buf(), options.max_scan_files);
-                if state.truncated {
-                    return Ok(());
+            };
+            match entry.file_type() {
+                Some(kind) if kind.is_dir() => {
+                    sink.lock()
+                        .expect("walk sink poisoned")
+                        .visited_dirs
+                        .insert(entry.into_path());
                 }
+                Some(kind) if kind.is_file() => {
+                    if file_is_included(
+                        entry.path(),
+                        &mapper,
+                        include_matcher,
+                        extension_matcher,
+                        config,
+                        options.with_excluded,
+                        explicit_excluded_roots,
+                    ) {
+                        sink.lock()
+                            .expect("walk sink poisoned")
+                            .files
+                            .push(entry.into_path());
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        }
+            ignore::WalkState::Continue
+        })
+    });
+    let WalkSink {
+        files,
+        visited_dirs,
+        error,
+    } = sink.into_inner().expect("walk sink poisoned");
+    if let Some(error) = error {
+        return Err(error.into());
+    }
+    for file in files {
+        state.push_file(file);
     }
     // Nested-repo supplement: a directory pruned by Git ignore rules that is
     // itself a git repository root is a workspace member (multi-repo
     // workspaces routinely git-ignore sibling repos for repo separation), not
     // a generated artifact. Enter it with its own ignore rules and disclose
     // the entry in the receipt.
-    if options.with_git_ignored
-        || options.skip_nested_repos
-        || state.truncated
-        || nesting >= NESTED_REPO_MAX_RECURSION
+    if options.with_git_ignored || options.skip_nested_repos || nesting >= NESTED_REPO_MAX_RECURSION
     {
         return Ok(());
     }
@@ -278,9 +311,6 @@ fn walk_root(
             state,
             nesting + 1,
         )?;
-        if state.truncated {
-            return Ok(());
-        }
     }
     Ok(())
 }

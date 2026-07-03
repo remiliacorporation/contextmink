@@ -435,6 +435,54 @@ fn capture_keeps_nonzero_child_status_in_receipt() {
 }
 
 #[test]
+fn capture_fail_with_child_propagates_exit_code_after_receipt() {
+    let root = fixture_root("capture-fail-with-child");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    // Failing child: contextmink exits with the child's code, receipt intact.
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--fail-with-child",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "missing.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["success"], false);
+
+    // Succeeding child: exit stays 0.
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--fail-with-child",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["success"], true);
+}
+
+#[test]
 fn files_scan_cap_sets_complete_false() {
     let root = fixture_root("files-scan-cap");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
@@ -458,8 +506,14 @@ fn files_scan_cap_sets_complete_false() {
     assert_eq!(files["complete"], false);
     assert_eq!(files["cap_reason"], "scan");
     assert_eq!(files["candidate_files_scanned"], 2);
-    assert_eq!(files["candidate_files_total_is_lower_bound"], true);
-    assert_eq!(files["total"], 3);
+    // Enumeration completes before the cap applies: the total is exact and
+    // the surviving subset is the sorted prefix.
+    assert_eq!(files["candidate_files_total_is_lower_bound"], false);
+    assert_eq!(files["total"], 5);
+    assert_eq!(
+        files["files"],
+        serde_json::json!(["./.contextmink.toml", "./extra_a.txt"])
+    );
 }
 
 #[test]
@@ -739,8 +793,9 @@ fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
     assert_eq!(grep["complete"], false);
     assert_eq!(grep["cap_reason"], "scan");
     assert_eq!(grep["candidate_files_scanned"], 1);
-    assert_eq!(grep["candidate_files_total_is_lower_bound"], true);
-    assert!(grep["candidate_files_total"].as_u64().unwrap() >= 2);
+    // The candidate total is exact even though content scanning was capped.
+    assert_eq!(grep["candidate_files_total_is_lower_bound"], false);
+    assert_eq!(grep["candidate_files_total"], 5);
     assert_eq!(grep["no_match_scope"], "scanned_subset");
 }
 
@@ -1771,7 +1826,7 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
     assert_eq!(json["quiet"], true);
     assert_eq!(json["cap_reason"], "scan");
     assert_eq!(json["no_match_scope"], "scanned_subset");
-    assert_eq!(json["candidate_files_total_is_lower_bound"], true);
+    assert_eq!(json["candidate_files_total_is_lower_bound"], false);
 
     let human = run_contextmink(&root, &["grep", "not-present", "sample.txt", "--quiet"]);
     assert!(human.contains("no_matches"), "output: {human}");

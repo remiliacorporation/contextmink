@@ -166,7 +166,12 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [ch
 from `CONTEXTMINK_BRIDGE_ROOT`; else the nearest ancestor of the binary with
 `.contextmink.toml` — the policy root — so a vendored contextmink checkout
 (which is its own git repository) anchors to the workspace it serves; else
-the nearest ancestor with `.git`.
+the nearest ancestor with `.git`. In direct mode a program spelled as a path
+(`./gradlew`, `bin/tool`) resolves against `--cwd`, matching POSIX exec
+semantics, and an extensionless bash script retries through Git Bash — so
+`--cwd sub/project -- ./gradlew test` works; `--script` differs in resolving
+its script path from the bridge root instead of `--cwd`. Bare names (`git`)
+use PATH.
 
 **Script launcher (bash-first setups).** Install the template when the
 repository prefers a shell entrypoint or must not carry a second binary:

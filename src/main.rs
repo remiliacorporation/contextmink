@@ -325,8 +325,17 @@ fn main() -> Result<()> {
             max_lines,
             max_bytes,
             max_line_chars,
+            fail_with_child,
             argv,
-        } => command_capture(&cli, &config, *max_lines, *max_bytes, *max_line_chars, argv),
+        } => command_capture(
+            &cli,
+            &config,
+            *max_lines,
+            *max_bytes,
+            *max_line_chars,
+            *fail_with_child,
+            argv,
+        ),
     }
 }
 

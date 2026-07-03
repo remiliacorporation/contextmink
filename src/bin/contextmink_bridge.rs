@@ -12,10 +12,12 @@
 //! - `-- <program> [args...]`: plain argv for arguments known to be tame.
 //!
 //! Direct argv modes spawn the child natively — no MSYS layer exists, so
-//! slash-bearing arguments (`^// PART`) are never rewritten. `--script` and
-//! `--login` locate Git Bash themselves (no hardcoded path needed on the
-//! agent side), and extensionless Bash scripts passed as the program are
-//! retried through Git Bash automatically.
+//! slash-bearing arguments (`^// PART`) are never rewritten. A program
+//! spelled as a path (`./gradlew`) resolves against `--cwd` like a POSIX
+//! exec; bare names use PATH. `--script` and `--login` locate Git Bash
+//! themselves (no hardcoded path needed on the agent side), and
+//! extensionless Bash scripts passed as the program are retried through Git
+//! Bash automatically.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -59,7 +61,10 @@ fn usage() -> String {
      \x20 --argfile: one argument per line, no quoting; UTF-8 BOM and trailing\n\
      \x20 CRs are stripped.\n\
      \n\
-     Direct argv modes spawn natively (no MSYS argument rewriting). Exit codes:\n\
+     Direct argv modes spawn natively (no MSYS argument rewriting). A program\n\
+     spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
+     names use PATH; extensionless Bash scripts retry through Git Bash.\n\
+     Exit codes:\n\
      64 usage, 66 missing path, 126 spawn failure, 127 no bash; otherwise the\n\
      child's exit code.\n\
      \n\
@@ -79,6 +84,7 @@ fn main() {
     }
 }
 
+#[derive(Debug)]
 struct BridgeError {
     message: String,
     code: i32,
@@ -296,13 +302,19 @@ fn spawn_direct(
     argv: &[String],
     target_cwd: &Path,
 ) -> Result<std::process::ExitStatus, BridgeError> {
-    let (program, args) = argv.split_first().expect("argv checked non-empty");
-    let mut command = Command::new(program);
+    let (given, args) = argv.split_first().expect("argv checked non-empty");
+    let program = resolve_program(given, target_cwd);
+    let mut command = Command::new(&program);
     command.args(args).current_dir(target_cwd);
     match command.status() {
         Ok(status) => Ok(status),
         // ERROR_BAD_EXE_FORMAT: an extensionless Bash script was given as the
         // program; retry through Git Bash as argv, not as a shell string.
+        // The retry is the designed path for repo scripts, so it stays silent
+        // by default: a stderr line on a successful run reads as a warning
+        // and PowerShell 5.1 wraps native stderr in NativeCommandError
+        // records, which can mark the whole pipeline failed despite exit 0.
+        // CONTEXTMINK_BRIDGE_DEBUG=1 discloses the interpreter choice.
         Err(error) if cfg!(windows) && error.raw_os_error() == Some(193) => {
             let bash = locate_bash().ok_or_else(|| {
                 fail(
@@ -312,12 +324,14 @@ fn spawn_direct(
                     ),
                 )
             })?;
-            eprintln!(
-                "contextmink-bridge: retrying {program} through {}",
-                bash.display()
-            );
+            if std::env::var_os("CONTEXTMINK_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
+                eprintln!(
+                    "contextmink-bridge: retrying {program} through {}",
+                    bash.display()
+                );
+            }
             Command::new(&bash)
-                .arg(program)
+                .arg(&program)
                 .args(args)
                 .current_dir(target_cwd)
                 .status()
@@ -329,13 +343,47 @@ fn spawn_direct(
                 })
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(fail(EXIT_NO_BASH, format!("command not found: {program}")))
+            Err(fail(EXIT_NO_BASH, not_found_message(given, &program)))
         }
         Err(error) => Err(fail(
             EXIT_SPAWN_FAILED,
             format!("failed to spawn {program}: {error}"),
         )),
     }
+}
+
+/// A program spelled as a path (containing a separator) resolves against the
+/// child's working directory, matching POSIX exec semantics; bare names keep
+/// PATH lookup. Rust's `Command` resolves relative programs against the
+/// parent's cwd instead, which would break `--cwd <dir> -- ./script` and
+/// starve the ERROR_BAD_EXE_FORMAT script fallback of a resolvable path.
+fn resolve_program(program: &str, target_cwd: &Path) -> String {
+    let path = Path::new(program);
+    let is_pathlike = program.chars().any(std::path::is_separator);
+    if !is_pathlike || path.is_absolute() || path.has_root() {
+        return program.to_owned();
+    }
+    let mut resolved = target_cwd.to_path_buf();
+    for component in path.components() {
+        if component != std::path::Component::CurDir {
+            resolved.push(component.as_os_str());
+        }
+    }
+    resolved.to_string_lossy().replace('\\', "/")
+}
+
+/// Teach the fix at the point of failure: a path-like program that does not
+/// resolve is usually a repo script the caller meant to address from the
+/// bridge root, which is what `--script` does.
+fn not_found_message(given: &str, resolved: &str) -> String {
+    let mut message = format!("command not found: {resolved}");
+    if given != resolved {
+        message.push_str(&format!(" (from {given}, resolved against --cwd)"));
+    }
+    if given.chars().any(std::path::is_separator) {
+        message.push_str("; repo scripts resolve from the bridge root via --script <path>");
+    }
+    message
 }
 
 fn exit_code(status: std::process::ExitStatus) -> i32 {

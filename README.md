@@ -63,10 +63,11 @@ below is the short map.
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
 - `outline` — declaration map of one source file, printed as `line: text`
-  rows (functions, types, headings). 19 built-in languages via token
-  classifiers, shebang detection for extensionless scripts. `--lang`
-  overrides detection, `--prefix <text>` matches literal line starts,
-  `--pattern <regex>` covers anything else, `--contains` filters rows.
+  rows (functions, types, headings; for JSON, container-opening keys). 20
+  built-in languages via token classifiers, shebang detection for
+  extensionless scripts. `--lang` overrides detection, `--prefix <text>`
+  matches literal line starts, `--pattern <regex>` covers anything else,
+  `--contains` filters rows.
 - `slice` — bounded line window from one file: `--range START:END`,
   `--tail N`, or a character window for very long single-line files.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
@@ -100,6 +101,7 @@ scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term panic --or src --max-matches 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
 scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
+scripts/contextmink outline capture_sidecar.json --max-items 30
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-select queue.jsonl --field addr --where-contains name=CMap --limit 10
@@ -128,14 +130,17 @@ The strict flags emit the receipt first, then exit nonzero.
 | `cap_reason` | why output stopped, or `null` |
 | `duration_ms` | wall-clock cost of the command |
 
-Search receipts add match, scan, and skip counts. Lower-bound fields
-(`candidate_files_total_is_lower_bound`, `matched_files_total_is_lower_bound`,
-`total_matches_is_lower_bound`) mean a scan cap fired and totals describe only
-the scanned subset; `no_match_scope` says whether a no-match verdict covered
-the `"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
+Search receipts add match, scan, and skip counts. Candidate enumeration
+always completes, so `candidate_files_total` is exact even when
+`--max-scan-files` caps the content scan (`cap_reason: "scan"`); the
+match-side lower-bound fields (`matched_files_total_is_lower_bound`,
+`total_matches_is_lower_bound`) then mean match totals describe only the
+scanned subset. `no_match_scope` says whether a no-match verdict covered the
+`"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
 files skipped as too large or binary. Capture receipts record the child's
 `exit_code` and `success` (contextmink itself exits zero when capture worked,
-even if the child failed) plus per-stream head, tail, and omitted line
+even if the child failed — pass `--fail-with-child` to propagate the child's
+exit code after the receipt) plus per-stream head, tail, and omitted line
 counts.
 
 ## Behavior notes
@@ -162,8 +167,11 @@ whose scripts are Bash-first while the agent runs in PowerShell:
   Cygwin/MSYS2 never substitute silently — point `CONTEXTMINK_BASH` at an
   exotic shell explicitly), spawns direct commands without MSYS argument
   rewriting, and takes argv as `--argv-b64` or `--argfile` so PowerShell 5.1
-  quoting cannot corrupt arguments. `--print-argv` shows exactly what
-  arrived; `--print-root` shows the resolved bridge root.
+  quoting cannot corrupt arguments. In direct mode a program spelled as a
+  path (`./gradlew`) resolves against `--cwd` like a POSIX exec and
+  extensionless bash scripts retry through Git Bash; `--script <path>`
+  resolves repo scripts from the bridge root instead. `--print-argv` shows
+  exactly what arrived; `--print-root` shows the resolved bridge root.
 - `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for
   repositories that do not want a second binary.
 

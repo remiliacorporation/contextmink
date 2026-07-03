@@ -112,9 +112,11 @@ pub(crate) fn command_files(
         cap_reason,
     );
     map.insert("candidate_files_scanned".to_string(), json!(files.len()));
+    // Enumeration always completes; the scan cap bounds the candidate list,
+    // not the count, so the total is exact.
     map.insert(
         "candidate_files_total_is_lower_bound".to_string(),
-        json!(collected.truncated),
+        json!(false),
     );
     nested_repos_receipt_fields(&mut map, &collected.nested_repos_entered);
     if cli.json {
@@ -247,9 +249,11 @@ pub(crate) fn command_dirs(
     );
     map.insert("depth".to_string(), json!(depth));
     map.insert("files_counted".to_string(), json!(collected.files.len()));
+    // Enumeration always completes; the scan cap bounds the candidate list,
+    // not the count, so the total is exact.
     map.insert(
         "candidate_files_total_is_lower_bound".to_string(),
-        json!(collected.truncated),
+        json!(false),
     );
     nested_repos_receipt_fields(&mut map, &collected.nested_repos_entered);
     if cli.json {
@@ -525,7 +529,7 @@ pub(crate) fn command_grep_with_matcher(
         );
         map.insert(
             "candidate_files_total_is_lower_bound".to_string(),
-            json!(scan_truncated),
+            json!(false),
         );
         insert_skip_fields(&mut map, &skipped);
         nested_repos_receipt_fields(&mut map, &nested_repos_entered);
@@ -581,7 +585,6 @@ pub(crate) fn command_grep_with_matcher(
                 total_candidate_files,
                 candidate_files_scanned,
                 content_files_scanned,
-                scan_truncated,
                 matched_files_total_is_lower_bound,
                 total_matches_is_lower_bound,
                 cap_reason,
@@ -668,7 +671,6 @@ pub(crate) fn command_grep_with_matcher(
             total_candidate_files,
             candidate_files_scanned,
             content_files_scanned,
-            scan_truncated,
             matched_files_total_is_lower_bound,
             total_matches_is_lower_bound,
             cap_reason,
@@ -715,7 +717,6 @@ fn grep_receipt_map(
     candidate_files_total: usize,
     candidate_files_scanned: usize,
     content_files_scanned: usize,
-    scan_truncated: bool,
     matched_files_total_is_lower_bound: bool,
     total_matches_is_lower_bound: bool,
     cap_reason: Option<&str>,
@@ -751,7 +752,7 @@ fn grep_receipt_map(
     );
     map.insert(
         "candidate_files_total_is_lower_bound".to_string(),
-        json!(scan_truncated),
+        json!(false),
     );
     map.insert(
         "matched_files_total_is_lower_bound".to_string(),

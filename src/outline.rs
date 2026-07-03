@@ -120,6 +120,11 @@ const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
         extensions: &["wiki", "wikitext", "mediawiki"],
         classify: wikitext_declaration,
     },
+    OutlineLanguage {
+        name: "json",
+        extensions: &["json", "jsonc"],
+        classify: json_declaration,
+    },
 ];
 
 fn ident_start(ch: char) -> bool {
@@ -287,7 +292,58 @@ fn js_ts_declaration(line: &str) -> bool {
             return js_function_binding(after);
         }
     }
-    false
+    js_method_shape(rest, line)
+}
+
+/// Statement heads that would otherwise satisfy the method shape
+/// (`if (ready) {`, `while (frames.pop()) {`).
+const JS_STATEMENT_KEYWORDS: &[&str] = &[
+    "if", "for", "while", "switch", "catch", "return", "typeof", "await", "new", "else", "do",
+    "case", "throw", "delete", "void", "yield", "in", "of", "try", "finally",
+];
+
+/// Class/object method heads: optional `static`/`async`/`get`/`set`/`*`
+/// modifiers, a (possibly `#`-private) name, optional TS generics, `(`, and
+/// a line whose parentheses balance before a trailing `{`. The brace
+/// separates definitions from call statements (which end with `;`/`)`) and
+/// the balance requirement drops object-argument calls (`fetch(url, {`) and
+/// callback registrations (`it('x', () => {`), whose `{` opens inside the
+/// parameter list.
+fn js_method_shape(rest: &str, line: &str) -> bool {
+    let mut rest = rest;
+    for keyword in ["static", "async", "get", "set"] {
+        if let Some(after) = strip_keyword_ws(rest, keyword) {
+            rest = after;
+        }
+    }
+    if let Some(after) = rest.strip_prefix('*') {
+        rest = after.trim_start();
+    }
+    if starts_any_keyword(rest, JS_STATEMENT_KEYWORDS) {
+        return false;
+    }
+    let rest = rest.strip_prefix('#').unwrap_or(rest);
+    let name = ident_span(rest, js_ident_start, js_ident_char);
+    if name == 0 {
+        return false;
+    }
+    let mut after = rest[name..].trim_start();
+    if after.starts_with('<') {
+        match after.find('>') {
+            Some(close) => after = after[close + 1..].trim_start(),
+            None => return false,
+        }
+    }
+    if !after.starts_with('(') {
+        return false;
+    }
+    let trailer = line.trim_end().trim_end_matches('}').trim_end();
+    if !trailer.ends_with('{') {
+        return false;
+    }
+    let opens = line.matches('(').count();
+    let closes = line.matches(')').count();
+    opens == closes
 }
 
 /// `name [: annotation] = [async] (` / `= function` / `= param =>`.
@@ -368,63 +424,76 @@ const C_KEYWORDS: &[&str] = &[
     "using",
 ];
 const C_HEAD_PUNCTUATION: &[char] = &[':', '*', '&', '<', '>', ',', '~', '[', ']'];
-/// A column-0 line led by a statement keyword is control flow, not a
-/// definition, even when it opens a parenthesized expression.
+/// A line led by a statement keyword is control flow, not a definition,
+/// even when it opens a parenthesized expression.
 const C_STATEMENT_KEYWORDS: &[&str] = &[
     "return", "if", "while", "for", "switch", "goto", "else", "do", "case", "break", "continue",
     "throw", "delete", "sizeof",
 ];
 
-/// Column-0 heuristic for C-family definitions: type/aggregate keywords,
-/// object-like/function-like macro definitions, and identifier-led lines that
-/// open a parameter list without a terminating semicolon (definitions, not
-/// prototypes or statements).
+/// Heuristic for C-family structure at any indentation: type/aggregate
+/// keywords, macro definitions (column 0 only), access labels, `operator`
+/// overloads, and identifier-led lines that open a parameter list with at
+/// least two head tokens (`void Render(` / `int prototype(int);`).
+/// Definitions and prototypes both count — headers carry their structure as
+/// prototypes. Calls have single-token heads and assignments put `=` before
+/// the parameter list, so statements fall out of the shape check.
 fn c_family_declaration(line: &str) -> bool {
-    let Some(first) = line.chars().next() else {
+    let rest = line.trim_start();
+    let Some(first) = rest.chars().next() else {
         return false;
     };
-    if first.is_whitespace() {
-        return false;
+    if let Some(after) = rest.strip_prefix('#') {
+        return !line.starts_with(char::is_whitespace)
+            && starts_keyword(after.trim_start(), "define");
     }
-    if let Some(after) = line.strip_prefix('#') {
-        return starts_keyword(after.trim_start(), "define");
+    if matches!(rest.trim_end(), "public:" | "private:" | "protected:") {
+        return true;
     }
-    if let Some(after) = strip_keyword(line, "template")
+    if let Some(after) = strip_keyword(rest, "template")
         && after.trim_start().starts_with('<')
     {
         return true;
     }
-    if starts_any_keyword(line, C_KEYWORDS) {
+    if starts_any_keyword(rest, C_KEYWORDS) {
         return true;
     }
-    if starts_any_keyword(line, C_STATEMENT_KEYWORDS) {
+    if starts_any_keyword(rest, C_STATEMENT_KEYWORDS) {
         return false;
     }
     if !ident_start(first) {
         return false;
     }
-    let mut last_significant = first;
-    let mut open_paren = None;
-    for (idx, ch) in line.char_indices().skip(first.len_utf8()) {
-        if ch == '(' {
-            open_paren = Some(idx);
-            break;
-        }
-        if ident_char(ch) || ch.is_whitespace() || C_HEAD_PUNCTUATION.contains(&ch) {
-            if !ch.is_whitespace() {
-                last_significant = ch;
-            }
-        } else {
-            return false;
-        }
-    }
-    let Some(open_paren) = open_paren else {
+    let Some(open_paren) = rest.find('(') else {
         return false;
     };
+    let head = rest[..open_paren].trim_end();
+    // Operator overloads name themselves with punctuation the head scan
+    // would otherwise reject (`bool operator==(`, `T& operator[](`).
+    if head.split_whitespace().last().is_some_and(|token| {
+        token
+            .strip_prefix("operator")
+            .is_some_and(|suffix| suffix.chars().next().is_none_or(|ch| !ident_char(ch)))
+    }) {
+        return true;
+    }
+    if !head
+        .chars()
+        .all(|ch| ident_char(ch) || ch.is_whitespace() || C_HEAD_PUNCTUATION.contains(&ch))
+    {
+        return false;
+    }
+    let last_significant = head.chars().next_back().unwrap_or(first);
     if !(ident_char(last_significant) || last_significant == ':' || last_significant == '~') {
         return false;
     }
-    !line[open_paren + 1..].contains(';')
+    if head.split_whitespace().count() >= 2 {
+        return true;
+    }
+    // Qualified single-token heads are out-of-line ctor/dtor definitions
+    // (`CGxDevice::~CGxDevice()`); with a trailing `;` after the parameter
+    // list they are call statements instead.
+    head.contains("::") && !rest[open_paren + 1..].contains(';')
 }
 
 const JAVA_MODIFIERS: &[&str] = &[
@@ -441,6 +510,13 @@ const JAVA_MODIFIERS: &[&str] = &[
     "strictfp",
 ];
 
+/// Statement heads that would otherwise satisfy the `Type name(` shape
+/// (`return frame(count);`, `throw new FooException(...)`).
+const JAVA_STATEMENT_KEYWORDS: &[&str] = &[
+    "return", "throw", "new", "if", "while", "for", "switch", "else", "do", "case", "break",
+    "continue", "assert", "yield", "try", "catch", "finally", "super", "this",
+];
+
 fn java_declaration(line: &str) -> bool {
     let mut rest = line.trim_start();
     let mut modifiers = 0usize;
@@ -453,7 +529,16 @@ fn java_declaration(line: &str) -> bool {
     {
         return true;
     }
-    modifiers > 0 && signature_shape(rest, &['('])
+    if starts_any_keyword(rest, JAVA_STATEMENT_KEYWORDS) {
+        return false;
+    }
+    if modifiers > 0 {
+        // A modifier-led single-token head is a constructor (`public Renderer(`).
+        return signature_shape(rest, &['('], 1);
+    }
+    // Package-private members need the full `Type name(` shape; calls have
+    // single-token heads and assignments fail the token character check.
+    signature_shape(rest, &['('], 2)
 }
 
 const CSHARP_MODIFIERS: &[&str] = &[
@@ -496,12 +581,13 @@ fn csharp_declaration(line: &str) -> bool {
     ) {
         return true;
     }
-    modifiers > 0 && signature_shape(rest, &['(', '{'])
+    // A modifier-led single-token head is a constructor (`internal Renderer(`).
+    modifiers > 0 && signature_shape(rest, &['(', '{'], 1)
 }
 
-/// `Type name(` shape after modifiers: at least two whitespace-separated
-/// tokens of identifier/generic/array characters before the first terminator.
-fn signature_shape(rest: &str, terminators: &[char]) -> bool {
+/// `Type name(` shape: at least `min_tokens` whitespace-separated tokens of
+/// identifier/generic/array characters before the first terminator.
+fn signature_shape(rest: &str, terminators: &[char], min_tokens: usize) -> bool {
     let Some(cut) = rest.find(|ch| terminators.contains(&ch)) else {
         return false;
     };
@@ -516,7 +602,7 @@ fn signature_shape(rest: &str, terminators: &[char]) -> bool {
             return false;
         }
     }
-    tokens >= 2
+    tokens >= min_tokens
 }
 
 const KOTLIN_MODIFIERS: &[&str] = &[
@@ -643,6 +729,40 @@ fn sql_declaration(line: &str) -> bool {
                 .next()
                 .is_none_or(|ch| !ident_char(ch))
     })
+}
+
+/// Container-opening keys (`"key": {` / `"key": [`) map document structure
+/// without enumerating every scalar; a container that closes on its own line
+/// is leaf content and stays out of the outline.
+fn json_declaration(line: &str) -> bool {
+    let rest = line.trim_start();
+    let Some(after_quote) = rest.strip_prefix('"') else {
+        return false;
+    };
+    let mut escaped = false;
+    let mut key_end = None;
+    for (idx, ch) in after_quote.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => {
+                key_end = Some(idx);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(key_end) = key_end else {
+        return false;
+    };
+    let after_key = after_quote[key_end + 1..].trim_start();
+    let Some(value) = after_key.strip_prefix(':') else {
+        return false;
+    };
+    matches!(value.trim(), "{" | "[")
 }
 
 /// MediaWiki section headings: `= Title =` through `====== Title ======`,
