@@ -46,6 +46,9 @@ LICENSE-SSL
 LICENSE-VPL
 ```
 
+The Windows archive also carries `contextmink-bridge.exe` (see the bridge
+section below); `manifest.json` records its name in a `bridge_binary` field.
+
 Verify the adjacent `.sha256` checksum when the archive was downloaded through
 automation or mirrored storage.
 
