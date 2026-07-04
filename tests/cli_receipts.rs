@@ -2323,13 +2323,61 @@ fn grep_receipts_split_skipped_large_and_binary() {
     assert_eq!(json["matched_files_total_is_lower_bound"], false);
 }
 
+/// Re-encode UTF-8 text as if its bytes were read back through WHATWG
+/// windows-1252 — the exact PowerShell/CP1252 double encode. Generated here
+/// so no literal mojibake sits in the test source (which the mojibake gate
+/// would otherwise flag).
+fn cp1252_double_encode(text: &str) -> String {
+    const SPECIALS: &[(u8, char)] = &[
+        (0x80, '\u{20AC}'),
+        (0x82, '\u{201A}'),
+        (0x83, '\u{0192}'),
+        (0x84, '\u{201E}'),
+        (0x85, '\u{2026}'),
+        (0x86, '\u{2020}'),
+        (0x87, '\u{2021}'),
+        (0x88, '\u{02C6}'),
+        (0x89, '\u{2030}'),
+        (0x8A, '\u{0160}'),
+        (0x8B, '\u{2039}'),
+        (0x8C, '\u{0152}'),
+        (0x8E, '\u{017D}'),
+        (0x91, '\u{2018}'),
+        (0x92, '\u{2019}'),
+        (0x93, '\u{201C}'),
+        (0x94, '\u{201D}'),
+        (0x95, '\u{2022}'),
+        (0x96, '\u{2013}'),
+        (0x97, '\u{2014}'),
+        (0x98, '\u{02DC}'),
+        (0x99, '\u{2122}'),
+        (0x9A, '\u{0161}'),
+        (0x9B, '\u{203A}'),
+        (0x9C, '\u{0153}'),
+        (0x9E, '\u{017E}'),
+        (0x9F, '\u{0178}'),
+    ];
+    text.bytes()
+        .map(|b| {
+            if let Some((_, ch)) = SPECIALS.iter().find(|(byte, _)| *byte == b) {
+                *ch
+            } else {
+                b as char
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn slice_and_outline_flag_encoding_suspects_only_when_found() {
     let root = fixture_root("encoding-suspects");
-    // UTF-8 text that was already double-encoded once through CP1252.
+    // UTF-8 text that was already double-encoded once through CP1252: the
+    // em-dash is a 3-byte run and the é is a 2-byte Latin-1 run (2 total).
+    let dash = cp1252_double_encode("—");
+    let eacute = cp1252_double_encode("é");
     fs::write(
         root.join("mojibake.md"),
-        "# Title\n\nDash â€” and eacute Ã© survive a CP1252 boundary.\n",
+        format!("# Title\n\nDash {dash} and eacute {eacute} survive a CP1252 boundary.\n"),
     )
     .unwrap();
     fs::write(root.join("clean.md"), "# Title\n\nDash — and eacute é.\n").unwrap();

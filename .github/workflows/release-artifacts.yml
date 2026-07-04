@@ -224,6 +224,97 @@ jobs:
       - name: List downloaded assets
         run: ls -lh release-assets/
 
+      - name: Guard CHANGELOG.md against mojibake
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Release bodies are extracted verbatim from CHANGELOG.md, so a
+          # PowerShell/CP1252 double-encode would ship publicly and silently.
+          # This mirrors contextmink's own encoding detector: a run is
+          # proof-grade mojibake when its characters map to CP1252 bytes that
+          # re-decode as valid multi-byte UTF-8. A 2-byte run is trusted only
+          # with a Latin-1 lead or when it clusters, so legitimate em-dashes
+          # and smart quotes in notes never trip it (0% FP on a 6.8k-file
+          # corpus). Raw C1 controls are always a defect in authored text.
+          python3 - CHANGELOG.md <<'PY'
+          import sys
+
+          # CP1252 0x80-0x9F specials, keyed by Unicode code point so this
+          # gate does not embed the very characters it guards against.
+          SPECIALS = {cp: byte for byte, cp in {
+              0x80:0x20AC, 0x82:0x201A, 0x83:0x0192, 0x84:0x201E, 0x85:0x2026,
+              0x86:0x2020, 0x87:0x2021, 0x88:0x02C6, 0x89:0x2030, 0x8A:0x0160,
+              0x8B:0x2039, 0x8C:0x0152, 0x8E:0x017D, 0x91:0x2018, 0x92:0x2019,
+              0x93:0x201C, 0x94:0x201D, 0x95:0x2022, 0x96:0x2013, 0x97:0x2014,
+              0x98:0x02DC, 0x99:0x2122, 0x9A:0x0161, 0x9B:0x203A, 0x9C:0x0153,
+              0x9E:0x017E, 0x9F:0x0178,
+          }.items()}
+
+          def cp1252_byte(ch):
+              o = ord(ch)
+              if 0xA0 <= o <= 0xFF:
+                  return o
+              return SPECIALS.get(o)
+
+          def scan(text):
+              chars = list(text)
+              runs, c1 = [], 0
+              i = 0
+              while i < len(chars):
+                  ch = chars[i]
+                  o = ord(ch)
+                  if 0x80 <= o <= 0x9F:
+                      c1 += 1
+                      i += 1
+                      continue
+                  lead = cp1252_byte(ch)
+                  if lead is None:
+                      i += 1
+                      continue
+                  cont = 1 if 0xC2 <= lead <= 0xDF else 2 if 0xE0 <= lead <= 0xEF else 3 if 0xF0 <= lead <= 0xF4 else 0
+                  if cont == 0:
+                      i += 1
+                      continue
+                  seq = [lead]
+                  for k in range(1, cont + 1):
+                      if i + k >= len(chars):
+                          break
+                      b = cp1252_byte(chars[i + k])
+                      if b is None or not (0x80 <= b <= 0xBF):
+                          break
+                      seq.append(b)
+                  if len(seq) != cont + 1:
+                      i += 1
+                      continue
+                  try:
+                      dec = bytes(seq).decode('utf-8')
+                  except UnicodeDecodeError:
+                      i += 1
+                      continue
+                  strong = cont >= 2 or lead in (0xC2, 0xC3)
+                  runs.append([i, cont + 1, strong, ''.join(chars[i:i+cont+1]), dec])
+                  i += cont + 1
+              kept = []
+              for j, r in enumerate(runs):
+                  end = r[0] + r[1]
+                  neighbor = (j > 0 and runs[j-1][0] + runs[j-1][1] == r[0]) or \
+                             (j+1 < len(runs) and runs[j+1][0] == end)
+                  if r[2] or neighbor:
+                      kept.append(r)
+              return kept, c1
+
+          text = open(sys.argv[1], encoding='utf-8').read()
+          kept, c1 = scan(text)
+          if kept or c1:
+              print(f"::error::{sys.argv[1]} carries encoding artifacts: "
+                    f"{len(kept)} double-encoded run(s), {c1} raw C1 control(s)")
+              for r in kept[:5]:
+                  line = text[:r[0]].count('\n') + 1
+                  print(f"  line {line}: {r[3]!r} is double-encoded UTF-8 for {r[4]!r}")
+              sys.exit(1)
+          print("CHANGELOG.md encoding is clean")
+          PY
+
       - name: Extract release notes from CHANGELOG.md
         shell: bash
         run: |
