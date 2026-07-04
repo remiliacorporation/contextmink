@@ -2,10 +2,10 @@ use super::*;
 
 #[test]
 fn contains_ignore_case_folds_ascii_bytes() {
-    assert!(contains_ignore_case("CMapChunk", "cmapchunk"));
+    assert!(contains_ignore_case("CacheChunk", "cachechunk"));
     assert!(contains_ignore_case("prefix MiXeD suffix", "mixed"));
     assert!(contains_ignore_case("shout", "shout"));
-    assert!(!contains_ignore_case("CMapChunk", "cworld"));
+    assert!(!contains_ignore_case("CacheChunk", "cgraph"));
     assert!(!contains_ignore_case("ab", "abc"));
 }
 

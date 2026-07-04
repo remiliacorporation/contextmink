@@ -5,8 +5,9 @@ produce more output than the transcript should carry.
 
 - Start with `dirs` to orient in an unfamiliar tree, then `files` or `grep`
   for candidate discovery. Prefer `files --ext json` / `--extension jsonl`
-  across Windows-to-Bash boundaries because wildcard globs can expand before
-  contextmink receives them.
+  (comma-separated lists work: `--ext rs,toml`) across Windows-to-Bash
+  boundaries because wildcard globs can expand before contextmink receives
+  them.
 - Read source files through `outline` then `slice`, not dump windows. A named
   file is still reconnaissance while the answer's location inside it is
   unknown: `outline <file>` maps declaration lines with line numbers
@@ -22,9 +23,13 @@ produce more output than the transcript should carry.
   case-insensitive matching, and `--context N` when the surrounding lines
   would otherwise need a follow-up `slice`.
 - Use `slice --tail N` for the end of logs, `json-find`, `json-select` (with
-  `--where FIELD=VALUE` / `--where-contains FIELD=TEXT` row filters),
-  `sqlite-schema`, and `sqlite --sql-file` for bounded reads instead of
-  opening whole large files, reports, or databases.
+  `--where FIELD=VALUE` / `--where-contains FIELD=TEXT` row filters;
+  `--keys` first when the row shape is unknown), `sqlite-schema`, and
+  `sqlite --sql-file` for bounded reads instead of opening whole large
+  files, reports, or databases. `sqlite` binds JSON/JSONL worklists as
+  named parameters (`--jsonl-param w=file.jsonl` with `json_each(:w)`) and
+  registers `hexint(x)` for joining `0x...` hex strings against integer
+  columns.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` or `run` only when output size is uncertain and no
   native bound exists; read the child `exit_code`/`success` fields in the

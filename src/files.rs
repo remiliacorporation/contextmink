@@ -490,6 +490,7 @@ fn build_optional_globset(globs: &[String]) -> Result<Option<GlobSet>> {
 fn normalize_extensions(extensions: &[String]) -> Vec<String> {
     extensions
         .iter()
+        .flat_map(|extension| extension.split(','))
         .filter_map(|extension| {
             let extension = extension.trim().trim_start_matches('.');
             if extension.is_empty() {

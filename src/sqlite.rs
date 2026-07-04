@@ -27,6 +27,7 @@ struct SqliteTableSummary {
     indexes: Vec<SqliteIndexSummary>,
     columns_total: usize,
     indexes_total: usize,
+    detail_elided: bool,
 }
 
 #[derive(Debug)]
@@ -61,6 +62,9 @@ struct SqliteFileParam {
     path: PathBuf,
     format: &'static str,
     value: String,
+    /// Top-level value count when the bound document is an array (json_each
+    /// row cardinality); None for a non-array JSON document.
+    values: Option<usize>,
     source_bytes: u64,
 }
 
@@ -315,11 +319,15 @@ fn load_sqlite_json_param(
     }
     let (text, _) = read_required_text(&path)
         .with_context(|| format!("failed to read sqlite parameter {}", path.display()))?;
-    let value = match format {
+    let (value, values) = match format {
         "json" => {
             let value: Value = serde_json::from_str(&text)
-                .with_context(|| format!("failed to parse JSON parameter {}", path.display()))?;
-            serde_json::to_string(&value).context("failed to serialize JSON parameter")?
+                .map_err(|error| json_param_parse_error(&path, &text, error))?;
+            let values = value.as_array().map(Vec::len);
+            (
+                serde_json::to_string(&value).context("failed to serialize JSON parameter")?,
+                values,
+            )
         }
         "jsonl" => jsonl_to_json_array_text(&path, &text)?,
         _ => unreachable!("sqlite param formats are fixed by callers"),
@@ -329,11 +337,30 @@ fn load_sqlite_json_param(
         path,
         format,
         value,
+        values,
         source_bytes: metadata.len(),
     })
 }
 
-fn jsonl_to_json_array_text(path: &Path, text: &str) -> Result<String> {
+/// A `--json-param` file that fails as a single JSON document but parses as
+/// multiple JSONL values is almost certainly a JSONL worklist bound with the
+/// wrong flag; teach the fix instead of surfacing a bare serde error.
+fn json_param_parse_error(path: &Path, text: &str, error: serde_json::Error) -> anyhow::Error {
+    let jsonl_values = serde_json::Deserializer::from_str(text)
+        .into_iter::<Value>()
+        .take_while(|row| row.is_ok())
+        .count();
+    if jsonl_values > 1 {
+        return anyhow!(
+            "{} is not a single JSON document but parses as {} JSONL values; bind it with --jsonl-param instead",
+            path.display(),
+            jsonl_values
+        );
+    }
+    anyhow::Error::new(error).context(format!("failed to parse JSON parameter {}", path.display()))
+}
+
+fn jsonl_to_json_array_text(path: &Path, text: &str) -> Result<(String, Option<usize>)> {
     let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
     let mut rows = Vec::new();
     for (index, row) in stream.enumerate() {
@@ -345,7 +372,21 @@ fn jsonl_to_json_array_text(path: &Path, text: &str) -> Result<String> {
             )
         })?);
     }
-    serde_json::to_string(&rows).context("failed to serialize JSONL parameter as JSON array")
+    // A lone top-level array is a plain JSON array file: wrapping it would
+    // bind [[...]] and json_each would silently see one row instead of N.
+    if let [Value::Array(inner)] = rows.as_slice() {
+        return Err(anyhow!(
+            "{} holds a single top-level JSON array ({} elements); binding it as JSONL would wrap it to one json_each row — use --json-param instead",
+            path.display(),
+            inner.len()
+        ));
+    }
+    let values = Some(rows.len());
+    Ok((
+        serde_json::to_string(&rows)
+            .context("failed to serialize JSONL parameter as JSON array")?,
+        values,
+    ))
 }
 
 fn bind_sqlite_file_params(
@@ -392,6 +433,7 @@ fn sqlite_param_receipt_rows(params: &[SqliteFileParam]) -> Value {
                 "name": param.sql_name,
                 "path": display_path(&param.path),
                 "format": param.format,
+                "values": param.values,
                 "source_bytes": param.source_bytes,
             }))
             .collect::<Vec<_>>()
@@ -464,6 +506,7 @@ pub(crate) fn command_sqlite_schema(
     let mut indexes_total = 0usize;
     let mut indexes_shown = 0usize;
     let mut summaries = Vec::with_capacity(shown_tables);
+    let mut tables_detail_elided = 0usize;
     for (schema, name, kind, column_count_declared, without_rowid, strict) in
         table_rows.into_iter().take(shown_tables)
     {
@@ -473,8 +516,18 @@ pub(crate) fn command_sqlite_schema(
         let all_indexes_len = all_indexes.len();
         columns_total += all_columns_len;
         indexes_total += all_indexes_len;
-        let columns_take = min(remaining_columns, all_columns.len());
-        let indexes_take = min(remaining_indexes, all_indexes.len());
+        // Table-atomic budget: a table either shows its complete column and
+        // index detail or none of it. A partially-columned table with its
+        // indexes still attached reads as complete to anyone slicing the
+        // middle of the output.
+        let detail_elided =
+            all_columns_len > remaining_columns || all_indexes_len > remaining_indexes;
+        let (columns_take, indexes_take) = if detail_elided {
+            tables_detail_elided += 1;
+            (0, 0)
+        } else {
+            (all_columns_len, all_indexes_len)
+        };
         columns_shown += columns_take;
         indexes_shown += indexes_take;
         remaining_columns = remaining_columns.saturating_sub(columns_take);
@@ -490,11 +543,10 @@ pub(crate) fn command_sqlite_schema(
             indexes: all_indexes.into_iter().take(indexes_take).collect(),
             columns_total: all_columns_len,
             indexes_total: all_indexes_len,
+            detail_elided,
         });
     }
-    let columns_truncated = summaries.iter().any(|table| {
-        table.column_count_declared as usize > table.columns.len() && columns_shown >= max_columns
-    });
+    let columns_truncated = columns_shown < columns_total;
     let indexes_truncated = indexes_shown < indexes_total;
     let truncated = shown_tables < total_tables || columns_truncated || indexes_truncated;
     let cap_reason = if shown_tables < total_tables {
@@ -521,6 +573,10 @@ pub(crate) fn command_sqlite_schema(
         map.insert("columns_total".to_string(), json!(columns_total));
         map.insert("indexes_shown".to_string(), json!(indexes_shown));
         map.insert("indexes_total".to_string(), json!(indexes_total));
+        map.insert(
+            "tables_detail_elided".to_string(),
+            json!(tables_detail_elided),
+        );
         map.insert(
             "tables".to_string(),
             Value::Array(
@@ -566,6 +622,13 @@ pub(crate) fn command_sqlite_schema(
                 clamp_text(&sqlite_index_summary_human(index), max_line_chars)
             )?;
         }
+        if table.detail_elided {
+            writeln!(
+                stdout,
+                "  (detail elided: {} columns, {} indexes over budget; rerun with --table {})",
+                table.columns_total, table.indexes_total, table.name
+            )?;
+        }
     }
     if truncated {
         writeln!(
@@ -586,6 +649,10 @@ pub(crate) fn command_sqlite_schema(
     map.insert("columns_total".to_string(), json!(columns_total));
     map.insert("indexes_shown".to_string(), json!(indexes_shown));
     map.insert("indexes_total".to_string(), json!(indexes_total));
+    map.insert(
+        "tables_detail_elided".to_string(),
+        json!(tables_detail_elided),
+    );
     write_receipt_checked(cli, map)
 }
 
@@ -694,6 +761,7 @@ fn sqlite_table_summary_json(table: &SqliteTableSummary) -> Value {
         "without_rowid": table.without_rowid,
         "columns_total": table.columns_total,
         "indexes_total": table.indexes_total,
+        "detail_elided": table.detail_elided,
         "columns": table.columns.iter().map(|column| {
             json!({
                 "name": column.name,
@@ -821,7 +889,53 @@ fn open_sqlite_readonly(db: &Path) -> Result<Connection> {
         .context("failed to set sqlite busy timeout")?;
     conn.execute_batch("PRAGMA query_only = ON")
         .context("failed to enable sqlite query_only mode")?;
+    register_hexint(&conn)?;
     Ok(conn)
+}
+
+/// `hexint(x)`: parse a `0x`-prefixed hex string (or a plain decimal digit
+/// string) to INTEGER; integers pass through, NULL stays NULL. SQLite's own
+/// CAST cannot parse hex, and inspection data often carries address-like
+/// identifiers as `0x...` strings while tables store integer columns. This
+/// bridges the two inside an indexed join instead of forcing scratch
+/// conversion outside SQL.
+fn register_hexint(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "hexint",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let value = ctx.get_raw(0);
+            match value {
+                ValueRef::Null => Ok(rusqlite::types::Value::Null),
+                ValueRef::Integer(value) => Ok(rusqlite::types::Value::Integer(value)),
+                ValueRef::Text(bytes) => {
+                    let text = std::str::from_utf8(bytes).map_err(|_| {
+                        rusqlite::Error::UserFunctionError("hexint: text is not UTF-8".into())
+                    })?;
+                    let trimmed = text.trim();
+                    let parsed = if let Some(hex) = trimmed
+                        .strip_prefix("0x")
+                        .or_else(|| trimmed.strip_prefix("0X"))
+                    {
+                        i64::from_str_radix(hex, 16)
+                    } else {
+                        trimmed.parse::<i64>()
+                    };
+                    parsed.map(rusqlite::types::Value::Integer).map_err(|_| {
+                        rusqlite::Error::UserFunctionError(
+                            format!("hexint: cannot parse {trimmed:?} as 0x-hex or decimal").into(),
+                        )
+                    })
+                }
+                other => Err(rusqlite::Error::UserFunctionError(
+                    format!("hexint: unsupported input type {}", other.data_type()).into(),
+                )),
+            }
+        },
+    )
+    .context("failed to register hexint SQL function")
 }
 
 fn sqlite_value_summary(value: ValueRef<'_>, max_chars: usize) -> String {

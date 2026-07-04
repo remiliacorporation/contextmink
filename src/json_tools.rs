@@ -226,6 +226,7 @@ pub(crate) fn command_json_select(
     fields: &[String],
     where_exact: &[String],
     where_contains: &[String],
+    keys: bool,
     max: usize,
     max_value_chars: usize,
 ) -> Result<()> {
@@ -234,6 +235,11 @@ pub(crate) fn command_json_select(
     }
     let array = array.map(normalize_json_selector_arg);
     let fields = expand_json_select_fields(fields);
+    if keys && !fields.is_empty() {
+        return Err(anyhow!(
+            "json-select --keys reports row shape and cannot be combined with --field/--fields"
+        ));
+    }
     let predicates = parse_where_predicates(where_exact, where_contains)?;
 
     // Every selector that can silently produce nothing is typo-audited: a
@@ -252,6 +258,9 @@ pub(crate) fn command_json_select(
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"));
     let mut kept_rows: Vec<Value> = Vec::new();
+    let mut key_stats: std::collections::BTreeMap<String, JsonKeyStat> =
+        std::collections::BTreeMap::new();
+    let mut non_object_rows = 0usize;
     let mut rows_scanned = 0usize;
     let mut rows_matched = 0usize;
     let input_format;
@@ -275,7 +284,9 @@ pub(crate) fn command_json_select(
                 continue;
             }
             rows_matched += 1;
-            if kept_rows.len() < max {
+            if keys {
+                collect_row_keys(&row, &mut key_stats, &mut non_object_rows);
+            } else if kept_rows.len() < max {
                 kept_rows.push(row);
             }
         }
@@ -287,12 +298,12 @@ pub(crate) fn command_json_select(
         let (document, parsed_format) = parse_json_or_jsonl(&text)?;
         input_format = parsed_format;
         let rows: Vec<&Value> = if let Some(pointer) = array.as_deref() {
-            let selected = json_pointer_lookup(&document, pointer)?
-                .ok_or_else(|| anyhow!("json-select --array pointer did not match: {pointer}"))?;
+            let selected = json_select_field(&document, pointer)?
+                .ok_or_else(|| anyhow!("json-select --array selector did not match: {pointer}"))?;
             selected
                 .as_array()
                 .ok_or_else(|| {
-                    anyhow!("json-select --array pointer must resolve to an array: {pointer}")
+                    anyhow!("json-select --array selector must resolve to an array: {pointer}")
                 })?
                 .iter()
                 .collect()
@@ -312,10 +323,27 @@ pub(crate) fn command_json_select(
                 continue;
             }
             rows_matched += 1;
-            if kept_rows.len() < max {
+            if keys {
+                collect_row_keys(row, &mut key_stats, &mut non_object_rows);
+            } else if kept_rows.len() < max {
                 kept_rows.push(row.clone());
             }
         }
+    }
+
+    if keys {
+        return render_json_select_keys(
+            cli,
+            config,
+            file,
+            array.as_deref(),
+            input_format,
+            &key_stats,
+            non_object_rows,
+            rows_scanned,
+            rows_matched,
+            max,
+        );
     }
 
     let all_null_fields: Vec<&String> = audited_fields
@@ -412,6 +440,143 @@ pub(crate) fn command_json_select(
             writeln!(
                 stdout,
                 "[contextmink] capped json rows at {max}; narrow the selector."
+            )?;
+        }
+        write_receipt_checked(cli, map)
+    }
+}
+
+#[derive(Debug, Default)]
+struct JsonKeyStat {
+    present: usize,
+    non_null: usize,
+    types: std::collections::BTreeSet<&'static str>,
+}
+
+fn collect_row_keys(
+    row: &Value,
+    key_stats: &mut std::collections::BTreeMap<String, JsonKeyStat>,
+    non_object_rows: &mut usize,
+) {
+    let Some(object) = row.as_object() else {
+        *non_object_rows += 1;
+        return;
+    };
+    for (key, value) in object {
+        let stat = key_stats.entry(key.clone()).or_default();
+        stat.present += 1;
+        if !value.is_null() {
+            stat.non_null += 1;
+        }
+        stat.types.insert(json_value_type_name(value));
+    }
+}
+
+fn json_value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// `--keys` output: the union of top-level row keys with presence counts and
+/// value types, so an unknown row shape is discoverable in one call instead
+/// of a guess → all-null warning → slice → retry loop.
+#[allow(clippy::too_many_arguments)]
+fn render_json_select_keys(
+    cli: &Cli,
+    config: &ContextConfig,
+    file: &Path,
+    array: Option<&str>,
+    input_format: &str,
+    key_stats: &std::collections::BTreeMap<String, JsonKeyStat>,
+    non_object_rows: usize,
+    rows_scanned: usize,
+    rows_matched: usize,
+    max: usize,
+) -> Result<()> {
+    let total = key_stats.len();
+    let shown = total.min(max);
+    let truncated = shown < total;
+    let cap_reason = if truncated { Some("max") } else { None };
+    let mut map = base_receipt(
+        "json-select",
+        config.profile.as_deref(),
+        "keys",
+        shown,
+        total,
+        truncated,
+        cap_reason,
+    );
+    map.insert("path".to_string(), json!(display_path(file)));
+    map.insert("array".to_string(), json!(array));
+    map.insert("input_format".to_string(), json!(input_format));
+    map.insert("keys_mode".to_string(), json!(true));
+    map.insert("rows_scanned".to_string(), json!(rows_scanned));
+    map.insert("rows_matched".to_string(), json!(rows_matched));
+    map.insert("non_object_rows".to_string(), json!(non_object_rows));
+    let key_rows = key_stats
+        .iter()
+        .take(shown)
+        .map(|(key, stat)| {
+            json!({
+                "key": key,
+                "present": stat.present,
+                "non_null": stat.non_null,
+                "types": stat.types.iter().collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if cli.json {
+        map.insert("keys".to_string(), json!(key_rows));
+        emit_json_checked(cli, Value::Object(map))
+    } else {
+        let mut stdout = io::stdout();
+        writeln!(
+            stdout,
+            "[contextmink] json-select keys source={} rows={rows_matched}",
+            array.unwrap_or(if input_format == "jsonl" {
+                "jsonl"
+            } else {
+                "$"
+            })
+        )?;
+        if key_rows.is_empty() {
+            writeln!(stdout, "no_keys")?;
+        }
+        for (index, row) in key_rows.iter().enumerate() {
+            writeln!(
+                stdout,
+                "{index}: {} present={} non_null={} types={}",
+                row["key"].as_str().unwrap_or_default(),
+                row["present"],
+                row["non_null"],
+                row["types"]
+                    .as_array()
+                    .map(|types| {
+                        types
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join("|")
+                    })
+                    .unwrap_or_default()
+            )?;
+        }
+        if non_object_rows > 0 {
+            writeln!(
+                stdout,
+                "[contextmink] {non_object_rows} scanned row(s) were not JSON objects and carry no keys."
+            )?;
+        }
+        if truncated {
+            writeln!(
+                stdout,
+                "[contextmink] capped keys at {max}; raise --max or filter rows."
             )?;
         }
         write_receipt_checked(cli, map)

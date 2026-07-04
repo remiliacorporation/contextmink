@@ -18,117 +18,128 @@ use crate::output::{base_receipt, clamp_text, emit_json_checked, write_receipt_c
 /// in output so nesting stays visible.
 type Classifier = fn(&str) -> bool;
 
+/// Languages whose structure needs cross-line context (XML element nesting,
+/// C banner fences) classify the whole document at once and return the
+/// 0-based indices of declaration lines.
+type DocumentClassifier = fn(&str) -> Vec<usize>;
+
+#[derive(Clone, Copy)]
+enum LanguageRule {
+    Line(Classifier),
+    Document(DocumentClassifier),
+}
+
 struct OutlineLanguage {
     name: &'static str,
     extensions: &'static [&'static str],
-    classify: Classifier,
+    classify: LanguageRule,
 }
 
 const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
     OutlineLanguage {
         name: "rust",
         extensions: &["rs"],
-        classify: rust_declaration,
+        classify: LanguageRule::Line(rust_declaration),
     },
     OutlineLanguage {
         name: "python",
         extensions: &["py", "pyi"],
-        classify: python_declaration,
+        classify: LanguageRule::Line(python_declaration),
     },
     OutlineLanguage {
         name: "javascript",
         extensions: &["js", "jsx", "mjs", "cjs"],
-        classify: js_ts_declaration,
+        classify: LanguageRule::Line(js_ts_declaration),
     },
     OutlineLanguage {
         name: "typescript",
         extensions: &["ts", "tsx", "mts", "cts"],
-        classify: js_ts_declaration,
+        classify: LanguageRule::Line(js_ts_declaration),
     },
     OutlineLanguage {
         name: "go",
         extensions: &["go"],
-        classify: go_declaration,
+        classify: LanguageRule::Line(go_declaration),
     },
     OutlineLanguage {
         name: "c",
         extensions: &["c", "h"],
-        classify: c_family_declaration,
+        classify: LanguageRule::Document(c_document_outline),
     },
     OutlineLanguage {
         name: "cpp",
         extensions: &["cpp", "hpp", "cc", "hh", "cxx", "hxx", "inl"],
-        classify: c_family_declaration,
+        classify: LanguageRule::Document(c_document_outline),
     },
     OutlineLanguage {
         name: "java",
         extensions: &["java"],
-        classify: java_declaration,
+        classify: LanguageRule::Line(java_declaration),
     },
     OutlineLanguage {
         name: "csharp",
         extensions: &["cs"],
-        classify: csharp_declaration,
+        classify: LanguageRule::Line(csharp_declaration),
     },
     OutlineLanguage {
         name: "kotlin",
         extensions: &["kt", "kts"],
-        classify: kotlin_declaration,
+        classify: LanguageRule::Line(kotlin_declaration),
     },
     OutlineLanguage {
         name: "shell",
         extensions: &["sh", "bash", "zsh"],
-        classify: shell_declaration,
+        classify: LanguageRule::Line(shell_declaration),
     },
     OutlineLanguage {
         name: "lua",
         extensions: &["lua"],
-        classify: lua_declaration,
+        classify: LanguageRule::Line(lua_declaration),
     },
     OutlineLanguage {
         name: "ruby",
         extensions: &["rb"],
-        classify: ruby_declaration,
+        classify: LanguageRule::Line(ruby_declaration),
     },
     OutlineLanguage {
         name: "markdown",
         extensions: &["md", "markdown"],
-        classify: markdown_declaration,
+        classify: LanguageRule::Line(markdown_declaration),
     },
     OutlineLanguage {
         name: "toml",
         extensions: &["toml"],
-        classify: toml_declaration,
+        classify: LanguageRule::Line(toml_declaration),
     },
     OutlineLanguage {
         name: "ini",
         extensions: &["ini", "cfg", "conf"],
-        classify: toml_declaration,
+        classify: LanguageRule::Line(toml_declaration),
     },
     OutlineLanguage {
         name: "yaml",
         extensions: &["yml", "yaml"],
-        classify: yaml_declaration,
+        classify: LanguageRule::Line(yaml_declaration),
     },
     OutlineLanguage {
         name: "sql",
         extensions: &["sql"],
-        classify: sql_declaration,
+        classify: LanguageRule::Line(sql_declaration),
     },
     OutlineLanguage {
         name: "wikitext",
         extensions: &["wiki", "wikitext", "mediawiki"],
-        classify: wikitext_declaration,
+        classify: LanguageRule::Line(wikitext_declaration),
     },
     OutlineLanguage {
         name: "json",
         extensions: &["json", "jsonc"],
-        classify: json_declaration,
+        classify: LanguageRule::Line(json_declaration),
     },
     OutlineLanguage {
         name: "xml",
         extensions: &["xml", "xsd", "xaml"],
-        classify: xml_declaration,
+        classify: LanguageRule::Document(xml_document_outline),
     },
 ];
 
@@ -435,6 +446,84 @@ const C_STATEMENT_KEYWORDS: &[&str] = &[
     "return", "if", "while", "for", "switch", "goto", "else", "do", "case", "break", "continue",
     "throw", "delete", "sizeof",
 ];
+
+/// C-family document outline: every per-line declaration
+/// ([`c_family_declaration`]) plus section-banner comment titles. Large
+/// annotated headers often put their only navigable structure between
+/// declarations in `// === Section ===` banner comments, which need
+/// neighbor-line context to recognize.
+fn c_document_outline(text: &str) -> Vec<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut hits = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if c_family_declaration(line) || c_banner_title(&lines, index) {
+            hits.push(index);
+        }
+    }
+    hits
+}
+
+const C_BANNER_FENCE_CHARS: &[char] = &['=', '-', '*', '#'];
+
+/// Section-banner comment titles: a one-liner (`// ==== Renderer ====`) or
+/// the middle line of a fenced banner (`// ====` / `// Title` / `// ====`).
+/// Bare fences without a title never emit.
+fn c_banner_title(lines: &[&str], index: usize) -> bool {
+    let Some(content) = c_comment_text(lines[index]) else {
+        return false;
+    };
+    if content.is_empty() || c_banner_fence_text(content) {
+        return false;
+    }
+    // One-liner: fence runs on both sides of a non-empty title.
+    let leading = content
+        .chars()
+        .take_while(|ch| C_BANNER_FENCE_CHARS.contains(ch))
+        .count();
+    let trailing = content
+        .chars()
+        .rev()
+        .take_while(|ch| C_BANNER_FENCE_CHARS.contains(ch))
+        .count();
+    let total = content.chars().count();
+    if leading >= 4 && trailing >= 4 && leading + trailing < total {
+        let title: String = content
+            .chars()
+            .skip(leading)
+            .take(total - leading - trailing)
+            .collect();
+        if !title.trim().is_empty() {
+            return true;
+        }
+    }
+    // Fenced: both neighbor lines are pure fence comments.
+    let neighbor_is_fence = |neighbor: Option<&&str>| {
+        neighbor
+            .and_then(|line| c_comment_text(line))
+            .is_some_and(c_banner_fence_text)
+    };
+    neighbor_is_fence(index.checked_sub(1).and_then(|prev| lines.get(prev)))
+        && neighbor_is_fence(lines.get(index + 1))
+}
+
+/// Comment payload of a `//` line comment or a one-line `/* ... */` block,
+/// trimmed; None for non-comment lines.
+fn c_comment_text(line: &str) -> Option<&str> {
+    let rest = line.trim_start();
+    if let Some(text) = rest.strip_prefix("//") {
+        return Some(text.trim_matches(|ch: char| ch.is_whitespace() || ch == '/'));
+    }
+    if let Some(text) = rest.strip_prefix("/*") {
+        let text = text.strip_suffix("*/").unwrap_or(text);
+        return Some(text.trim());
+    }
+    None
+}
+
+/// A pure fence: at least 8 fence characters and nothing else.
+fn c_banner_fence_text(content: &str) -> bool {
+    content.chars().count() >= 8 && content.chars().all(|ch| C_BANNER_FENCE_CHARS.contains(&ch))
+}
 
 /// Heuristic for C-family structure at any indentation: type/aggregate
 /// keywords, macro definitions (column 0 only), access labels, `operator`
@@ -780,34 +869,147 @@ fn json_declaration(line: &str) -> bool {
     matches!(value.trim(), "{" | "[")
 }
 
-/// Indent budget for "shallow" XML elements: document-section tags sit
-/// within the first levels regardless of 2-space, 4-space, or tab style.
-const XML_SHALLOW_INDENT_COLUMNS: usize = 4;
+/// Element-nesting budget for "shallow" unnamed XML containers: the root and
+/// its first two levels map document sections (`<page>`/`<revision>` in
+/// MediaWiki exports, `<PropertyGroup>` in MSBuild) regardless of indent
+/// style or minification.
+const XML_SHALLOW_ELEMENT_DEPTH: usize = 2;
 
-/// Element-open tags that name addressable structure: any element carrying
-/// a boundary-checked `name`/`id` attribute (FrameXML frames, MSBuild
-/// targets, Android views), plus shallow block-opening elements that map
-/// document sections (`<page>` in MediaWiki exports, `<PropertyGroup>`).
-/// Closing tags, comments, processing instructions, CDATA, deep unnamed
-/// markup, and shallow leaf content (self-closing or closed on the same
-/// line, like `<Size x="1"/>` or `<title>x</title>`) stay out.
-fn xml_declaration(line: &str) -> bool {
-    let rest = line.trim_start();
-    let Some(after) = rest.strip_prefix('<') else {
-        return false;
+/// One open element on the parser stack.
+struct XmlOpenElement {
+    open_line: usize,
+    named: bool,
+    named_ancestor: bool,
+    depth: usize,
+    has_child_element: bool,
+}
+
+/// Depth-tracking XML outline: a real element-stack scan of the whole
+/// document, not per-line shape checks. Emits the opening line of every
+/// *container* element (one that holds child elements or closes on a later
+/// line) that either carries a boundary-checked `name`/`id` attribute
+/// (UI containers, build targets, Android views) or is an unnamed section
+/// within [`XML_SHALLOW_ELEMENT_DEPTH`] with no named ancestor. Leaves —
+/// self-closing or same-line-closed elements like `<Field Name="ID"/>` rows
+/// in schema definition exports — plus comments, processing instructions,
+/// CDATA, and DOCTYPE never emit.
+fn xml_document_outline(text: &str) -> Vec<usize> {
+    let mut line_starts = vec![0usize];
+    for (pos, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            line_starts.push(pos + 1);
+        }
+    }
+    let line_of = |offset: usize| match line_starts.binary_search(&offset) {
+        Ok(line) => line,
+        Err(line) => line - 1,
     };
-    if !after.starts_with(ident_start) {
-        return false;
+    let last_line = line_starts.len() - 1;
+
+    let mut hits = std::collections::BTreeSet::new();
+    let mut stack: Vec<XmlOpenElement> = Vec::new();
+    let mut emit = |element: &XmlOpenElement, close_line: usize| {
+        let container = element.has_child_element || close_line > element.open_line;
+        let wanted = element.named
+            || (element.depth <= XML_SHALLOW_ELEMENT_DEPTH && !element.named_ancestor);
+        if container && wanted {
+            hits.insert(element.open_line);
+        }
+    };
+
+    let mut cursor = 0usize;
+    while let Some(rel) = text[cursor..].find('<') {
+        let start = cursor + rel;
+        let rest = &text[start..];
+        if let Some(skip) = xml_skip_non_element(rest) {
+            cursor = start + skip;
+            continue;
+        }
+        let (tag_len, self_closing) = xml_scan_tag(rest);
+        let tag_text = &rest[..tag_len];
+        cursor = start + tag_len;
+        if let Some(_close_name) = tag_text.strip_prefix("</") {
+            if let Some(element) = stack.pop() {
+                emit(&element, line_of(start));
+            }
+            continue;
+        }
+        if !tag_text[1..].starts_with(ident_start) {
+            continue;
+        }
+        if let Some(parent) = stack.last_mut() {
+            parent.has_child_element = true;
+        }
+        if self_closing {
+            continue;
+        }
+        let named = xml_has_name_or_id_attribute(tag_text);
+        let named_ancestor = stack
+            .last()
+            .is_some_and(|parent| parent.named || parent.named_ancestor);
+        stack.push(XmlOpenElement {
+            open_line: line_of(start),
+            named,
+            named_ancestor,
+            depth: stack.len(),
+            has_child_element: false,
+        });
     }
-    if xml_has_name_or_id_attribute(rest) {
-        return true;
+    // Unclosed elements at EOF still outline: a truncated or fragmentary
+    // document keeps its container structure visible.
+    for element in stack.iter().rev() {
+        emit(element, last_line);
     }
-    let indent: usize = line[..line.len() - rest.len()]
-        .chars()
-        .map(|ch| if ch == '\t' { 4 } else { 1 })
-        .sum();
-    let opens_block = !rest.trim_end().ends_with("/>") && !rest.contains("</");
-    indent <= XML_SHALLOW_INDENT_COLUMNS && opens_block
+    hits.into_iter().collect()
+}
+
+/// If `rest` (starting at `<`) opens non-element markup, return how many
+/// bytes to skip past it (to end of input when unterminated).
+fn xml_skip_non_element(rest: &str) -> Option<usize> {
+    for (open, close) in [
+        ("<!--", "-->"),
+        ("<![CDATA[", "]]>"),
+        ("<?", "?>"),
+        ("<!", ">"),
+    ] {
+        if let Some(after) = rest.strip_prefix(open) {
+            return Some(
+                after
+                    .find(close)
+                    .map(|pos| open.len() + pos + close.len())
+                    .unwrap_or(rest.len()),
+            );
+        }
+    }
+    None
+}
+
+/// Scan a tag starting at `<`, honoring quoted attribute values (which may
+/// contain `>` and span lines). Returns the tag's byte length including the
+/// closing `>` (to end of input when unterminated) and whether it
+/// self-closes.
+fn xml_scan_tag(rest: &str) -> (usize, bool) {
+    let mut quote: Option<char> = None;
+    let mut previous_significant = ' ';
+    for (idx, ch) in rest.char_indices() {
+        match quote {
+            Some(open) => {
+                if ch == open {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '"' | '\'' => quote = Some(ch),
+                '>' => return (idx + 1, previous_significant == '/'),
+                _ => {
+                    if !ch.is_whitespace() {
+                        previous_significant = ch;
+                    }
+                }
+            },
+        }
+    }
+    (rest.len(), false)
 }
 
 /// `name="..."`/`id="..."` (or single-quoted) at an attribute boundary —
@@ -848,14 +1050,17 @@ fn wikitext_declaration(line: &str) -> bool {
 #[derive(Debug)]
 enum OutlineMatcher {
     Builtin(Classifier),
+    /// Pre-computed declaration line indices from a document classifier.
+    Document(std::collections::BTreeSet<usize>),
     Prefix(String),
     Pattern(Regex),
 }
 
 impl OutlineMatcher {
-    fn is_match(&self, line: &str) -> bool {
+    fn is_match(&self, index: usize, line: &str) -> bool {
         match self {
             Self::Builtin(classify) => classify(line),
+            Self::Document(hits) => hits.contains(&index),
             Self::Prefix(prefix) => line.trim_start().starts_with(prefix.as_str()),
             Self::Pattern(regex) => regex.is_match(line),
         }
@@ -863,7 +1068,7 @@ impl OutlineMatcher {
 }
 
 #[cfg(test)]
-fn builtin_classifier(name: &str) -> Option<Classifier> {
+fn builtin_rule(name: &str) -> Option<LanguageRule> {
     OUTLINE_LANGUAGES
         .iter()
         .find(|language| language.name == name)
@@ -896,11 +1101,12 @@ fn shebang_language(first_line: &str) -> Option<&'static str> {
 
 fn resolve_matcher(
     file: &Path,
-    first_line: Option<&str>,
+    text: &str,
     lang: Option<&str>,
     prefix: Option<&str>,
     pattern: Option<&str>,
 ) -> Result<(String, OutlineMatcher)> {
+    let first_line = text.lines().next();
     if let Some(pattern) = pattern {
         let regex = Regex::new(pattern)
             .with_context(|| format!("invalid outline --pattern regex: {pattern}"))?;
@@ -949,10 +1155,13 @@ fn resolve_matcher(
                 )
             })?
     };
-    Ok((
-        language.name.to_owned(),
-        OutlineMatcher::Builtin(language.classify),
-    ))
+    let matcher = match language.classify {
+        LanguageRule::Line(classify) => OutlineMatcher::Builtin(classify),
+        LanguageRule::Document(classify) => {
+            OutlineMatcher::Document(classify(text).into_iter().collect())
+        }
+    };
+    Ok((language.name.to_owned(), matcher))
 }
 
 fn known_language_names() -> String {
@@ -983,7 +1192,7 @@ pub(crate) fn command_outline(
     // as such instead of as a heuristic gap.
     let (text, encoding) = crate::encoding::read_required_text(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
-    let (language, matcher) = resolve_matcher(file, text.lines().next(), lang, prefix, pattern)?;
+    let (language, matcher) = resolve_matcher(file, &text, lang, prefix, pattern)?;
     let lowered_contains = contains
         .iter()
         .map(|needle| {
@@ -999,7 +1208,7 @@ pub(crate) fn command_outline(
     let mut rows: Vec<(usize, &str)> = Vec::new();
     for (index, line) in text.lines().enumerate() {
         total_lines += 1;
-        if !matcher.is_match(line) {
+        if !matcher.is_match(index, line) {
             continue;
         }
         declaration_lines_total += 1;

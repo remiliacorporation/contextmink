@@ -63,24 +63,30 @@ below is the short map.
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
 - `outline` — declaration map of one source file, printed as `line: text`
-  rows (functions, types, headings; for JSON, container-opening keys; for
-  XML, named/id'd elements and shallow block-opening sections). 21 built-in
-  languages via token classifiers, shebang detection for extensionless
-  scripts. `--lang` overrides detection, `--prefix <text>` matches literal
-  line starts, `--pattern <regex>` covers anything else, `--contains`
-  filters rows.
+  rows (functions, types, headings; for C/C++, also `// ==== Section ====`
+  banner titles; for JSON, container-opening keys; for XML, container
+  elements via a depth-tracking element-stack parse — named/id'd containers
+  at any depth plus shallow unnamed sections, never self-closing leaves).
+  21 built-in languages, shebang detection for extensionless scripts.
+  `--lang` overrides detection, `--prefix <text>` matches literal line
+  starts, `--pattern <regex>` covers anything else, `--contains` filters
+  rows.
 - `slice` — bounded line window from one file: `--range START:END`,
   `--tail N`, or a character window for very long single-line files.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
   `encoding` and `total_lines`.
 - `json-find` — locate JSON values by key, path, or summarized value.
-- `json-select` — project JSON or JSONL rows to selected fields via JSON
-  Pointer. `--where FIELD=VALUE` and `--where-contains FIELD=TEXT` filter
-  rows; `*.jsonl` streams without loading; fields null in every scanned row
-  are flagged in `all_null_fields`.
+- `json-select` — project JSON or JSONL rows to selected fields (bare key,
+  JSON Pointer, or comma-separated list). `--where FIELD=VALUE` and
+  `--where-contains FIELD=TEXT` filter rows; `--keys` reports the union of
+  row keys with presence counts and value types for one-call shape
+  discovery; `*.jsonl` streams without loading; fields null in every
+  scanned row are flagged in `all_null_fields`.
 - `sqlite` — read-only query from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
-  NAME=FILE`, and a `--timeout-secs` watchdog (default 60).
+  NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
+  strings to INTEGER for indexed joins against integer address columns),
+  and a `--timeout-secs` watchdog (default 60).
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of a
   database.
 - `capture` (alias `run`) — execute argv and print capped stdout/stderr with
@@ -98,7 +104,7 @@ bounds.
 scripts/contextmink dirs crates --depth 2 --max 40
 scripts/contextmink files --path specs --ext json --max 20
 scripts/contextmink files --path vendor --with-git-ignored --max 20
-scripts/contextmink grep CMapChunk src --ext rs --context 2 --limit 8
+scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term panic --or src --max-matches 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
@@ -106,9 +112,11 @@ scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
 scripts/contextmink outline capture_sidecar.json --max-items 30
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
-scripts/contextmink json-select queue.jsonl --field addr --where-contains name=CMap --limit 10
+scripts/contextmink json-select queue.jsonl --field addr --where-contains name=Cache --limit 10
+scripts/contextmink json-select capture_sidecar.json --array entries --keys
 scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --max-rows 20
 scripts/contextmink sqlite --path state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
+# join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 ```

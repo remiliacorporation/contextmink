@@ -51,7 +51,7 @@ pub(crate) enum Command {
             long = "ext",
             alias = "extension",
             value_name = "EXT",
-            help = "Only include files with this extension; leading dot is optional"
+            help = "Only include files with this extension (comma-separated list ok); leading dot is optional"
         )]
         extensions: Vec<String>,
         #[arg(
@@ -69,6 +69,11 @@ pub(crate) enum Command {
             help = "Do not enter git-ignored nested repository roots during broad scans"
         )]
         skip_nested_repos: bool,
+        #[arg(
+            long,
+            help = "Suppress the file list; emit only the receipt (totals, caps, truncation, scan-scope fields)"
+        )]
+        quiet: bool,
         #[arg(
             long,
             alias = "limit",
@@ -175,7 +180,7 @@ pub(crate) enum Command {
             long = "ext",
             alias = "extension",
             value_name = "EXT",
-            help = "Only search files with this extension; leading dot is optional"
+            help = "Only search files with this extension (comma-separated list ok); leading dot is optional"
         )]
         extensions: Vec<String>,
         #[arg(
@@ -283,7 +288,7 @@ pub(crate) enum Command {
             long = "ext",
             alias = "extension",
             value_name = "EXT",
-            help = "Only search files with this extension; leading dot is optional"
+            help = "Only search files with this extension (comma-separated list ok); leading dot is optional"
         )]
         extensions: Vec<String>,
         #[arg(
@@ -543,8 +548,8 @@ pub(crate) enum Command {
         path: Option<PathBuf>,
         #[arg(
             long,
-            value_name = "POINTER",
-            help = "JSON Pointer to an array to project; omit for the root"
+            value_name = "KEY_OR_POINTER",
+            help = "Top-level key or JSON Pointer to an array to project; omit for the root"
         )]
         array: Option<String>,
         #[arg(
@@ -559,6 +564,11 @@ pub(crate) enum Command {
             help = "Comma-separated field keys or JSON Pointers to include in each row"
         )]
         fields_csv: Vec<String>,
+        #[arg(
+            long,
+            help = "Report the union of top-level row keys (presence counts and value types) instead of projecting rows; discovers an unknown row shape in one call"
+        )]
+        keys: bool,
         #[arg(
             long = "where",
             value_name = "FIELD=VALUE",

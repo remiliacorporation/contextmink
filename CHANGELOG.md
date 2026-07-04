@@ -4,6 +4,33 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
+## [0.5.0] - 2026-07-04
+
+### Added
+
+- `sqlite` accepts named JSON file bindings: `--json-param NAME=FILE` binds a JSON document and `--jsonl-param NAME=FILE` binds a JSONL file as a JSON array for read-only `json_each(:NAME)` joins without scratch Python.
+- `sqlite` registers a `hexint(x)` SQL function on every connection: parses `0x`-prefixed hex strings (and plain decimal digit strings) to INTEGER, passes integers through, keeps NULL, and fails fast on anything else. SQLite's own CAST cannot parse hex, and many inspection datasets store address-like identifiers as `0x...` strings while SQLite tables store integer columns; `JOIN targets t ON t.addr = hexint(w.value ->> '$.addr')` keeps the integer-column index usable where formatting the table value as text would force a scan.
+- `sqlite` param receipt rows now carry `values`: the top-level value count when the bound document is an array (the `json_each` row cardinality), `null` for a non-array JSON document, so a wrong-shape binding is visible in the receipt instead of silently joining over one row.
+- `files` gains `--quiet`, matching `grep`/`grep-terms`: suppresses the file list and emits only the receipt, for existence/count checks.
+- `files`/`grep`/`grep-terms` `--ext` accepts comma-separated lists (`--ext xml,lua,toc`); a comma previously matched as one literal extension and silently returned zero files.
+- `json-select --array` accepts a bare top-level key (`--array entries`), sharing `--field`'s key-or-pointer semantics instead of demanding `/entries`.
+- `json-select --fields KEY,KEY` comma-separated alias (and `--field` accepts comma-separated lists), so a multi-field projection is one flag instead of repeated `--field` values.
+- `json-select --keys`: reports the union of top-level row keys with presence counts, non-null counts, and value types, so an unknown row shape is discoverable in one call instead of a guess → all-null warning → slice → retry loop. Composes with `--where`/`--where-contains`; conflicts with `--field`/`--fields`.
+- `outline` C/C++ now surfaces section-banner comment titles (`// ==== Renderer ====` one-liners and the title line of `// ====`-fenced banners): large annotated headers often have meaningful banner sections between sparse declarations, so outline now maps those navigation points.
+- `grep`/`grep-terms` receipts split `skipped_large` and `skipped_binary` alongside the combined `skipped_large_or_binary`, making visible that only skipped large files (unexamined text) mark match totals as lower bounds while binary skips are out-of-domain for text search.
+- `sqlite-schema` receipts gain `tables_detail_elided` and per-table `detail_elided`.
+
+### Changed
+
+- `outline` xml is now a depth-tracking element-stack parser over the whole document instead of per-line shape checks: multi-line tags anchor at their `<` line, quoted `>` inside attributes cannot end a tag, comments/CDATA/DOCTYPE are skipped exactly, and unnamed wrapper elements under a named ancestor stay out while unnamed shallow sections with no named ancestor still map. Unclosed containers at EOF still outline.
+- `sqlite-schema` column/index budgets are now table-atomic: a table either shows its complete column and index detail or elides it whole with a per-table `(detail elided: … rerun with --table <name>)` note. Previously the global column cap could starve a mid-list table of columns while still printing its indexes, which read as a complete table to anyone slicing the middle of the output.
+
+### Fixed
+
+- `outline` xml no longer floods on attribute-schema exports: name-attributed elements that self-close or close on the same line (`<Field Name="ID"/>` rows in schema definition XML) are scalar enumeration, not structure, and stay out; name-attributed containers still map.
+- `sqlite --jsonl-param` now rejects a file holding a single top-level JSON array instead of silently wrapping it to `[[...]]`, where `json_each` would see one row instead of N; the error points at `--json-param`.
+- `sqlite --json-param` fed a JSONL file now teaches the fix (`parses as N JSONL values; bind it with --jsonl-param instead`) instead of surfacing a bare serde `trailing characters` error.
+
 ## [0.4.0] - 2026-07-03
 
 ### Added
@@ -12,7 +39,6 @@ The release workflow extracts the section for the requested version and fails if
 - `contextmink-bridge --print-root`: prints the resolved bridge root (`CONTEXTMINK_BRIDGE_ROOT`, else the policy/`.git` anchor) and exits, so a silently wrong anchoring root is inspectable.
 - `capture --fail-with-child`: exits with the child's exit code when the child fails, after the receipt is emitted, so shell chains (`capture --fail-with-child -- cmd && next`) can gate on the child. The default stays exit 0 with the child status only in the receipt's `exit_code`/`success` fields.
 - `outline` gains a `json` language (`.json`/`.jsonc`): container-opening keys (`"key": {` / `"key": [`) map sidecar and recipe structure without enumerating scalars, composing with `slice` and `json-select` for the region found.
-- `sqlite` accepts named JSON file bindings: `--json-param NAME=FILE` binds a JSON document and `--jsonl-param NAME=FILE` binds a JSONL file as a JSON array for read-only `json_each(:NAME)` joins without scratch Python.
 - `outline` gains an `xml` language (`.xml`/`.xsd`/`.xaml`): elements carrying a boundary-checked `name`/`id` attribute (FrameXML frames, MSBuild targets, Android views; `filename=` does not count) plus shallow block-opening sections (`<page>` in MediaWiki exports); closing tags, comments, processing instructions, and shallow leaf content that self-closes or closes on the same line stay out.
 - `outline` Lua coverage now includes column-0 table roots (`MyAddon = {}`, `local p = {}` in Scribunto modules, `T = T or {}`, multi-line `Defaults = {`); indented table assignments (locals inside functions) and one-liner closed tables (`t = {1, 2}`) stay out.
 - `outline` C-family coverage now includes prototypes (`int f(int);` — headers carry their structure as prototypes), indented class members and nested aggregates, access labels (`public:`), `operator` overloads, and out-of-line ctor/dtor definitions; calls stay filtered by their single-token heads and statement keywords.

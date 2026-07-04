@@ -1,6 +1,6 @@
 [package]
 name = "contextmink"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A transcript guard for bounded file, text, file-structure, JSON, SQLite, and command-output inspection."
@@ -24,5 +24,5 @@ clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 ignore = "0.4"
 regex = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 serde_json = "1"

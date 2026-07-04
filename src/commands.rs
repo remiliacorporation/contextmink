@@ -73,6 +73,7 @@ pub(crate) fn command_files(
     with_excluded: bool,
     with_git_ignored: bool,
     skip_nested_repos: bool,
+    quiet: bool,
     max: usize,
     max_line_chars: usize,
     max_scan_files: usize,
@@ -119,26 +120,35 @@ pub(crate) fn command_files(
         json!(false),
     );
     nested_repos_receipt_fields(&mut map, &collected.nested_repos_entered);
+    // --quiet suppresses only the file list; every receipt field (totals,
+    // caps, truncation, nested-repo disclosure) stays intact.
+    if quiet {
+        map.insert("quiet".to_string(), json!(true));
+    }
     if cli.json {
-        map.insert(
-            "files".to_string(),
-            json!(
-                files
-                    .iter()
-                    .take(shown)
-                    .map(|path| display_path(path))
-                    .collect::<Vec<_>>()
-            ),
-        );
+        if !quiet {
+            map.insert(
+                "files".to_string(),
+                json!(
+                    files
+                        .iter()
+                        .take(shown)
+                        .map(|path| display_path(path))
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
         emit_json_checked(cli, Value::Object(map))
     } else {
         let mut stdout = io::stdout();
-        for path in files.iter().take(shown) {
-            writeln!(
-                stdout,
-                "{}",
-                clamp_text(&display_path(path), max_line_chars)
-            )?;
+        if !quiet {
+            for path in files.iter().take(shown) {
+                writeln!(
+                    stdout,
+                    "{}",
+                    clamp_text(&display_path(path), max_line_chars)
+                )?;
+            }
         }
         write_nested_repos_note(&mut stdout, &collected.nested_repos_entered)?;
         if collected.truncated {
@@ -775,6 +785,11 @@ fn grep_receipt_map(
 
 fn insert_skip_fields(map: &mut serde_json::Map<String, Value>, skipped: &[SkippedFile]) {
     map.insert("skipped_large_or_binary".to_string(), json!(skipped.len()));
+    // Split counts: only skipped *large* files (unexamined text) mark match
+    // totals as lower bounds; binary skips are out-of-domain for text search.
+    let large = skipped.iter().filter(|skip| skip.reason == "large").count();
+    map.insert("skipped_large".to_string(), json!(large));
+    map.insert("skipped_binary".to_string(), json!(skipped.len() - large));
     map.insert(
         "skipped_files_sample".to_string(),
         json!(

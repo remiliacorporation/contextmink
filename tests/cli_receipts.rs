@@ -1364,21 +1364,21 @@ fn sqlite_binds_json_and_jsonl_file_params() {
     let db_path = root.join("sample.sqlite");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute_batch(
-        "CREATE TABLE functions(addr INTEGER PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL);
-         CREATE TABLE contract_claims(subject_key TEXT NOT NULL, status TEXT NOT NULL);
-         INSERT INTO functions(addr, name, size) VALUES (16, 'fn_a', 4), (32, 'fn_b', 8);
-         INSERT INTO contract_claims(subject_key, status) VALUES ('fn_a@ram:0x00000010', 'active');",
+        "CREATE TABLE items(addr INTEGER PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL);
+         CREATE TABLE exclusions(item_key TEXT NOT NULL, status TEXT NOT NULL);
+         INSERT INTO items(addr, name, size) VALUES (16, 'item_a', 4), (32, 'item_b', 8);
+         INSERT INTO exclusions(item_key, status) VALUES ('item_a@0x00000010', 'active');",
     )
     .unwrap();
     drop(conn);
     fs::write(
         root.join("queue.jsonl"),
         concat!(
-            r#"{"readiness_state":"layout_closed","function":{"name":"fn_a","address":{"addr":"0x00000010"}}}"#,
+            r#"{"state":"ready","item":{"name":"item_a","address":{"addr":"0x00000010"}}}"#,
             "\n",
-            r#"{"readiness_state":"layout_closed","function":{"name":"fn_b","address":{"addr":"0x00000020"}}}"#,
+            r#"{"state":"ready","item":{"name":"item_b","address":{"addr":"0x00000020"}}}"#,
             "\n",
-            r#"{"readiness_state":"open","function":{"name":"fn_c","address":{"addr":"0x00000030"}}}"#,
+            r#"{"state":"pending","item":{"name":"item_c","address":{"addr":"0x00000030"}}}"#,
             "\n"
         ),
     )
@@ -1388,19 +1388,19 @@ fn sqlite_binds_json_and_jsonl_file_params() {
         root.join("query.sql"),
         "WITH queue AS (
              SELECT
-               json_extract(value, '$.function.name') AS name,
-               lower(json_extract(value, '$.function.address.addr')) AS addr_hex,
-               json_extract(value, '$.function.name') || '@ram:' || lower(json_extract(value, '$.function.address.addr')) AS subject_key
+               json_extract(value, '$.item.name') AS name,
+               lower(json_extract(value, '$.item.address.addr')) AS addr_hex,
+               json_extract(value, '$.item.name') || '@' || lower(json_extract(value, '$.item.address.addr')) AS item_key
              FROM json_each(:queue)
-             WHERE json_extract(value, '$.readiness_state') = 'layout_closed'
+             WHERE json_extract(value, '$.state') = 'ready'
            )
            SELECT q.name, f.size
            FROM queue q
-           JOIN functions f ON printf('0x%08x', f.addr) = q.addr_hex
+           JOIN items f ON printf('0x%08x', f.addr) = q.addr_hex
            WHERE f.size >= json_extract(:filter, '$.min_size')
              AND NOT EXISTS (
-               SELECT 1 FROM contract_claims c
-               WHERE c.subject_key = q.subject_key AND c.status != 'retired'
+               SELECT 1 FROM exclusions c
+               WHERE c.item_key = q.item_key AND c.status != 'retired'
              )
            ORDER BY f.addr",
     )
@@ -1423,7 +1423,7 @@ fn sqlite_binds_json_and_jsonl_file_params() {
     );
     assert_envelope(&json, "sqlite", "rows");
     assert_eq!(json["shown"], 1);
-    assert_eq!(json["rows"][0]["fields"]["name"], "\"fn_b\"");
+    assert_eq!(json["rows"][0]["fields"]["name"], "\"item_b\"");
     assert_eq!(json["rows"][0]["fields"]["size"], "8");
     assert_eq!(json["params"][0]["name"], ":filter");
     assert_eq!(json["params"][0]["format"], "json");
@@ -2051,4 +2051,274 @@ fn grep_terms_quiet_composes_with_or_mode() {
     let receipt: Value = serde_json::from_str(receipt).unwrap();
     assert_envelope(&receipt, "grep-terms", "files");
     assert_eq!(receipt["quiet"], true);
+}
+
+#[test]
+fn sqlite_hexint_joins_hex_address_strings_against_integer_columns() {
+    let root = fixture_root("sqlite-hexint");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE targets(addr INTEGER PRIMARY KEY, name TEXT NOT NULL);
+         INSERT INTO targets(addr, name) VALUES (5206432, 'alpha'), (8324272, 'beta');",
+    )
+    .unwrap();
+    drop(conn);
+    fs::write(
+        root.join("worklist.jsonl"),
+        "{\"addr\":\"0x4f71a0\"}\n{\"addr\":\"0x7F04B0\"}\n{\"addr\":\"8324272\"}\n",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql",
+            "SELECT t.name FROM json_each(:w) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr') ORDER BY t.addr",
+            "--jsonl-param",
+            "w=worklist.jsonl",
+        ],
+    );
+    assert_envelope(&json, "sqlite", "rows");
+    assert_eq!(json["shown"], 3);
+    assert_eq!(json["rows"][0]["fields"]["name"], "\"alpha\"");
+    assert_eq!(json["rows"][2]["fields"]["name"], "\"beta\"");
+    assert_eq!(json["params"][0]["values"], 3);
+}
+
+#[test]
+fn sqlite_hexint_fails_fast_on_unparseable_text() {
+    let root = fixture_root("sqlite-hexint-invalid");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("CREATE TABLE t(x INTEGER);").unwrap();
+    drop(conn);
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql",
+            "SELECT hexint('bad_004f71a0')",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("hexint: cannot parse")
+    );
+}
+
+#[test]
+fn sqlite_jsonl_param_rejects_single_top_level_array() {
+    let root = fixture_root("sqlite-jsonl-array-guard");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("CREATE TABLE t(x INTEGER);").unwrap();
+    drop(conn);
+    fs::write(root.join("rows.json"), "[{\"a\":1},{\"a\":2}]").unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql",
+            "SELECT count(*) FROM json_each(:w)",
+            "--jsonl-param",
+            "w=rows.json",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("single top-level JSON array"));
+    assert!(stderr.contains("--json-param"));
+}
+
+#[test]
+fn sqlite_json_param_teaches_jsonl_misuse() {
+    let root = fixture_root("sqlite-json-param-misuse");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("CREATE TABLE t(x INTEGER);").unwrap();
+    drop(conn);
+    fs::write(root.join("rows.jsonl"), "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n").unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql",
+            "SELECT count(*) FROM json_each(:w)",
+            "--json-param",
+            "w=rows.jsonl",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("parses as 3 JSONL values"));
+    assert!(stderr.contains("--jsonl-param"));
+}
+
+#[test]
+fn files_ext_accepts_comma_separated_lists() {
+    let root = fixture_root("files-ext-csv");
+    fs::write(root.join("a.rs"), "fn main() {}\n").unwrap();
+    fs::write(root.join("b.toml"), "[package]\n").unwrap();
+    fs::write(root.join("c.md"), "# doc\n").unwrap();
+
+    let json = parse_json_output(&root, &["--json", "files", "--path", ".", "--ext", "rs,md"]);
+    assert_envelope(&json, "files", "files");
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["truncated"], false);
+}
+
+#[test]
+fn files_quiet_suppresses_list_but_keeps_receipt() {
+    let root = fixture_root("files-quiet");
+    fs::write(root.join("a.rs"), "fn main() {}\n").unwrap();
+    fs::write(root.join("b.rs"), "fn other() {}\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "files", "--path", ".", "--ext", "rs", "--quiet"],
+    );
+    assert_envelope(&json, "files", "files");
+    assert_eq!(json["quiet"], true);
+    assert_eq!(json["total"], 2);
+    assert!(json.get("files").is_none());
+
+    let text = run_contextmink(&root, &["files", "--path", ".", "--ext", "rs", "--quiet"]);
+    assert!(!text.contains("a.rs"));
+    assert!(text.contains("CONTEXTMINK_RECEIPT"));
+}
+
+#[test]
+fn json_select_array_accepts_bare_top_level_key() {
+    let root = fixture_root("json-select-bare-array");
+    fs::write(
+        root.join("doc.json"),
+        "{\"entries\":[{\"id\":\"a\"},{\"id\":\"b\"}]}",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "doc.json",
+            "--array",
+            "entries",
+            "--fields",
+            "id",
+        ],
+    );
+    assert_envelope(&json, "json-select", "rows");
+    assert_eq!(json["shown"], 2);
+    assert_eq!(json["rows"][0]["fields"]["id"], "\"a\"");
+}
+
+#[test]
+fn json_select_keys_reports_row_shape() {
+    let root = fixture_root("json-select-keys");
+    fs::write(
+        root.join("rows.jsonl"),
+        concat!(
+            "{\"id\":\"a\",\"expect\":{\"n\":1},\"size\":4}\n",
+            "{\"id\":\"b\",\"expect\":{\"n\":2}}\n",
+            "{\"id\":\"c\",\"size\":null}\n",
+        ),
+    )
+    .unwrap();
+
+    let json = parse_json_output(&root, &["--json", "json-select", "rows.jsonl", "--keys"]);
+    assert_envelope(&json, "json-select", "keys");
+    assert_eq!(json["keys_mode"], true);
+    assert_eq!(json["rows_scanned"], 3);
+    assert_eq!(json["total"], 3);
+    let keys = json["keys"].as_array().unwrap();
+    assert_eq!(keys[0]["key"], "expect");
+    assert_eq!(keys[0]["present"], 2);
+    assert_eq!(keys[0]["types"][0], "object");
+    assert_eq!(keys[2]["key"], "size");
+    assert_eq!(keys[2]["present"], 2);
+    assert_eq!(keys[2]["non_null"], 1);
+
+    let output = run_contextmink_raw(
+        &root,
+        &["json-select", "rows.jsonl", "--keys", "--fields", "id"],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("cannot be combined")
+    );
+}
+
+#[test]
+fn sqlite_schema_elides_table_detail_atomically() {
+    let root = fixture_root("sqlite-schema-atomic");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE wide(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER);
+         CREATE INDEX idx_wide_a ON wide(a);
+         CREATE TABLE narrow(x INTEGER);",
+    )
+    .unwrap();
+    drop(conn);
+
+    // Budget of 3 columns: `wide` (5 columns) must elide whole, not show a
+    // 3-column prefix with its index attached; `narrow` still fits.
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite-schema",
+            "--path",
+            "sample.sqlite",
+            "--max-columns",
+            "3",
+        ],
+    );
+    assert_envelope(&json, "sqlite-schema", "tables");
+    assert_eq!(json["tables_detail_elided"], 1);
+    let tables = json["tables"].as_array().unwrap();
+    let wide = tables.iter().find(|t| t["name"] == "wide").unwrap();
+    assert_eq!(wide["detail_elided"], true);
+    assert_eq!(wide["columns"].as_array().unwrap().len(), 0);
+    assert_eq!(wide["indexes"].as_array().unwrap().len(), 0);
+    assert_eq!(wide["columns_total"], 5);
+    let narrow = tables.iter().find(|t| t["name"] == "narrow").unwrap();
+    assert_eq!(narrow["detail_elided"], false);
+    assert_eq!(narrow["columns"].as_array().unwrap().len(), 1);
+    assert_eq!(json["truncated"], true);
+}
+
+#[test]
+fn grep_receipts_split_skipped_large_and_binary() {
+    let root = fixture_root("grep-skip-split");
+    fs::write(root.join("binary.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+    fs::write(root.join("plain.txt"), "needle\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "grep", "needle", "--path", ".", "--quiet"],
+    );
+    assert_eq!(json["skipped_binary"], 1);
+    assert_eq!(json["skipped_large"], 0);
+    assert_eq!(json["skipped_large_or_binary"], 1);
+    assert_eq!(json["matched_files_total_is_lower_bound"], false);
 }
