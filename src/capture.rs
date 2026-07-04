@@ -111,6 +111,19 @@ pub(crate) fn command_capture(
     map.insert("duration_ms".to_string(), json!(duration_ms));
     map.insert("stdout".to_string(), captured_stream_json(&stdout));
     map.insert("stderr".to_string(), captured_stream_json(&stderr));
+    // Double-encode proof only: child output may legitimately carry lossy or
+    // control bytes, but a CP1252 round-trip that re-decodes as UTF-8 means
+    // the child wrote UTF-8 through a CP1252 boundary (the classic
+    // PowerShell 5.1 hazard). Field exists only when found.
+    let mut suspects = crate::encoding::scan_encoding_suspects(&stdout.text, true);
+    let stderr_suspects = crate::encoding::scan_encoding_suspects(&stderr.text, true);
+    suspects.double_encoded += stderr_suspects.double_encoded;
+    if suspects.sample.is_none() {
+        suspects.sample = stderr_suspects.sample;
+    }
+    if !suspects.is_empty() {
+        map.insert("encoding_suspects".to_string(), suspects.receipt_value());
+    }
 
     if cli.json {
         let mut object = map;
@@ -161,6 +174,9 @@ pub(crate) fn command_capture(
             out,
             "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming command scope."
         )?;
+    }
+    if !suspects.is_empty() {
+        writeln!(out, "{}", suspects.human_note())?;
     }
     write_receipt_checked(cli, map)?;
     exit_with_child(fail_with_child, &status)

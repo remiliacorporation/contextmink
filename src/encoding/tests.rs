@@ -54,3 +54,62 @@ fn nul_bytes_without_utf16_bom_stay_binary() {
         FileText::SkippedBinary
     ));
 }
+
+#[test]
+fn encoding_suspects_prove_double_encoding_by_round_trip() {
+    // "—", "→", "é" written as UTF-8 then read as CP1252.
+    let suspects = scan_encoding_suspects("dash â€” arrow â†’ eacute Ã©", false);
+    assert_eq!(suspects.double_encoded, 3);
+    assert_eq!(suspects.replacement_chars, 0);
+    assert_eq!(suspects.c1_controls, 0);
+    let sample = suspects.sample.expect("sample");
+    assert!(sample.contains("â€”"), "{sample}");
+    assert!(sample.contains('—'), "repair shown: {sample}");
+    assert!(sample.contains("line 1"), "{sample}");
+
+    // Second line sample numbering.
+    let suspects = scan_encoding_suspects("clean line\nbad Ã© here", false);
+    assert!(suspects.sample.expect("sample").contains("line 2"));
+}
+
+#[test]
+fn encoding_suspects_ignore_legitimate_latin_text() {
+    // Accented letters map to CP1252 bytes but never form valid multi-byte
+    // UTF-8 on their own; none of these may flag.
+    for text in [
+        "À la carte — déjà vu, âge, côté, für, señor",
+        "Ão is not a lead+continuation pair",
+        "Â followed by space",
+        "L'élève étudie l'histoire à l'école",
+    ] {
+        let suspects = scan_encoding_suspects(text, false);
+        assert!(
+            suspects.is_empty(),
+            "false positive on {text:?}: {suspects:?}"
+        );
+    }
+}
+
+#[test]
+fn encoding_suspects_count_replacement_and_c1_separately() {
+    let suspects = scan_encoding_suspects("lossy \u{FFFD} and raw C1 \u{92} control", false);
+    assert_eq!(suspects.double_encoded, 0);
+    assert_eq!(suspects.replacement_chars, 1);
+    assert_eq!(suspects.c1_controls, 1);
+    assert!(suspects.sample.is_none());
+
+    // double_encode_only mode (capture streams) skips both.
+    let suspects = scan_encoding_suspects("lossy \u{FFFD} raw \u{92} but Ã© real", true);
+    assert_eq!(suspects.replacement_chars, 0);
+    assert_eq!(suspects.c1_controls, 0);
+    assert_eq!(suspects.double_encoded, 1);
+}
+
+#[test]
+fn encoding_suspects_reject_invalid_round_trips() {
+    // Lead-shaped char followed by a continuation-range char whose bytes do
+    // NOT form valid UTF-8 (overlong / out of range) stays unflagged.
+    // 0xC0/0xC1 are not in the accepted lead range at all.
+    let suspects = scan_encoding_suspects("ÀÁ á é ú", false);
+    assert!(suspects.is_empty(), "{suspects:?}");
+}

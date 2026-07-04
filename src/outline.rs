@@ -1250,6 +1250,12 @@ pub(crate) fn command_outline(
     if !contains.is_empty() {
         map.insert("contains".to_string(), json!(contains));
     }
+    // Whole-file scan (the read already happened); the field only exists
+    // when something was found, so clean files cost nothing.
+    let suspects = crate::encoding::scan_encoding_suspects(&text, false);
+    if !suspects.is_empty() {
+        map.insert("encoding_suspects".to_string(), suspects.receipt_value());
+    }
     if cli.json {
         map.insert(
             "items".to_string(),
@@ -1282,6 +1288,9 @@ pub(crate) fn command_outline(
                 stdout,
                 "[contextmink] capped outline at {max_items} items; filter with --contains or raise --max-items."
             )?;
+        }
+        if !suspects.is_empty() {
+            writeln!(stdout, "{}", suspects.human_note())?;
         }
         write_receipt_checked(cli, map)
     }

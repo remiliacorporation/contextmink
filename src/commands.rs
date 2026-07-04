@@ -922,6 +922,12 @@ pub(crate) fn command_slice(
     map.insert("start".to_string(), json!(start));
     map.insert("end".to_string(), json!(displayed_end));
     map.insert("total_lines".to_string(), json!(total_lines));
+    // Whole-file scan (the read already happened); the field only exists
+    // when something was found, so clean files cost nothing.
+    let suspects = crate::encoding::scan_encoding_suspects(&text, false);
+    if !suspects.is_empty() {
+        map.insert("encoding_suspects".to_string(), suspects.receipt_value());
+    }
     if cli.json {
         map.insert(
             "lines".to_string(),
@@ -946,6 +952,9 @@ pub(crate) fn command_slice(
                 stdout,
                 "[contextmink] capped slice at {max_lines} lines; request a narrower range."
             )?;
+        }
+        if !suspects.is_empty() {
+            writeln!(stdout, "{}", suspects.human_note())?;
         }
         write_receipt_checked(cli, map)
     }

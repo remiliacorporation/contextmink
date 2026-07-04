@@ -2322,3 +2322,39 @@ fn grep_receipts_split_skipped_large_and_binary() {
     assert_eq!(json["skipped_large_or_binary"], 1);
     assert_eq!(json["matched_files_total_is_lower_bound"], false);
 }
+
+#[test]
+fn slice_and_outline_flag_encoding_suspects_only_when_found() {
+    let root = fixture_root("encoding-suspects");
+    // UTF-8 text that was already double-encoded once through CP1252.
+    fs::write(
+        root.join("mojibake.md"),
+        "# Title\n\nDash â€” and eacute Ã© survive a CP1252 boundary.\n",
+    )
+    .unwrap();
+    fs::write(root.join("clean.md"), "# Title\n\nDash — and eacute é.\n").unwrap();
+
+    let json = parse_json_output(&root, &["--json", "slice", "mojibake.md", "--range", "1:5"]);
+    let suspects = &json["encoding_suspects"];
+    assert_eq!(suspects["double_encoded"], 2);
+    assert_eq!(suspects["replacement_chars"], 0);
+    let sample = suspects["sample"].as_str().unwrap();
+    assert!(sample.contains("line 3"), "{sample}");
+    assert!(sample.contains('—'), "repair shown: {sample}");
+
+    // Clean files carry no field at all — the common case costs nothing.
+    let json = parse_json_output(&root, &["--json", "slice", "clean.md", "--range", "1:5"]);
+    assert!(json.get("encoding_suspects").is_none());
+    let json = parse_json_output(&root, &["--json", "outline", "clean.md"]);
+    assert!(json.get("encoding_suspects").is_none());
+
+    let json = parse_json_output(&root, &["--json", "outline", "mojibake.md"]);
+    assert_eq!(json["encoding_suspects"]["double_encoded"], 2);
+
+    // Human mode prints a single note line plus the receipt.
+    let text = run_contextmink(&root, &["slice", "mojibake.md", "--range", "1:5"]);
+    assert!(
+        text.contains("encoding suspects: 2 double-encoded"),
+        "{text}"
+    );
+}

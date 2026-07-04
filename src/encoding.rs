@@ -76,6 +76,174 @@ fn decode_utf16(bytes: &[u8], combine: fn([u8; 2]) -> u16) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Suspicious encoding artifacts found in decoded text. Detection is
+/// proof-based, not pattern-based: `double_encoded` counts only character
+/// runs whose CP1252 byte round-trip decodes as valid multi-byte UTF-8
+/// (mojibake like `â€”` for `—`); `replacement_chars` counts U+FFFD, which
+/// means a lossy decode already happened — possibly this read, since
+/// non-UTF-8 high bytes decode lossily above; `c1_controls` counts raw
+/// C1-range characters (CP1252 bytes read as Latin-1). Empty means no
+/// evidence found, not proof of health.
+#[derive(Debug, Default)]
+pub(crate) struct EncodingSuspects {
+    pub(crate) double_encoded: usize,
+    pub(crate) replacement_chars: usize,
+    pub(crate) c1_controls: usize,
+    /// First double-encoded finding with its decoded repair.
+    pub(crate) sample: Option<String>,
+}
+
+impl EncodingSuspects {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.double_encoded == 0 && self.replacement_chars == 0 && self.c1_controls == 0
+    }
+
+    pub(crate) fn receipt_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "double_encoded": self.double_encoded,
+            "replacement_chars": self.replacement_chars,
+            "c1_controls": self.c1_controls,
+            "sample": self.sample,
+        })
+    }
+
+    pub(crate) fn human_note(&self) -> String {
+        let mut parts = Vec::new();
+        if self.double_encoded > 0 {
+            parts.push(format!(
+                "{} double-encoded UTF-8 run(s)",
+                self.double_encoded
+            ));
+        }
+        if self.replacement_chars > 0 {
+            parts.push(format!(
+                "{} replacement char(s) (lossy decode)",
+                self.replacement_chars
+            ));
+        }
+        if self.c1_controls > 0 {
+            parts.push(format!("{} raw C1 control(s)", self.c1_controls));
+        }
+        let mut note = format!("[contextmink] encoding suspects: {}", parts.join(", "));
+        if let Some(sample) = &self.sample {
+            note.push_str("; ");
+            note.push_str(sample);
+        }
+        note
+    }
+}
+
+/// Scan decoded text for encoding suspects. `double_encode_only` skips the
+/// replacement-char and C1 counters — captured child output may legitimately
+/// carry lossy or control bytes, but a CP1252 round-trip that decodes as
+/// valid multi-byte UTF-8 is proof of a double encode in any stream.
+///
+/// The round trip is a proof about bytes, not intent: a rare legitimate
+/// sequence like `café’”` (accented letter directly followed by two CP1252
+/// specials) also re-decodes and will flag. Hence "suspects", reported in
+/// receipts only — never a failure.
+pub(crate) fn scan_encoding_suspects(text: &str, double_encode_only: bool) -> EncodingSuspects {
+    let mut suspects = EncodingSuspects::default();
+    let mut line = 1usize;
+    let mut iter = text.char_indices().peekable();
+    while let Some((index, ch)) = iter.next() {
+        if ch == '\n' {
+            line += 1;
+            continue;
+        }
+        if ch == '\u{FFFD}' {
+            if !double_encode_only {
+                suspects.replacement_chars += 1;
+            }
+            continue;
+        }
+        if ('\u{80}'..='\u{9F}').contains(&ch) {
+            if !double_encode_only {
+                suspects.c1_controls += 1;
+            }
+            continue;
+        }
+        let Some(lead) = cp1252_byte(ch) else {
+            continue;
+        };
+        let continuations = match lead {
+            0xC2..=0xDF => 1usize,
+            0xE0..=0xEF => 2,
+            0xF0..=0xF4 => 3,
+            _ => continue,
+        };
+        let mut bytes = vec![lead];
+        let mut lookahead = iter.clone();
+        for _ in 0..continuations {
+            let Some((_, next)) = lookahead.next() else {
+                break;
+            };
+            let Some(byte) = cp1252_byte(next) else {
+                break;
+            };
+            if !(0x80..=0xBF).contains(&byte) {
+                break;
+            }
+            bytes.push(byte);
+        }
+        if bytes.len() != continuations + 1 {
+            continue;
+        }
+        // from_utf8 rejects overlong, surrogate, and out-of-range sequences,
+        // so this is a proof the run re-decodes, not a resemblance check.
+        let Ok(decoded) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        suspects.double_encoded += 1;
+        if suspects.sample.is_none() {
+            let source: String = text[index..].chars().take(continuations + 1).collect();
+            suspects.sample = Some(format!(
+                "line {line}: {source:?} is double-encoded UTF-8 for {decoded:?}"
+            ));
+        }
+        for _ in 0..continuations {
+            iter.next();
+        }
+    }
+    suspects
+}
+
+/// CP1252 byte for a character, when one exists. U+00A0..U+00FF map to
+/// themselves; the 0x80..0x9F range holds the CP1252 specials.
+fn cp1252_byte(ch: char) -> Option<u8> {
+    match ch {
+        '\u{A0}'..='\u{FF}' => Some(ch as u8),
+        '\u{20AC}' => Some(0x80),
+        '\u{201A}' => Some(0x82),
+        '\u{0192}' => Some(0x83),
+        '\u{201E}' => Some(0x84),
+        '\u{2026}' => Some(0x85),
+        '\u{2020}' => Some(0x86),
+        '\u{2021}' => Some(0x87),
+        '\u{02C6}' => Some(0x88),
+        '\u{2030}' => Some(0x89),
+        '\u{0160}' => Some(0x8A),
+        '\u{2039}' => Some(0x8B),
+        '\u{0152}' => Some(0x8C),
+        '\u{017D}' => Some(0x8E),
+        '\u{2018}' => Some(0x91),
+        '\u{2019}' => Some(0x92),
+        '\u{201C}' => Some(0x93),
+        '\u{201D}' => Some(0x94),
+        '\u{2022}' => Some(0x95),
+        '\u{2013}' => Some(0x96),
+        '\u{2014}' => Some(0x97),
+        '\u{02DC}' => Some(0x98),
+        '\u{2122}' => Some(0x99),
+        '\u{0161}' => Some(0x9A),
+        '\u{203A}' => Some(0x9B),
+        '\u{0153}' => Some(0x9C),
+        '\u{017E}' => Some(0x9E),
+        '\u{0178}' => Some(0x9F),
+        _ => None,
+    }
+}
+
 /// Read a file that the caller requires to be text (JSON inputs, slices).
 /// Size is uncapped; binary content is an error rather than a skip.
 pub(crate) fn read_required_text(path: &Path) -> Result<(String, &'static str)> {

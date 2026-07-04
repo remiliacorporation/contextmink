@@ -159,6 +159,11 @@ counts.
 - Encoding is BOM-driven: UTF-16LE/BE files (the PowerShell `Out-File`
   default) are decoded and searched, a UTF-8 BOM is stripped before JSON
   parsing, and files with NUL bytes and no UTF-16 BOM are skipped as binary.
+- `slice`, `outline`, and `capture` receipts flag `encoding_suspects` when
+  the decoded text carries proof-grade mojibake (a CP1252 round-trip that
+  re-decodes as UTF-8, like `â€”` for `—`), U+FFFD replacement characters,
+  or raw C1 controls. The field is omitted when nothing is found, and it
+  never fails a command — it discloses.
 - Broad scans enter git-ignored directories that are themselves repository
   roots, apply that repository's own ignore rules, and disclose each entry in
   `nested_repos_entered`. Multi-repo workspaces would otherwise report
