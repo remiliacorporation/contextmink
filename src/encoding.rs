@@ -143,8 +143,7 @@ impl EncodingSuspects {
 /// run (an accented capital before punctuation, `CAFÉ»` -> ɻ) is trusted
 /// only when its lead is Latin-1 or it clusters with a neighbor (see the
 /// per-run comment below). Even so the result is "suspects", reported in
-/// receipts only — never a failure. Validated at a 0% false-positive rate
-/// on a 6.8k-file multilingual corpus.
+/// receipts only — never a failure.
 pub(crate) fn scan_encoding_suspects(text: &str, double_encode_only: bool) -> EncodingSuspects {
     let mut suspects = EncodingSuspects::default();
     let mut runs: Vec<DoubleEncodeRun> = Vec::new();

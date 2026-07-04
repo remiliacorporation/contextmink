@@ -59,6 +59,26 @@ pub(crate) fn command_capture(
         .split_first()
         .ok_or_else(|| anyhow!("capture requires a command after --"))?;
 
+    // Same blocking deny-list as contextmink-bridge: capture/run spawn
+    // arbitrary commands and must refuse destructive argv before spawn.
+    match crate::destructive_guard::evaluate_argv(
+        argv,
+        &config.destructive_guard,
+        crate::destructive_guard::destructive_override_active(),
+    ) {
+        crate::destructive_guard::DenyDecision::Allow => {}
+        crate::destructive_guard::DenyDecision::AllowWithOverride { message } => {
+            eprintln!(
+                "contextmink: WARNING: {}=1 break-glass override active (human operators only); \
+                 capturing a command the destructive deny-list would block: {message}",
+                crate::destructive_guard::ALLOW_DESTRUCTIVE_ENV
+            );
+        }
+        crate::destructive_guard::DenyDecision::Deny { message } => {
+            return Err(anyhow!("destructive command blocked: {message}"));
+        }
+    }
+
     let started = Instant::now();
     let (mut child, effective_argv) = spawn_captured_child(program, args)?;
 

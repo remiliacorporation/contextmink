@@ -331,6 +331,12 @@ pub(crate) fn command_json_select(
         }
     }
 
+    let all_null_fields = audited_fields
+        .iter()
+        .zip(&field_seen_non_null)
+        .filter_map(|(field, seen)| (rows_scanned > 0 && !seen).then_some(field.clone()))
+        .collect::<Vec<_>>();
+
     if keys {
         return render_json_select_keys(
             cli,
@@ -342,15 +348,11 @@ pub(crate) fn command_json_select(
             non_object_rows,
             rows_scanned,
             rows_matched,
+            &all_null_fields,
             max,
         );
     }
 
-    let all_null_fields: Vec<&String> = audited_fields
-        .iter()
-        .zip(&field_seen_non_null)
-        .filter_map(|(field, seen)| (rows_scanned > 0 && !seen).then_some(field))
-        .collect();
     let shown = kept_rows.len();
     let truncated = shown < rows_matched;
     let cap_reason = if truncated { Some("max") } else { None };
@@ -497,6 +499,7 @@ fn render_json_select_keys(
     non_object_rows: usize,
     rows_scanned: usize,
     rows_matched: usize,
+    all_null_fields: &[String],
     max: usize,
 ) -> Result<()> {
     let total = key_stats.len();
@@ -519,6 +522,7 @@ fn render_json_select_keys(
     map.insert("rows_scanned".to_string(), json!(rows_scanned));
     map.insert("rows_matched".to_string(), json!(rows_matched));
     map.insert("non_object_rows".to_string(), json!(non_object_rows));
+    map.insert("all_null_fields".to_string(), json!(all_null_fields));
     let key_rows = key_stats
         .iter()
         .take(shown)
@@ -571,6 +575,13 @@ fn render_json_select_keys(
             writeln!(
                 stdout,
                 "[contextmink] {non_object_rows} scanned row(s) were not JSON objects and carry no keys."
+            )?;
+        }
+        if !all_null_fields.is_empty() {
+            writeln!(
+                stdout,
+                "[contextmink] warning: field(s) {} were null or missing in all {rows_scanned} scanned row(s); check the field selector against the document shape.",
+                all_null_fields.join(", ")
             )?;
         }
         if truncated {

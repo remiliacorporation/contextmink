@@ -308,6 +308,42 @@ fn capture_keeps_head_and_tail_when_line_capped() {
 }
 
 #[test]
+fn capture_blocks_destructive_argv_before_spawn() {
+    let root = fixture_root("capture-deny-destructive");
+
+    let output = run_contextmink_raw(
+        &root,
+        &["capture", "--", "git", "clean", "-fdX", "-e", "keep.sqlite"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("destructive command blocked"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("git clean"), "stderr: {stderr}");
+}
+
+#[test]
+fn capture_blocks_configured_protected_fragment_before_spawn() {
+    let root = fixture_root("capture-deny-configured-fragment");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test-profile\"\ndestructive_guard_recursive_delete_fragments = [\"protected_cache\"]\n",
+    )
+    .unwrap();
+
+    let output = run_contextmink_raw(&root, &["capture", "--", "rm", "-rf", "protected_cache"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("destructive command blocked"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("protected_cache"), "stderr: {stderr}");
+}
+
+#[test]
 fn run_alias_uses_capture_receipt_shape() {
     let root = fixture_root("run-alias");
     let bin = env!("CARGO_BIN_EXE_contextmink");
@@ -2265,6 +2301,33 @@ fn json_select_keys_reports_row_shape() {
             .unwrap()
             .contains("cannot be combined")
     );
+
+    let filtered = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "rows.jsonl",
+            "--keys",
+            "--where",
+            "missing=open",
+        ],
+    );
+    assert_eq!(filtered["rows_scanned"], 3);
+    assert_eq!(filtered["rows_matched"], 0);
+    assert_eq!(filtered["all_null_fields"][0], "missing");
+
+    let human = run_contextmink(
+        &root,
+        &[
+            "json-select",
+            "rows.jsonl",
+            "--keys",
+            "--where",
+            "missing=open",
+        ],
+    );
+    assert!(human.contains("warning: field(s) missing"));
 }
 
 #[test]

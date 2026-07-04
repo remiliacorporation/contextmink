@@ -159,19 +159,25 @@ counts.
 - Encoding is BOM-driven: UTF-16LE/BE files (the PowerShell `Out-File`
   default) are decoded and searched, a UTF-8 BOM is stripped before JSON
   parsing, and files with NUL bytes and no UTF-16 BOM are skipped as binary.
-- `slice`, `outline`, and `capture` receipts flag `encoding_suspects` when
-  the decoded text carries proof-grade mojibake (a character run whose CP1252
-  bytes re-decode as valid UTF-8 — the garble an em-dash becomes when UTF-8
-  is re-read as CP1252), U+FFFD replacement characters, or raw C1 controls.
-  The field is omitted when nothing is found, and it never fails a command —
-  it discloses.
+- `slice`, `outline`, and retained `capture` output receipts flag
+  `encoding_suspects` when the decoded text carries proof-grade mojibake (a
+  character run whose CP1252 bytes re-decode as valid UTF-8 — the garble an
+  em-dash becomes when UTF-8 is re-read as CP1252), U+FFFD replacement
+  characters, or raw C1 controls. The field is omitted when nothing is found,
+  and it never fails a command — it discloses.
+- `contextmink-bridge` and `capture`/`run` refuse known destructive argv
+  before spawn: built-in `git clean` blocking, nested shell payload scanning,
+  and optional repository-configured protected deletion fragments. The
+  `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override is for human maintenance
+  only and prints a warning.
 - Broad scans enter git-ignored directories that are themselves repository
   roots, apply that repository's own ignore rules, and disclose each entry in
   `nested_repos_entered`. Multi-repo workspaces would otherwise report
   complete scans that silently skipped sibling repos. `--skip-nested-repos`
   restores strict Git scope; repos nested below an ignored plain directory
   are not auto-detected and need explicit roots.
-- Outline rows come from line-shape heuristics, not a parser: false
+- Outline is navigational, not a compiler-grade parser. Most languages use
+  line-shape heuristics; XML uses a lightweight element-stack parse. False
   positives are possible and indentation conveys nesting.
 
 ## Windows
@@ -189,6 +195,8 @@ whose scripts are Bash-first while the agent runs in PowerShell:
   extensionless bash scripts retry through Git Bash; `--script <path>`
   resolves repo scripts from the bridge root instead. `--print-argv` shows
   exactly what arrived; `--print-root` shows the resolved bridge root.
+  Destructive argv matching the safety deny-list is refused before spawn;
+  `--help` prints the current deny-list and break-glass override.
 - `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for
   repositories that do not want a second binary.
 
@@ -211,14 +219,23 @@ exclude_globs = [
   "node_modules/**",
   "**/node_modules/**",
 ]
+
+# Optional spawn safety for repository-owned critical paths:
+# destructive_guard_recursive_delete_fragments = ["protected_cache"]
+# destructive_guard_delete_fragments = ["critical.sqlite"]
 ```
 
-These two keys are the whole surface; unknown keys, duplicate keys, and
+Accepted keys are `profile`, `exclude_globs`,
+`destructive_guard_recursive_delete_fragments`, and
+`destructive_guard_delete_fragments`; unknown keys, duplicate keys, and
 malformed values are hard errors. Exclude globs match paths relative to the
 config file's directory, so anchored rules hold from any working directory.
-Excludes quiet broad scans only: pass an explicit file or subdirectory when
-an excluded tree is the target, or `--with-excluded` to lift the globs for
-one command. Git ignore rules are separate; `--with-git-ignored` lifts those.
+Excludes quiet broad scans only: pass an explicit file or subdirectory when an
+excluded tree is the target, or `--with-excluded` to lift the globs for one
+command. Git ignore rules are separate; `--with-git-ignored` lifts those.
+Configured destructive guard fragments are literal case-insensitive substrings
+matched against argv before `capture`/`run` or `contextmink-bridge` spawn a
+child process.
 
 ## Scope
 

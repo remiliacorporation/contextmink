@@ -2,6 +2,10 @@ mod capture;
 mod cli;
 mod commands;
 mod config;
+// #[path]-loaded so child-module resolution matches the contextmink-bridge
+// target, which shares this file via #[path] from src/bin/.
+#[path = "destructive_guard.rs"]
+mod destructive_guard;
 mod encoding;
 mod files;
 mod grep_scan;

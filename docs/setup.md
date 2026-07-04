@@ -174,7 +174,9 @@ the nearest ancestor with `.git`. In direct mode a program spelled as a path
 semantics, and an extensionless bash script retries through Git Bash — so
 `--cwd sub/project -- ./gradlew test` works; `--script` differs in resolving
 its script path from the bridge root instead of `--cwd`. Bare names (`git`)
-use PATH.
+use PATH. Destructive argv matching the safety deny-list is refused before
+spawn; `contextmink-bridge --help` prints the current deny-list and
+break-glass override.
 
 **Script launcher (bash-first setups).** Install the template when the
 repository prefers a shell entrypoint or must not carry a second binary:
@@ -284,6 +286,10 @@ exclude_globs = [
   ".venv/**",
   "**/.venv/**",
 ]
+
+# Optional spawn safety for repository-owned critical paths:
+# destructive_guard_recursive_delete_fragments = ["protected_cache"]
+# destructive_guard_delete_fragments = ["critical.sqlite"]
 ```
 
 The binary already excludes common high-output paths such as `.git`, `target`,
@@ -327,8 +333,8 @@ host mechanics the templates do not:
 - On Windows, the launcher lets `capture` retry extensionless shell scripts
   through the current Bash interpreter as argv, not as a shell string;
   receipts disclose `spawn_fallback` and `effective_argv` when that happens.
-- Keep repository-specific policy in `.contextmink.toml` and repository
-  instructions, not in `contextmink` source code.
+- Keep ordinary repository-specific scan policy and protected deletion
+  fragments in `.contextmink.toml` and repository instructions.
 
 ## Maintenance
 

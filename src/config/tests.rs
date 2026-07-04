@@ -14,6 +14,22 @@ fn parses_profile_and_multiline_exclude_globs() {
 }
 
 #[test]
+fn parses_destructive_guard_fragment_lists() {
+    let config = parse_config(
+        "destructive_guard_recursive_delete_fragments = [\n  \"protected_cache\",\n]\ndestructive_guard_delete_fragments = [\"critical.sqlite\", 'project.gpr']\n",
+    )
+    .unwrap();
+    assert_eq!(
+        config.destructive_guard_recursive_delete_fragments.unwrap(),
+        vec!["protected_cache".to_owned()]
+    );
+    assert_eq!(
+        config.destructive_guard_delete_fragments.unwrap(),
+        vec!["critical.sqlite".to_owned(), "project.gpr".to_owned()]
+    );
+}
+
+#[test]
 fn parses_single_line_array() {
     let config = parse_config("exclude_globs = [\"a/**\", 'b/**']\n").unwrap();
     assert_eq!(
@@ -32,6 +48,16 @@ fn unknown_keys_fail_fast() {
 fn duplicate_keys_fail_fast() {
     let error = parse_config("profile = \"a\"\nprofile = \"b\"\n").unwrap_err();
     assert!(error.to_string().contains("duplicate key `profile`"));
+
+    let error = parse_config(
+        "destructive_guard_delete_fragments = [\"a\"]\ndestructive_guard_delete_fragments = [\"b\"]\n",
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate key `destructive_guard_delete_fragments`")
+    );
 }
 
 #[test]

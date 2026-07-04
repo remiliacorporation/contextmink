@@ -23,6 +23,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 
+#[path = "../config.rs"]
+mod config;
+#[path = "../destructive_guard.rs"]
+mod destructive_guard;
+
 const EXIT_USAGE: i32 = 64;
 const EXIT_MISSING_PATH: i32 = 66;
 const EXIT_SPAWN_FAILED: i32 = 126;
@@ -64,6 +69,15 @@ fn usage() -> String {
      Direct argv modes spawn natively (no MSYS argument rewriting). A program\n\
      spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
      names use PATH; extensionless Bash scripts retry through Git Bash.\n\
+     \n\
+     Destructive-command deny-list: argv matching `git clean` is refused\n\
+     before spawn (exit 64; nested bash/powershell/cmd payloads are scanned\n\
+     too). Repositories can add protected deletion fragments in\n\
+     .contextmink.toml. Break-glass:\n\
+     CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1 runs the command anyway with a\n\
+     loud stderr warning — for human operators only; agents must never set\n\
+     it.\n\
+     \n\
      Exit codes:\n\
      64 usage, 66 missing path, 126 spawn failure, 127 no bash; otherwise the\n\
      child's exit code.\n\
@@ -98,6 +112,10 @@ fn fail(code: i32, message: impl Into<String>) -> BridgeError {
 }
 
 fn run(args: Vec<String>) -> Result<i32, BridgeError> {
+    run_with_root(args, bridge_root())
+}
+
+fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     let mut cwd: Option<String> = None;
     let mut login = false;
     let mut print_argv = false;
@@ -144,7 +162,6 @@ fn run(args: Vec<String>) -> Result<i32, BridgeError> {
         }
     }
 
-    let root = bridge_root();
     let target_cwd = match &cwd {
         Some(dir) => resolve_from_root(&root, dir),
         None => root.clone(),
@@ -181,6 +198,30 @@ fn run(args: Vec<String>) -> Result<i32, BridgeError> {
         return Ok(0);
     }
 
+    // Blocking deny-list for destructive argv. Runs for every command form,
+    // including script mode (unlike the warn-only dump trip-wire below).
+    let guard_config = load_destructive_guard_config(&root)?;
+    match destructive_guard::evaluate_argv(
+        &argv,
+        &guard_config,
+        destructive_guard::destructive_override_active(),
+    ) {
+        destructive_guard::DenyDecision::Allow => {}
+        destructive_guard::DenyDecision::AllowWithOverride { message } => {
+            eprintln!(
+                "contextmink-bridge: WARNING: {}=1 break-glass override active (human operators \
+                 only); running a command the destructive deny-list would block: {message}",
+                destructive_guard::ALLOW_DESTRUCTIVE_ENV
+            );
+        }
+        destructive_guard::DenyDecision::Deny { message } => {
+            return Err(fail(
+                EXIT_USAGE,
+                format!("destructive command blocked: {message}"),
+            ));
+        }
+    }
+
     if !script_mode {
         warn_content_dump(&argv);
     }
@@ -215,6 +256,26 @@ fn run(args: Vec<String>) -> Result<i32, BridgeError> {
     };
 
     Ok(exit_code(status))
+}
+
+fn load_destructive_guard_config(
+    root: &Path,
+) -> Result<config::DestructiveGuardConfig, BridgeError> {
+    let path = root.join(".contextmink.toml");
+    if !path.is_file() {
+        return Ok(config::DestructiveGuardConfig::default());
+    }
+    config::load_context_config(Some(&path), false)
+        .map(|config| config.destructive_guard)
+        .map_err(|error| {
+            fail(
+                EXIT_USAGE,
+                format!(
+                    "failed to load bridge destructive guard config {}: {error:#}",
+                    path.display()
+                ),
+            )
+        })
 }
 
 fn assemble_argv(

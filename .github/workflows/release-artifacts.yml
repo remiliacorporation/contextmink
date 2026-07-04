@@ -233,9 +233,9 @@ jobs:
           # This mirrors contextmink's own encoding detector: a run is
           # proof-grade mojibake when its characters map to CP1252 bytes that
           # re-decode as valid multi-byte UTF-8. A 2-byte run is trusted only
-          # with a Latin-1 lead or when it clusters, so legitimate em-dashes
-          # and smart quotes in notes never trip it (0% FP on a 6.8k-file
-          # corpus). Raw C1 controls are always a defect in authored text.
+          # with a Latin-1 lead or when it clusters, so ordinary typography
+          # does not trip it. Raw C1 controls are always a defect in authored
+          # text.
           python3 - CHANGELOG.md <<'PY'
           import sys
 

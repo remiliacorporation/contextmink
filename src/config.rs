@@ -20,8 +20,17 @@ const BUILTIN_EXCLUDES: &[&str] = &[
 struct ContextminkConfig {
     profile: Option<String>,
     exclude_globs: Option<Vec<String>>,
+    destructive_guard_recursive_delete_fragments: Option<Vec<String>>,
+    destructive_guard_delete_fragments: Option<Vec<String>>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DestructiveGuardConfig {
+    pub(crate) recursive_delete_fragments: Vec<String>,
+    pub(crate) delete_fragments: Vec<String>,
+}
+
+#[allow(dead_code)]
 pub(crate) struct ContextConfig {
     pub(crate) profile: Option<String>,
     pub(crate) excludes: GlobSet,
@@ -29,6 +38,7 @@ pub(crate) struct ContextConfig {
     /// Exclude globs are matched against paths relative to this root, so
     /// policy holds even when scan roots are absolute or `..`-relative.
     pub(crate) policy_root: Option<String>,
+    pub(crate) destructive_guard: DestructiveGuardConfig,
 }
 
 pub(crate) fn load_context_config(
@@ -65,6 +75,12 @@ pub(crate) fn load_context_config(
             .build()
             .context("failed to build exclude glob set")?,
         policy_root,
+        destructive_guard: DestructiveGuardConfig {
+            recursive_delete_fragments: raw
+                .destructive_guard_recursive_delete_fragments
+                .unwrap_or_default(),
+            delete_fragments: raw.destructive_guard_delete_fragments.unwrap_or_default(),
+        },
     })
 }
 
@@ -86,11 +102,10 @@ pub(crate) fn canonical_normalized(path: &Path) -> Option<String> {
     }
 }
 
-/// Bespoke parser for the two-key `.contextmink.toml` surface:
-/// `profile = "name"` and `exclude_globs = ["glob", ...]` (single or
-/// multi-line arrays), plus comments and blank lines. Anything else is a
-/// hard error so config typos fail fast instead of silently changing scan
-/// scope.
+/// Bespoke parser for the small `.contextmink.toml` surface: `profile`,
+/// `exclude_globs`, and optional destructive-guard fragment lists. Anything
+/// else is a hard error so config typos fail fast instead of silently
+/// changing scan or spawn scope.
 fn parse_config(text: &str) -> Result<ContextminkConfig> {
     let mut config = ContextminkConfig::default();
     let mut lines = text.lines().enumerate();
@@ -119,38 +134,82 @@ fn parse_config(text: &str) -> Result<ContextminkConfig> {
                 if config.exclude_globs.is_some() {
                     return Err(anyhow!("line {line_no}: duplicate key `exclude_globs`"));
                 }
-                let mut body = value.to_owned();
-                if !body.starts_with('[') {
-                    return Err(anyhow!("line {line_no}: exclude_globs must be an array"));
+                config.exclude_globs = Some(parse_config_array(
+                    "exclude_globs",
+                    line_no,
+                    value,
+                    &mut lines,
+                )?);
+            }
+            "destructive_guard_recursive_delete_fragments" => {
+                if config
+                    .destructive_guard_recursive_delete_fragments
+                    .is_some()
+                {
+                    return Err(anyhow!(
+                        "line {line_no}: duplicate key `destructive_guard_recursive_delete_fragments`"
+                    ));
                 }
-                while !array_is_closed(&body) {
-                    let Some((next_index, next_line)) = lines.next() else {
-                        return Err(anyhow!(
-                            "line {line_no}: exclude_globs array is never closed with `]`"
-                        ));
-                    };
-                    let next_line = strip_comment(next_line).trim();
-                    if next_line.contains('=') && !next_line.starts_with(['"', '\'', ']', ',']) {
-                        return Err(anyhow!(
-                            "line {}: exclude_globs array is never closed with `]`",
-                            next_index + 1
-                        ));
-                    }
-                    body.push(' ');
-                    body.push_str(next_line);
+                config.destructive_guard_recursive_delete_fragments = Some(parse_config_array(
+                    "destructive_guard_recursive_delete_fragments",
+                    line_no,
+                    value,
+                    &mut lines,
+                )?);
+            }
+            "destructive_guard_delete_fragments" => {
+                if config.destructive_guard_delete_fragments.is_some() {
+                    return Err(anyhow!(
+                        "line {line_no}: duplicate key `destructive_guard_delete_fragments`"
+                    ));
                 }
-                config.exclude_globs = Some(parse_string_array(&body).map_err(|error| {
-                    anyhow!("exclude_globs starting at line {line_no}: {error}")
-                })?);
+                config.destructive_guard_delete_fragments = Some(parse_config_array(
+                    "destructive_guard_delete_fragments",
+                    line_no,
+                    value,
+                    &mut lines,
+                )?);
             }
             other => {
                 return Err(anyhow!(
-                    "line {line_no}: unknown key `{other}`; contextmink config accepts `profile` and `exclude_globs`"
+                    "line {line_no}: unknown key `{other}`; contextmink config accepts `profile`, `exclude_globs`, `destructive_guard_recursive_delete_fragments`, and `destructive_guard_delete_fragments`"
                 ));
             }
         }
     }
     Ok(config)
+}
+
+fn parse_config_array<'a, I>(
+    key: &str,
+    line_no: usize,
+    value: &str,
+    lines: &mut I,
+) -> Result<Vec<String>>
+where
+    I: Iterator<Item = (usize, &'a str)>,
+{
+    let mut body = value.to_owned();
+    if !body.starts_with('[') {
+        return Err(anyhow!("line {line_no}: {key} must be an array"));
+    }
+    while !array_is_closed(&body) {
+        let Some((next_index, next_line)) = lines.next() else {
+            return Err(anyhow!(
+                "line {line_no}: {key} array is never closed with `]`"
+            ));
+        };
+        let next_line = strip_comment(next_line).trim();
+        if next_line.contains('=') && !next_line.starts_with(['"', '\'', ']', ',']) {
+            return Err(anyhow!(
+                "line {}: {key} array is never closed with `]`",
+                next_index + 1
+            ));
+        }
+        body.push(' ');
+        body.push_str(next_line);
+    }
+    parse_string_array(&body).map_err(|error| anyhow!("{key} starting at line {line_no}: {error}"))
 }
 
 /// A `]` outside quoted strings closes an `exclude_globs` array body.
@@ -239,4 +298,5 @@ fn find_config_path() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+#[path = "config/tests.rs"]
 mod tests;

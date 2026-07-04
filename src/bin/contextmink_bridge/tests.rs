@@ -174,6 +174,118 @@ fn direct_mode_runs_relative_extensionless_script_under_cwd() {
     assert_eq!(code, 42);
 }
 
+/// The deny-list must refuse `git clean` before spawn. `--cwd` points at a
+/// fresh temp dir (not a git repo), so even a guard regression could not
+/// delete anything if the command actually ran.
+#[test]
+fn run_blocks_git_clean_argv_before_spawn() {
+    let root = temp_tree("deny-direct");
+    let error = super::run(vec![
+        "--cwd".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--".to_owned(),
+        "git".to_owned(),
+        "clean".to_owned(),
+        "-fdX".to_owned(),
+        "-e".to_owned(),
+        "keep.sqlite".to_owned(),
+    ])
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_USAGE);
+    assert!(
+        error.message.contains("destructive command blocked"),
+        "message: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("git clean"),
+        "message: {}",
+        error.message
+    );
+}
+
+/// The deny-list covers every command form, not just `--`: an argfile
+/// carrying the same argv is refused identically.
+#[test]
+fn run_blocks_destructive_argv_from_argfile_form() {
+    let root = temp_tree("deny-argfile");
+    let argfile = root.join("args.txt");
+    fs::write(
+        &argfile,
+        "bash\n-lc\ncd generated_output && git clean -fdX\n",
+    )
+    .unwrap();
+    let error = super::run(vec![
+        "--cwd".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--argfile".to_owned(),
+        argfile.to_string_lossy().into_owned(),
+    ])
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_USAGE);
+    assert!(
+        error.message.contains("git clean"),
+        "message: {}",
+        error.message
+    );
+}
+
+/// Script mode skips the warn-only dump trip-wire but must not skip the
+/// deny-list: destructive tokens in script arguments are refused.
+#[test]
+fn run_blocks_destructive_argv_in_script_mode() {
+    let root = temp_tree("deny-script");
+    let script = root.join("probe.sh");
+    fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    let error = super::run(vec![
+        "--cwd".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--script".to_owned(),
+        script.to_string_lossy().into_owned(),
+        "git".to_owned(),
+        "clean".to_owned(),
+        "-fdX".to_owned(),
+    ])
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_USAGE);
+    assert!(
+        error.message.contains("destructive command blocked"),
+        "message: {}",
+        error.message
+    );
+}
+
+#[test]
+fn run_blocks_configured_protected_fragment_in_script_mode() {
+    let root = temp_tree("deny-config-script");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test\"\ndestructive_guard_recursive_delete_fragments = [\"protected_cache\"]\n",
+    )
+    .unwrap();
+    let script = root.join("probe.sh");
+    fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    let error = super::run_with_root(
+        vec![
+            "--cwd".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--script".to_owned(),
+            script.to_string_lossy().into_owned(),
+            "rm".to_owned(),
+            "-rf".to_owned(),
+            "protected_cache".to_owned(),
+        ],
+        root,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_USAGE);
+    assert!(
+        error.message.contains("protected_cache"),
+        "message: {}",
+        error.message
+    );
+}
+
 #[test]
 fn sed_window_spans_parse_print_ranges_only() {
     assert_eq!(sed_window_span("1,460p"), Some(460));

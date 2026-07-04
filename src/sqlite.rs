@@ -870,7 +870,7 @@ fn annotate_interrupt(error: rusqlite::Error, timeout_secs: u64) -> anyhow::Erro
     );
     if interrupted {
         anyhow::Error::new(error).context(format!(
-            "sqlite query interrupted after --timeout-secs {timeout_secs};              narrow the query (WHERE/LIMIT) or raise --timeout-secs (0 disables)"
+            "sqlite query interrupted after --timeout-secs {timeout_secs}; narrow the query (WHERE/LIMIT) or raise --timeout-secs (0 disables)"
         ))
     } else {
         anyhow::Error::new(error).context("failed to read sqlite row")
