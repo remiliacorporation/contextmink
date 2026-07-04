@@ -1,7 +1,7 @@
 use std::cmp::min;
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::cli::Cli;
 use crate::config::ContextConfig;
+use crate::encoding::read_required_text;
 use crate::files::display_path;
 use crate::json_tools::contains_any;
 use crate::output::{base_receipt, clamp_text, emit_json_checked, write_receipt_checked};
@@ -54,6 +55,15 @@ struct SqliteIndexSummary {
     columns: Vec<String>,
 }
 
+#[derive(Debug)]
+struct SqliteFileParam {
+    sql_name: String,
+    path: PathBuf,
+    format: &'static str,
+    value: String,
+    source_bytes: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn command_sqlite(
     cli: &Cli,
@@ -61,6 +71,9 @@ pub(crate) fn command_sqlite(
     db: &Path,
     sql: Option<&str>,
     sql_file: Option<&Path>,
+    json_params: &[String],
+    jsonl_params: &[String],
+    max_param_bytes: u64,
     max_rows: usize,
     max_scan_rows: usize,
     timeout_secs: u64,
@@ -77,28 +90,35 @@ pub(crate) fn command_sqlite(
             "sqlite --max-scan-rows must be greater than or equal to --max-rows"
         ));
     }
+    if max_param_bytes == 0 {
+        return Err(anyhow!(
+            "sqlite --max-param-bytes must be greater than zero"
+        ));
+    }
     let sql = collect_single_text_source("sqlite SQL", sql, sql_file, false)?;
     if sql.trim().is_empty() {
         return Err(anyhow!("sqlite SQL must not be empty"));
     }
+    let params = collect_sqlite_file_params(json_params, jsonl_params, max_param_bytes)?;
     let conn = open_sqlite_readonly(db)?;
     let _watchdog = QueryWatchdog::arm(&conn, timeout_secs);
     let mut stmt = conn.prepare(&sql).context("failed to prepare sqlite SQL")?;
-    if stmt.parameter_count() != 0 {
+    if stmt.parameter_count() != 0 && params.is_empty() {
         return Err(anyhow!(
-            "sqlite command does not bind parameters; use a literal read-only query"
+            "sqlite query contains parameters; bind named JSON inputs with --json-param or --jsonl-param"
         ));
     }
     if !stmt.readonly() {
         return Err(anyhow!("sqlite command only accepts read-only statements"));
     }
+    bind_sqlite_file_params(&mut stmt, &params)?;
     let column_count = stmt.column_count();
     let columns = stmt
         .column_names()
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let mut row_iter = stmt.query([]).context("failed to run sqlite query")?;
+    let mut row_iter = stmt.raw_query();
     let mut rendered_rows = Vec::new();
     let mut json_rows = Vec::new();
     let mut total_seen = 0usize;
@@ -147,6 +167,7 @@ pub(crate) fn command_sqlite(
         );
         map.insert("db".to_string(), json!(display_path(db)));
         map.insert("columns".to_string(), json!(columns));
+        map.insert("params".to_string(), sqlite_param_receipt_rows(&params));
         map.insert("rows_scanned".to_string(), json!(total_seen));
         map.insert(
             "rows_total_is_lower_bound".to_string(),
@@ -194,6 +215,7 @@ pub(crate) fn command_sqlite(
             cap_reason,
         );
         map.insert("columns".to_string(), json!(columns));
+        map.insert("params".to_string(), sqlite_param_receipt_rows(&params));
         map.insert("rows_scanned".to_string(), json!(total_seen));
         map.insert(
             "rows_total_is_lower_bound".to_string(),
@@ -201,6 +223,179 @@ pub(crate) fn command_sqlite(
         );
         write_receipt_checked(cli, map)
     }
+}
+
+fn collect_sqlite_file_params(
+    json_params: &[String],
+    jsonl_params: &[String],
+    max_param_bytes: u64,
+) -> Result<Vec<SqliteFileParam>> {
+    let mut params = Vec::with_capacity(json_params.len() + jsonl_params.len());
+    let mut names = BTreeSet::new();
+    for raw in json_params {
+        let (sql_name, path) = parse_sqlite_file_param(raw, "--json-param")?;
+        if !names.insert(sql_name.clone()) {
+            return Err(anyhow!("duplicate sqlite parameter binding {sql_name}"));
+        }
+        params.push(load_sqlite_json_param(
+            sql_name,
+            path,
+            "json",
+            max_param_bytes,
+        )?);
+    }
+    for raw in jsonl_params {
+        let (sql_name, path) = parse_sqlite_file_param(raw, "--jsonl-param")?;
+        if !names.insert(sql_name.clone()) {
+            return Err(anyhow!("duplicate sqlite parameter binding {sql_name}"));
+        }
+        params.push(load_sqlite_json_param(
+            sql_name,
+            path,
+            "jsonl",
+            max_param_bytes,
+        )?);
+    }
+    Ok(params)
+}
+
+fn parse_sqlite_file_param(raw: &str, flag: &str) -> Result<(String, PathBuf)> {
+    let (name, path) = raw
+        .split_once('=')
+        .ok_or_else(|| anyhow!("{flag} requires NAME=FILE, found {raw:?}"))?;
+    let sql_name = normalize_sqlite_param_name(name, flag)?;
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(anyhow!("{flag} requires a non-empty FILE path: {raw:?}"));
+    }
+    Ok((sql_name, PathBuf::from(path)))
+}
+
+fn normalize_sqlite_param_name(name: &str, flag: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(anyhow!("{flag} requires a non-empty parameter name"));
+    }
+    let mut chars = name.chars();
+    let first = chars.next().expect("empty name checked above");
+    let (prefix, body) = if matches!(first, ':' | '@' | '$') {
+        (first, chars.as_str())
+    } else {
+        (':', name)
+    };
+    if body.is_empty() {
+        return Err(anyhow!("{flag} requires a name after {prefix:?}"));
+    }
+    if body
+        .chars()
+        .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+    {
+        return Err(anyhow!(
+            "{flag} parameter name {name:?} may contain only ASCII letters, digits, and underscores"
+        ));
+    }
+    Ok(format!("{prefix}{body}"))
+}
+
+fn load_sqlite_json_param(
+    sql_name: String,
+    path: PathBuf,
+    format: &'static str,
+    max_param_bytes: u64,
+) -> Result<SqliteFileParam> {
+    let metadata =
+        std::fs::metadata(&path).with_context(|| format!("failed to stat {}", path.display()))?;
+    if metadata.len() > max_param_bytes {
+        return Err(anyhow!(
+            "{} is {} bytes, larger than sqlite --max-param-bytes {}",
+            path.display(),
+            metadata.len(),
+            max_param_bytes
+        ));
+    }
+    let (text, _) = read_required_text(&path)
+        .with_context(|| format!("failed to read sqlite parameter {}", path.display()))?;
+    let value = match format {
+        "json" => {
+            let value: Value = serde_json::from_str(&text)
+                .with_context(|| format!("failed to parse JSON parameter {}", path.display()))?;
+            serde_json::to_string(&value).context("failed to serialize JSON parameter")?
+        }
+        "jsonl" => jsonl_to_json_array_text(&path, &text)?,
+        _ => unreachable!("sqlite param formats are fixed by callers"),
+    };
+    Ok(SqliteFileParam {
+        sql_name,
+        path,
+        format,
+        value,
+        source_bytes: metadata.len(),
+    })
+}
+
+fn jsonl_to_json_array_text(path: &Path, text: &str) -> Result<String> {
+    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    let mut rows = Vec::new();
+    for (index, row) in stream.enumerate() {
+        rows.push(row.with_context(|| {
+            format!(
+                "failed to parse JSONL value {} in {}",
+                index + 1,
+                path.display()
+            )
+        })?);
+    }
+    serde_json::to_string(&rows).context("failed to serialize JSONL parameter as JSON array")
+}
+
+fn bind_sqlite_file_params(
+    stmt: &mut rusqlite::Statement<'_>,
+    params: &[SqliteFileParam],
+) -> Result<()> {
+    let mut bound_indexes = BTreeSet::new();
+    for param in params {
+        let index = stmt
+            .parameter_index(&param.sql_name)
+            .with_context(|| format!("failed to inspect sqlite parameter {}", param.sql_name))?
+            .ok_or_else(|| {
+                anyhow!(
+                    "sqlite parameter binding {} was supplied but is not used by the SQL",
+                    param.sql_name
+                )
+            })?;
+        stmt.raw_bind_parameter(index, param.value.as_str())
+            .with_context(|| format!("failed to bind sqlite parameter {}", param.sql_name))?;
+        bound_indexes.insert(index);
+    }
+
+    for index in 1..=stmt.parameter_count() {
+        if bound_indexes.contains(&index) {
+            continue;
+        }
+        let name = stmt.parameter_name(index).ok_or_else(|| {
+            anyhow!(
+                "anonymous sqlite parameter at index {index} is unsupported; use a named parameter like :input"
+            )
+        })?;
+        return Err(anyhow!(
+            "unbound sqlite parameter {name}; provide --json-param or --jsonl-param"
+        ));
+    }
+    Ok(())
+}
+
+fn sqlite_param_receipt_rows(params: &[SqliteFileParam]) -> Value {
+    json!(
+        params
+            .iter()
+            .map(|param| json!({
+                "name": param.sql_name,
+                "path": display_path(&param.path),
+                "format": param.format,
+                "source_bytes": param.source_bytes,
+            }))
+            .collect::<Vec<_>>()
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

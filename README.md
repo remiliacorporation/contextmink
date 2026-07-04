@@ -78,8 +78,9 @@ below is the short map.
   Pointer. `--where FIELD=VALUE` and `--where-contains FIELD=TEXT` filter
   rows; `*.jsonl` streams without loading; fields null in every scanned row
   are flagged in `all_null_fields`.
-- `sqlite` — read-only query from `--sql` or `--sql-file` with row caps and
-  a `--timeout-secs` watchdog (default 60).
+- `sqlite` — read-only query from `--sql` or `--sql-file` with row caps,
+  named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
+  NAME=FILE`, and a `--timeout-secs` watchdog (default 60).
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of a
   database.
 - `capture` (alias `run`) — execute argv and print capped stdout/stderr with
@@ -107,6 +108,7 @@ scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-select queue.jsonl --field addr --where-contains name=CMap --limit 10
 scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --max-rows 20
+scripts/contextmink sqlite --path state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 ```

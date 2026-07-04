@@ -233,10 +233,7 @@ pub(crate) fn command_json_select(
         return Err(anyhow!("json-select --max must be greater than zero"));
     }
     let array = array.map(normalize_json_selector_arg);
-    let fields = fields
-        .iter()
-        .map(|field| normalize_json_selector_arg(field))
-        .collect::<Vec<_>>();
+    let fields = expand_json_select_fields(fields);
     let predicates = parse_where_predicates(where_exact, where_contains)?;
 
     // Every selector that can silently produce nothing is typo-audited: a
@@ -419,6 +416,16 @@ pub(crate) fn command_json_select(
         }
         write_receipt_checked(cli, map)
     }
+}
+
+fn expand_json_select_fields(fields: &[String]) -> Vec<String> {
+    fields
+        .iter()
+        .flat_map(|field| field.split(','))
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+        .map(normalize_json_selector_arg)
+        .collect()
 }
 
 fn audit_fields(

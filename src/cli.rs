@@ -550,9 +550,15 @@ pub(crate) enum Command {
         #[arg(
             long = "field",
             value_name = "KEY_OR_POINTER",
-            help = "Field key or JSON Pointer to include in each row"
+            help = "Field key, JSON Pointer, or comma-separated field list to include in each row"
         )]
         fields: Vec<String>,
+        #[arg(
+            long = "fields",
+            value_name = "KEY_OR_POINTERS",
+            help = "Comma-separated field keys or JSON Pointers to include in each row"
+        )]
+        fields_csv: Vec<String>,
         #[arg(
             long = "where",
             value_name = "FIELD=VALUE",
@@ -601,6 +607,24 @@ pub(crate) enum Command {
             help = "Read the SQL query from a UTF-8 file"
         )]
         sql_file: Option<PathBuf>,
+        #[arg(
+            long = "json-param",
+            value_name = "NAME=FILE",
+            help = "Bind a JSON file as SQL parameter :NAME; repeatable"
+        )]
+        json_params: Vec<String>,
+        #[arg(
+            long = "jsonl-param",
+            value_name = "NAME=FILE",
+            help = "Read a JSONL file as a JSON array and bind it as SQL parameter :NAME; repeatable"
+        )]
+        jsonl_params: Vec<String>,
+        #[arg(
+            long,
+            default_value_t = 8_388_608u64,
+            help = "Maximum bytes per --json-param/--jsonl-param file"
+        )]
+        max_param_bytes: u64,
         #[arg(
             long = "max-rows",
             alias = "limit",

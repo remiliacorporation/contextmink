@@ -1117,6 +1117,29 @@ fn json_select_projects_array_fields_without_jq_filters() {
 }
 
 #[test]
+fn json_select_accepts_comma_separated_fields_alias() {
+    let root = fixture_root("json-select-fields-alias");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "sidecar.json",
+            "--array",
+            "/textures",
+            "--fields",
+            "index,path",
+        ],
+    );
+    assert_envelope(&json, "json-select", "rows");
+    assert_eq!(json["fields"][0], "index");
+    assert_eq!(json["fields"][1], "path");
+    assert_eq!(json["rows"][0]["fields"]["index"], "0");
+    assert_eq!(json["rows"][0]["fields"]["path"], "\"World|A.blp\"");
+}
+
+#[test]
 fn json_select_tolerates_msys_converted_json_pointers() {
     let root = fixture_root("json-select-msys-pointers");
 
@@ -1332,6 +1355,109 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
         String::from_utf8(duplicate_db.stderr)
             .unwrap()
             .contains("either positional <DB> or --db/--path <DB>, not both")
+    );
+}
+
+#[test]
+fn sqlite_binds_json_and_jsonl_file_params() {
+    let root = fixture_root("sqlite-json-params");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE functions(addr INTEGER PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL);
+         CREATE TABLE contract_claims(subject_key TEXT NOT NULL, status TEXT NOT NULL);
+         INSERT INTO functions(addr, name, size) VALUES (16, 'fn_a', 4), (32, 'fn_b', 8);
+         INSERT INTO contract_claims(subject_key, status) VALUES ('fn_a@ram:0x00000010', 'active');",
+    )
+    .unwrap();
+    drop(conn);
+    fs::write(
+        root.join("queue.jsonl"),
+        concat!(
+            r#"{"readiness_state":"layout_closed","function":{"name":"fn_a","address":{"addr":"0x00000010"}}}"#,
+            "\n",
+            r#"{"readiness_state":"layout_closed","function":{"name":"fn_b","address":{"addr":"0x00000020"}}}"#,
+            "\n",
+            r#"{"readiness_state":"open","function":{"name":"fn_c","address":{"addr":"0x00000030"}}}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    fs::write(root.join("filter.json"), r#"{"min_size":8}"#).unwrap();
+    fs::write(
+        root.join("query.sql"),
+        "WITH queue AS (
+             SELECT
+               json_extract(value, '$.function.name') AS name,
+               lower(json_extract(value, '$.function.address.addr')) AS addr_hex,
+               json_extract(value, '$.function.name') || '@ram:' || lower(json_extract(value, '$.function.address.addr')) AS subject_key
+             FROM json_each(:queue)
+             WHERE json_extract(value, '$.readiness_state') = 'layout_closed'
+           )
+           SELECT q.name, f.size
+           FROM queue q
+           JOIN functions f ON printf('0x%08x', f.addr) = q.addr_hex
+           WHERE f.size >= json_extract(:filter, '$.min_size')
+             AND NOT EXISTS (
+               SELECT 1 FROM contract_claims c
+               WHERE c.subject_key = q.subject_key AND c.status != 'retired'
+             )
+           ORDER BY f.addr",
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql-file",
+            "query.sql",
+            "--jsonl-param",
+            "queue=queue.jsonl",
+            "--json-param",
+            "filter=filter.json",
+        ],
+    );
+    assert_envelope(&json, "sqlite", "rows");
+    assert_eq!(json["shown"], 1);
+    assert_eq!(json["rows"][0]["fields"]["name"], "\"fn_b\"");
+    assert_eq!(json["rows"][0]["fields"]["size"], "8");
+    assert_eq!(json["params"][0]["name"], ":filter");
+    assert_eq!(json["params"][0]["format"], "json");
+    assert_eq!(json["params"][1]["name"], ":queue");
+    assert_eq!(json["params"][1]["format"], "jsonl");
+}
+
+#[test]
+fn sqlite_file_params_fail_fast_on_unbound_sql_parameters() {
+    let root = fixture_root("sqlite-json-param-unbound");
+    let db_path = root.join("sample.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("CREATE TABLE t(value INTEGER);")
+        .unwrap();
+    drop(conn);
+    fs::write(root.join("queue.jsonl"), "{\"value\":1}\n").unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "--path",
+            "sample.sqlite",
+            "--sql",
+            "SELECT :queue, :missing",
+            "--jsonl-param",
+            "queue=queue.jsonl",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unbound sqlite parameter :missing")
     );
 }
 

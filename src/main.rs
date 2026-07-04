@@ -254,28 +254,36 @@ fn main() -> Result<()> {
             path,
             array,
             fields,
+            fields_csv,
             where_exact,
             where_contains,
             max,
             max_value_chars,
-        } => command_json_select(
-            &cli,
-            &config,
-            file.as_deref()
-                .or(path.as_deref())
-                .expect("clap requires a JSON input through <FILE> or --path"),
-            array.as_deref(),
-            fields,
-            where_exact,
-            where_contains,
-            *max,
-            *max_value_chars,
-        ),
+        } => {
+            let mut selected_fields = fields.clone();
+            selected_fields.extend(fields_csv.iter().cloned());
+            command_json_select(
+                &cli,
+                &config,
+                file.as_deref()
+                    .or(path.as_deref())
+                    .expect("clap requires a JSON input through <FILE> or --path"),
+                array.as_deref(),
+                &selected_fields,
+                where_exact,
+                where_contains,
+                *max,
+                *max_value_chars,
+            )
+        }
         Command::Sqlite {
             positional_db,
             db,
             sql,
             sql_file,
+            json_params,
+            jsonl_params,
+            max_param_bytes,
             max_rows,
             max_scan_rows,
             timeout_secs,
@@ -288,6 +296,9 @@ fn main() -> Result<()> {
                 db,
                 sql.as_deref(),
                 sql_file.as_deref(),
+                json_params,
+                jsonl_params,
+                *max_param_bytes,
                 *max_rows,
                 *max_scan_rows,
                 *timeout_secs,
