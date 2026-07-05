@@ -48,6 +48,13 @@ pub(crate) enum Command {
         )]
         globs: Vec<String>,
         #[arg(
+            long = "term",
+            visible_alias = "name-contains",
+            value_name = "TEXT",
+            help = "Only include paths containing this literal text; repeat for all required terms"
+        )]
+        path_terms: Vec<String>,
+        #[arg(
             long = "ext",
             alias = "extension",
             value_name = "EXT",
@@ -739,6 +746,18 @@ pub(crate) enum Command {
             help = "Exit with the child's exit code when it fails (receipt is still emitted); default keeps exit 0 with the child status only in the receipt"
         )]
         fail_with_child: bool,
+        #[arg(
+            long = "expect-exit",
+            value_name = "CODE[,CODE...]",
+            help = "Treat these child exit code(s) as expected for --fail-with-child; repeatable and comma-separated values are accepted"
+        )]
+        expect_exit: Vec<String>,
+        #[arg(
+            long = "receipt-out",
+            value_name = "FILE",
+            help = "Write the full capture receipt JSON to this file after the child exits"
+        )]
+        receipt_out: Option<PathBuf>,
         #[arg(
             required = true,
             trailing_var_arg = true,

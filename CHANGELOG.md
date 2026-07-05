@@ -21,6 +21,8 @@ The release workflow extracts the section for the requested version and fails if
 - `sqlite-schema` receipts gain `tables_detail_elided` and per-table `detail_elided`.
 - `slice` and `outline` receipts gain an `encoding_suspects` object (and a one-line note) when the decoded file carries mojibake. `double_encoded` counts character runs whose CP1252 bytes re-decode as valid multi-byte UTF-8 (the recovered character is named in `sample`), `replacement_chars` counts U+FFFD, and `c1_controls` counts raw C1 characters. A 2-byte run counts only with a Latin-1 lead or when it clusters, so accented text does not trip it. `capture` reports the double-encoded count for retained child output, where UTF-8 written through a CP1252 boundary appears. The field is absent when nothing is found, and it never fails a command.
 - `contextmink-bridge` and `capture`/`run` refuse known destructive argv before spawn: built-in `git clean` blocking, nested shell payload scanning, and optional repository-configured protected deletion fragments. `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` is a human break-glass override and prints a warning.
+- `capture` gains `--expect-exit CODE[,CODE...]`, recording `expected_exit_codes` and `exit_expected` without overwriting the child's actual `success`.
+- `capture` gains `--receipt-out FILE`, writing the full JSON capture receipt with retained stdout/stderr text while keeping terminal output bounded.
 
 ### Changed
 

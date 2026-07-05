@@ -51,8 +51,8 @@ below is the short map.
 
 - `dirs` — directory overview with recursive file counts, `--depth` levels
   deep. Orientation before `files` or `grep`.
-- `files` — list candidate files. `--glob` and `--ext` filter; configured
-  excludes apply to broad scans, while explicit paths bypass them.
+- `files` — list candidate files. `--glob`, `--term`, and `--ext` filter;
+  configured excludes apply to broad scans, while explicit paths bypass them.
 - `grep` — bounded match summary for a regex or `--literal` pattern.
   `--pattern-file` for shell-fragile regex, `--glob`/`--ext` to narrow, `-i`,
   `--context N`, `--limit`, `--max-matches`. `--quiet` suppresses per-file
@@ -103,6 +103,7 @@ bounds.
 ```bash
 scripts/contextmink dirs crates --depth 2 --max 40
 scripts/contextmink files --path specs --ext json --max 20
+scripts/contextmink files --path crates --term render --term tests --max 20
 scripts/contextmink files --path vendor --with-git-ignored --max 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
@@ -149,10 +150,12 @@ match-side lower-bound fields (`matched_files_total_is_lower_bound`,
 scanned subset. `no_match_scope` says whether a no-match verdict covered the
 `"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
 files skipped as too large or binary. Capture receipts record the child's
-`exit_code` and `success` (contextmink itself exits zero when capture worked,
-even if the child failed — pass `--fail-with-child` to propagate the child's
-exit code after the receipt) plus per-stream head, tail, and omitted line
-counts.
+`exit_code`, actual `success`, `expected_exit_codes`, and `exit_expected`
+(`--expect-exit CODE[,CODE...]` changes only expectedness, not actual
+success). Contextmink itself exits zero when capture worked, even if the child
+failed; pass `--fail-with-child` to propagate an unexpected child status after
+the receipt. Use `--receipt-out <file>` to write the full capture receipt,
+including retained stdout/stderr text, while keeping terminal output bounded.
 
 ## Behavior notes
 

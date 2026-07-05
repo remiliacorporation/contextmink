@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
@@ -27,6 +27,7 @@ pub(crate) struct CollectedFiles {
 
 pub(crate) struct CollectOptions<'a> {
     pub(crate) globs: &'a [String],
+    pub(crate) path_terms: &'a [String],
     pub(crate) extensions: &'a [String],
     pub(crate) with_excluded: bool,
     pub(crate) with_git_ignored: bool,
@@ -48,6 +49,7 @@ pub(crate) fn collect_files(
     options: &CollectOptions<'_>,
 ) -> Result<CollectedFiles> {
     let include_matcher = build_optional_globset(options.globs)?;
+    let path_terms = normalize_path_terms(options.path_terms)?;
     let extension_matcher = normalize_extensions(options.extensions);
     let explicit_excluded_roots = explicit_excluded_roots(paths, config, options.with_excluded);
     let mut state = CollectState {
@@ -62,6 +64,7 @@ pub(crate) fn collect_files(
                 root,
                 &mapper,
                 &include_matcher,
+                &path_terms,
                 &extension_matcher,
                 config,
                 options.with_excluded,
@@ -76,6 +79,7 @@ pub(crate) fn collect_files(
             config,
             options,
             &include_matcher,
+            &path_terms,
             &extension_matcher,
             &explicit_excluded_roots,
             &mut state,
@@ -181,6 +185,7 @@ fn walk_root(
     config: &ContextConfig,
     options: &CollectOptions<'_>,
     include_matcher: &Option<GlobSet>,
+    path_terms: &[String],
     extension_matcher: &[String],
     explicit_excluded_roots: &[String],
     state: &mut CollectState,
@@ -251,6 +256,7 @@ fn walk_root(
                             entry.path(),
                             &mapper,
                             include_matcher,
+                            path_terms,
                             extension_matcher,
                             config,
                             options.with_excluded,
@@ -307,6 +313,7 @@ fn walk_root(
             config,
             options,
             include_matcher,
+            path_terms,
             extension_matcher,
             explicit_excluded_roots,
             state,
@@ -422,6 +429,7 @@ fn file_is_included(
     path: &Path,
     mapper: &PolicyMapper,
     include_matcher: &Option<GlobSet>,
+    path_terms: &[String],
     extension_matcher: &[String],
     config: &ContextConfig,
     with_excluded: bool,
@@ -444,6 +452,9 @@ fn file_is_included(
         if !include_matcher.is_match(&normalized) && !include_matcher.is_match(basename) {
             return false;
         }
+    }
+    if !path_terms.is_empty() && !path_terms.iter().all(|term| normalized.contains(term)) {
+        return false;
     }
     if !extension_matcher.is_empty() {
         let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
@@ -485,6 +496,20 @@ fn build_optional_globset(globs: &[String]) -> Result<Option<GlobSet>> {
             .build()
             .context("failed to build include glob set")?,
     ))
+}
+
+fn normalize_path_terms(path_terms: &[String]) -> Result<Vec<String>> {
+    path_terms
+        .iter()
+        .map(|term| {
+            let term = term.trim().replace('\\', "/");
+            if term.is_empty() {
+                Err(anyhow!("files --term entries must not be empty"))
+            } else {
+                Ok(term)
+            }
+        })
+        .collect()
 }
 
 fn normalize_extensions(extensions: &[String]) -> Vec<String> {

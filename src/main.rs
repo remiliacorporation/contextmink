@@ -40,6 +40,7 @@ fn main() -> Result<()> {
             paths,
             path,
             globs,
+            path_terms,
             extensions,
             with_excluded,
             with_git_ignored,
@@ -53,6 +54,7 @@ fn main() -> Result<()> {
             &config,
             &merged_paths(paths, path),
             globs,
+            path_terms,
             extensions,
             *with_excluded,
             *with_git_ignored,
@@ -345,6 +347,8 @@ fn main() -> Result<()> {
             max_bytes,
             max_line_chars,
             fail_with_child,
+            expect_exit,
+            receipt_out,
             argv,
         } => command_capture(
             &cli,
@@ -353,6 +357,8 @@ fn main() -> Result<()> {
             *max_bytes,
             *max_line_chars,
             *fail_with_child,
+            expect_exit,
+            receipt_out.as_ref(),
             argv,
         ),
     }

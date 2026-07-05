@@ -69,6 +69,7 @@ pub(crate) fn command_files(
     config: &ContextConfig,
     paths: &[PathBuf],
     globs: &[String],
+    path_terms: &[String],
     extensions: &[String],
     with_excluded: bool,
     with_git_ignored: bool,
@@ -86,6 +87,7 @@ pub(crate) fn command_files(
         config,
         &CollectOptions {
             globs,
+            path_terms,
             extensions,
             with_excluded,
             with_git_ignored,
@@ -185,6 +187,7 @@ pub(crate) fn command_dirs(
         config,
         &CollectOptions {
             globs: &[],
+            path_terms: &[],
             extensions: &[],
             with_excluded,
             with_git_ignored,
@@ -402,6 +405,7 @@ pub(crate) fn command_grep_with_matcher(
         config,
         &CollectOptions {
             globs,
+            path_terms: &[],
             extensions,
             with_excluded,
             with_git_ignored,

@@ -1,4 +1,7 @@
+use std::collections::BTreeSet;
+use std::fs;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Instant;
@@ -22,7 +25,8 @@ struct RawCapturedStream {
 }
 
 struct CapturedStream {
-    text: String,
+    display_text: String,
+    retained_text: String,
     total_bytes: usize,
     captured_bytes: usize,
     total_lines: usize,
@@ -42,6 +46,8 @@ pub(crate) fn command_capture(
     max_bytes: usize,
     max_line_chars: usize,
     fail_with_child: bool,
+    expect_exit: &[String],
+    receipt_out: Option<&PathBuf>,
     argv: &[String],
 ) -> Result<()> {
     if max_lines == 0 {
@@ -58,6 +64,7 @@ pub(crate) fn command_capture(
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| anyhow!("capture requires a command after --"))?;
+    let expected_exit_codes = parse_expected_exit_codes(expect_exit)?;
 
     // Same blocking deny-list as contextmink-bridge: capture/run spawn
     // arbitrary commands and must refuse destructive argv before spawn.
@@ -128,6 +135,15 @@ pub(crate) fn command_capture(
     );
     map.insert("exit_code".to_string(), json!(status.code()));
     map.insert("success".to_string(), json!(status.success()));
+    let exit_expected = status
+        .code()
+        .map(|code| expected_exit_codes.contains(&code))
+        .unwrap_or(false);
+    map.insert(
+        "expected_exit_codes".to_string(),
+        json!(expected_exit_codes.iter().copied().collect::<Vec<_>>()),
+    );
+    map.insert("exit_expected".to_string(), json!(exit_expected));
     map.insert("duration_ms".to_string(), json!(duration_ms));
     map.insert("stdout".to_string(), captured_stream_json(&stdout));
     map.insert("stderr".to_string(), captured_stream_json(&stderr));
@@ -135,8 +151,8 @@ pub(crate) fn command_capture(
     // control bytes, but a CP1252 round-trip that re-decodes as UTF-8 means
     // the child wrote UTF-8 through a CP1252 boundary (the classic
     // PowerShell 5.1 hazard). Field exists only when found.
-    let mut suspects = crate::encoding::scan_encoding_suspects(&stdout.text, true);
-    let stderr_suspects = crate::encoding::scan_encoding_suspects(&stderr.text, true);
+    let mut suspects = crate::encoding::scan_encoding_suspects(&stdout.retained_text, true);
+    let stderr_suspects = crate::encoding::scan_encoding_suspects(&stderr.retained_text, true);
     suspects.double_encoded += stderr_suspects.double_encoded;
     if suspects.sample.is_none() {
         suspects.sample = stderr_suspects.sample;
@@ -145,12 +161,16 @@ pub(crate) fn command_capture(
         map.insert("encoding_suspects".to_string(), suspects.receipt_value());
     }
 
+    let mut full_receipt = map.clone();
+    full_receipt.insert("stdout_text".to_string(), json!(stdout.retained_text));
+    full_receipt.insert("stderr_text".to_string(), json!(stderr.retained_text));
+    if let Some(path) = receipt_out {
+        write_capture_receipt(path, &Value::Object(full_receipt.clone()))?;
+    }
+
     if cli.json {
-        let mut object = map;
-        object.insert("stdout_text".to_string(), json!(stdout.text));
-        object.insert("stderr_text".to_string(), json!(stderr.text));
-        emit_json(Value::Object(object))?;
-        exit_with_child(fail_with_child, &status)?;
+        emit_json(Value::Object(full_receipt))?;
+        exit_with_child(fail_with_child, exit_expected, &status)?;
         return Ok(());
     }
 
@@ -178,16 +198,16 @@ pub(crate) fn command_capture(
         "stdout: shown_lines={} total_lines={} captured_bytes={} total_bytes={}",
         stdout.shown_lines, stdout.total_lines, stdout.captured_bytes, stdout.total_bytes
     )?;
-    if !stdout.text.is_empty() {
-        writeln!(out, "{}", stdout.text)?;
+    if !stdout.display_text.is_empty() {
+        writeln!(out, "{}", stdout.display_text)?;
     }
     writeln!(
         out,
         "stderr: shown_lines={} total_lines={} captured_bytes={} total_bytes={}",
         stderr.shown_lines, stderr.total_lines, stderr.captured_bytes, stderr.total_bytes
     )?;
-    if !stderr.text.is_empty() {
-        writeln!(out, "{}", stderr.text)?;
+    if !stderr.display_text.is_empty() {
+        writeln!(out, "{}", stderr.display_text)?;
     }
     if truncated {
         writeln!(
@@ -199,15 +219,19 @@ pub(crate) fn command_capture(
         writeln!(out, "{}", suspects.human_note())?;
     }
     write_receipt_checked(cli, map)?;
-    exit_with_child(fail_with_child, &status)
+    exit_with_child(fail_with_child, exit_expected, &status)
 }
 
 /// Opt-in child-status propagation for shell chaining. The receipt (carrying
 /// `exit_code`/`success`) has already been emitted; a failed child then
 /// becomes contextmink's own exit so `capture --fail-with-child -- cmd &&
 /// next` gates on the child instead of always proceeding.
-fn exit_with_child(fail_with_child: bool, status: &std::process::ExitStatus) -> Result<()> {
-    if !fail_with_child || status.success() {
+fn exit_with_child(
+    fail_with_child: bool,
+    exit_expected: bool,
+    status: &std::process::ExitStatus,
+) -> Result<()> {
+    if !fail_with_child || exit_expected {
         return Ok(());
     }
     #[cfg(unix)]
@@ -221,6 +245,42 @@ fn exit_with_child(fail_with_child: bool, status: &std::process::ExitStatus) -> 
         .flush()
         .context("failed to flush stdout before propagating child exit")?;
     std::process::exit(code);
+}
+
+fn parse_expected_exit_codes(raw: &[String]) -> Result<BTreeSet<i32>> {
+    if raw.is_empty() {
+        return Ok(BTreeSet::from([0]));
+    }
+    let mut codes = BTreeSet::new();
+    for value in raw {
+        for part in value.split(',') {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                return Err(anyhow!("capture --expect-exit contains an empty exit code"));
+            }
+            let code = trimmed
+                .parse::<i32>()
+                .with_context(|| format!("invalid capture --expect-exit code {trimmed:?}"))?;
+            codes.insert(code);
+        }
+    }
+    if codes.is_empty() {
+        Err(anyhow!("capture --expect-exit requires at least one code"))
+    } else {
+        Ok(codes)
+    }
+}
+
+fn write_capture_receipt(path: &PathBuf, receipt: &Value) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let mut bytes = serde_json::to_vec_pretty(receipt)?;
+    bytes.push(b'\n');
+    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn spawn_captured_child(
@@ -328,6 +388,7 @@ fn render_captured_stream(
 ) -> CapturedStream {
     let captured_bytes = raw.head.len() + raw.tail.len();
     let byte_truncated = raw.total_bytes > captured_bytes;
+    let retained_text = retained_stream_text(&raw);
     // Bytes between the head and the retained tail were dropped whenever the
     // tail does not start exactly where the head ended.
     let tail_contiguous = raw.tail.is_empty() || raw.tail_start == raw.head.len();
@@ -349,7 +410,7 @@ fn render_captured_stream(
         tail_lines = lines;
     }
 
-    let (text, head_shown, tail_shown, omitted_lines) = if tail_lines.is_empty() {
+    let (display_text, head_shown, tail_shown, omitted_lines) = if tail_lines.is_empty() {
         if head_lines.len() <= max_lines {
             let shown = head_lines.len();
             let rendered = head_lines
@@ -413,7 +474,8 @@ fn render_captured_stream(
 
     let shown_lines = head_shown + tail_shown;
     CapturedStream {
-        text,
+        display_text,
+        retained_text,
         total_bytes: raw.total_bytes,
         captured_bytes,
         total_lines: raw.total_lines,
@@ -425,6 +487,22 @@ fn render_captured_stream(
         line_truncated: omitted_lines > 0,
         char_truncated: clamp_state.truncated,
     }
+}
+
+fn retained_stream_text(raw: &RawCapturedStream) -> String {
+    if raw.tail.is_empty() {
+        return String::from_utf8_lossy(&raw.head).to_string();
+    }
+    if raw.tail_start == raw.head.len() {
+        let mut bytes = raw.head.clone();
+        bytes.extend_from_slice(&raw.tail);
+        return String::from_utf8_lossy(&bytes).to_string();
+    }
+
+    let omitted_bytes = raw.tail_start.saturating_sub(raw.head.len());
+    let head = String::from_utf8_lossy(&raw.head);
+    let tail = String::from_utf8_lossy(&raw.tail);
+    format!("{head}\n[contextmink] ... omitted {omitted_bytes} byte(s) ...\n{tail}")
 }
 
 #[derive(Default)]

@@ -94,6 +94,27 @@ fn json_commands_share_receipt_envelope() {
 }
 
 #[test]
+fn files_filters_by_literal_path_terms() {
+    let root = fixture_root("files-path-terms");
+    fs::create_dir_all(root.join("render")).unwrap();
+    fs::create_dir_all(root.join("ui")).unwrap();
+    fs::write(root.join("render/cgx_state.rs"), "cgx\n").unwrap();
+    fs::write(root.join("render/other_state.rs"), "other\n").unwrap();
+    fs::write(root.join("ui/cgx_state.rs"), "ui\n").unwrap();
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json", "files", ".", "--term", "render", "--term", "cgx", "--max", "10",
+        ],
+    );
+
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0], "./render/cgx_state.rs");
+}
+
+#[test]
 fn slice_accepts_named_path_alias() {
     let root = fixture_root("slice-path-alias");
 
@@ -301,7 +322,10 @@ fn capture_keeps_head_and_tail_when_line_capped() {
     let text = json["stdout_text"].as_str().unwrap();
     assert!(text.contains("alpha beta"), "head kept: {text}");
     assert!(text.contains("CONTEXTMINK_RECEIPT"), "tail kept: {text}");
-    assert!(text.contains("omitted"), "omission marker shown: {text}");
+    assert!(
+        !text.contains("omitted"),
+        "retained receipt text is not line-clamped: {text}"
+    );
     assert_eq!(json["stdout"]["head_lines"], 1);
     assert_eq!(json["stdout"]["tail_lines"], 1);
     assert_eq!(json["stdout"]["omitted_lines"], 2);
@@ -519,6 +543,118 @@ fn capture_fail_with_child_propagates_exit_code_after_receipt() {
 }
 
 #[test]
+fn capture_expect_exit_gates_fail_with_child_without_overwriting_success() {
+    let root = fixture_root("capture-expect-exit");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--fail-with-child",
+            "--expect-exit",
+            "0,1",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "missing.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "expected exit code should satisfy --fail-with-child\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["exit_code"], 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["exit_expected"], true);
+    assert_eq!(json["expected_exit_codes"], serde_json::json!([0, 1]));
+}
+
+#[test]
+fn capture_receipt_out_writes_full_json_receipt() {
+    let root = fixture_root("capture-receipt-out");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+    let receipt = root.join("receipts").join("slice.json");
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "capture",
+            "--receipt-out",
+            receipt.to_str().unwrap(),
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["exit_expected"], true);
+    assert_eq!(json["success"], true);
+    assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
+}
+
+#[test]
+fn capture_receipt_out_preserves_retained_long_line_text() {
+    let root = fixture_root("capture-receipt-out-long-line");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+    let receipt = root.join("receipts").join("long.json");
+    let long_payload = "x".repeat(800);
+    fs::write(root.join("long.txt"), format!("{long_payload}\n")).unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "capture",
+            "--max-line-chars",
+            "80",
+            "--max-bytes",
+            "5000",
+            "--receipt-out",
+            receipt.to_str().unwrap(),
+            "--",
+            bin,
+            "--no-config",
+            "--json",
+            "slice",
+            "long.txt",
+            "--range",
+            "1:1",
+            "--max-line-chars",
+            "2000",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_eq!(json["stdout"]["char_truncated"], true);
+    let stdout_text = json["stdout_text"].as_str().unwrap();
+    let child_json: Value = serde_json::from_str(stdout_text).unwrap();
+    assert_eq!(child_json["lines"][0]["text"], long_payload);
+}
+
+#[test]
 fn files_scan_cap_sets_complete_false() {
     let root = fixture_root("files-scan-cap");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
@@ -570,6 +706,76 @@ fn files_glob_matches_basename_inside_explicit_roots() {
     assert_eq!(files["shown"], 1);
     assert_eq!(files["total"], 1);
     assert_eq!(files["files"][0], "queue/work.jsonl");
+}
+
+#[test]
+fn files_term_matches_literal_decomp_ledger_name() {
+    let root = fixture_root("files-term-ledger-name");
+    fs::create_dir_all(
+        root.join("decompilation_outputs")
+            .join("ledgers")
+            .join("rename"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("decompilation_outputs")
+            .join("ledgers")
+            .join("rename")
+            .join("rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl"),
+        "{}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("decompilation_outputs")
+            .join("ledgers")
+            .join("rename")
+            .join("rename_ledger_wow12196_cshadereffect_bridge_lane_20260306_v1.jsonl"),
+        "{}\n",
+    )
+    .unwrap();
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            "decompilation_outputs",
+            "--term",
+            "rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl",
+            "--max",
+            "20",
+        ],
+    );
+
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 1);
+    assert_eq!(files["total"], 1);
+    assert_eq!(
+        files["files"][0],
+        "decompilation_outputs/ledgers/rename/rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl"
+    );
+}
+
+#[test]
+fn files_term_composes_with_repeated_terms_and_extension_filter() {
+    let root = fixture_root("files-term-composed");
+    fs::create_dir_all(root.join("queue")).unwrap();
+    fs::write(root.join("queue").join("rename_alpha_target.jsonl"), "{}\n").unwrap();
+    fs::write(root.join("queue").join("rename_alpha_target.txt"), "skip\n").unwrap();
+    fs::write(root.join("queue").join("rename_beta_target.jsonl"), "{}\n").unwrap();
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json", "files", "queue", "--term", "alpha", "--term", "target", "--ext", "jsonl",
+            "--limit", "5",
+        ],
+    );
+
+    assert_envelope(&files, "files", "files");
+    assert_eq!(files["shown"], 1);
+    assert_eq!(files["total"], 1);
+    assert_eq!(files["files"][0], "queue/rename_alpha_target.jsonl");
 }
 
 #[test]
