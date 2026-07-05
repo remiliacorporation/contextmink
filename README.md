@@ -173,6 +173,16 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   and optional repository-configured protected deletion fragments. The
   `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override is for human maintenance
   only and prints a warning.
+- `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
+  it reads the hook event JSON from stdin, extracts the command string at
+  `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
+  shape), and exits 2 with the deny message on stderr to block the tool call.
+  Register it as the hook command, e.g.
+  `<repo>/tools/contextmink/target/release/contextmink.exe hook-guard
+  --config <repo>/.contextmink.toml`. Unparseable payloads allow with a
+  stderr note: the guard blocks recognized destructive commands, it does not
+  validate harness payloads (fail-closed payload handling turns any schema
+  drift into a total shell outage).
 - Broad scans enter git-ignored directories that are themselves repository
   roots, apply that repository's own ignore rules, and disclose each entry in
   `nested_repos_entered`. Multi-repo workspaces would otherwise report

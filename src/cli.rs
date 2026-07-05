@@ -766,4 +766,15 @@ pub(crate) enum Command {
         )]
         argv: Vec<String>,
     },
+    /// Evaluate an agent PreToolUse hook payload (JSON on stdin) against the
+    /// destructive-command guard; exit 2 blocks the tool call.
+    HookGuard {
+        #[arg(
+            long = "command-field",
+            default_value = "tool_input.command",
+            value_name = "DOT.PATH",
+            help = "Dot-separated JSON object path of the command string in the hook payload"
+        )]
+        command_field: String,
+    },
 }

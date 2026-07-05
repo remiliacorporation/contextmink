@@ -9,6 +9,7 @@ mod destructive_guard;
 mod encoding;
 mod files;
 mod grep_scan;
+mod hook_guard;
 mod json_tools;
 mod outline;
 mod output;
@@ -26,6 +27,7 @@ use commands::{
     GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
 };
 use config::load_context_config;
+use hook_guard::command_hook_guard;
 use json_tools::{command_json_find, command_json_select};
 use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
@@ -361,6 +363,9 @@ fn main() -> Result<()> {
             receipt_out.as_ref(),
             argv,
         ),
+        Command::HookGuard { command_field } => {
+            command_hook_guard(&config.destructive_guard, command_field)
+        }
     }
 }
 

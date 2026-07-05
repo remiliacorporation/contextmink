@@ -4,6 +4,12 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
+## [Unreleased]
+
+### Added
+
+- `hook-guard` evaluates an agent PreToolUse hook payload (JSON on stdin) against the same destructive-command deny scan the bridge and `capture`/`run` apply to child argv, so the harness hook layer, spawn paths, and shell payload scanning enforce one policy from one config. It extracts the command string at `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code hook shape), exits 0 to allow, and exits 2 with the deny message on stderr to block. Unparseable payloads or a missing command field allow with a stderr note rather than blocking: a hook that fails closed on payload-shape drift blocks every shell command for every agent (the 2026-07-05 outage), while the guard's job is only to block recognized destructive commands. `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` downgrades a deny to a loud stderr warning, matching the bridge.
+
 ## [0.5.0] - 2026-07-04
 
 ### Added
