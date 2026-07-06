@@ -1,6 +1,6 @@
 [package]
 name = "contextmink"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A transcript guard for bounded file, text, file-structure, JSON, SQLite, and command-output inspection."

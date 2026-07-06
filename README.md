@@ -53,12 +53,13 @@ below is the short map.
   deep. Orientation before `files` or `grep`.
 - `files` — list candidate files. `--glob`, `--term`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
-- `grep` — bounded match summary for a regex or `--literal` pattern.
-  `--pattern-file` for shell-fragile regex, `--glob`/`--ext` to narrow, `-i`,
+- `grep` — bounded match summary for a regex or `--literal` pattern. Use
+  `--pattern PATTERN` when every positional argument should be a path, and
+  `--pattern-file` for shell-fragile regex. `--glob`/`--ext` narrow, `-i`,
   `--context N`, `--limit`, `--max-matches`. `--quiet` suppresses per-file
   match content and file lists and emits only the receipt (totals, caps,
-  truncation, scan-scope fields) — for existence/count checks that do not
-  need the matching lines.
+  truncation, scan-scope fields) — for existence/count checks that do not need
+  the matching lines.
 - `grep-terms` — match lines containing every `--term` value (`--or` for
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
@@ -111,6 +112,7 @@ scripts/contextmink files --path specs --ext json --max 20
 scripts/contextmink files --path crates --term render --term tests --max 20
 scripts/contextmink files --path vendor --with-git-ignored --max 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
+scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term panic --or src --max-matches 12
 scripts/contextmink outline src/renderer.rs --contains cull -i

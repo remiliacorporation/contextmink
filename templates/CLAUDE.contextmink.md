@@ -41,9 +41,9 @@ produce more output than the transcript should carry.
   git-ignored nested repository roots and disclose them in
   `nested_repos_entered`; pass `--skip-nested-repos` for strict Git scope.
 - Treat a `CONTEXTMINK_RECEIPT` with `"truncated": true` or `"complete": false`
-  as capped output and narrow the query. Use `--fail-if-truncated` /
-  `--strict-complete` for automation that requires full displayed output, or
-  `--require-complete-scan` when scan-capped totals should fail. When
+  as capped output and narrow the query. Use `--fail-if-truncated` for
+  automation that requires full displayed output, or `--require-complete-scan`
+  when scan-capped totals should fail. When
   `cap_reason` is `"scan"` or match-side lower-bound fields are true, match
   totals and no-match results cover only the scanned subset (candidate file
   totals stay exact). A no-match grep with

@@ -1375,6 +1375,24 @@ fn grep_accepts_named_search_paths() {
 }
 
 #[test]
+fn grep_pattern_flag_treats_all_positionals_as_paths() {
+    let root = fixture_root("grep-pattern-flag");
+    fs::write(root.join("alpha"), "needle\n").unwrap();
+    fs::write(root.join("beta.txt"), "needle\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "needle", "alpha", "beta.txt"],
+    );
+
+    assert_envelope(&json, "grep", "files");
+    assert_eq!(json["shown"], 2);
+    assert_eq!(json["total_matches"], 2);
+    assert_eq!(json["files"][0]["path"], "alpha");
+    assert_eq!(json["files"][1]["path"], "beta.txt");
+}
+
+#[test]
 fn json_select_projects_array_fields_without_jq_filters() {
     let root = fixture_root("json-select");
 

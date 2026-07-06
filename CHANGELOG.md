@@ -6,10 +6,22 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-06
+
 ### Added
 
+- `files --term TEXT` filters candidate paths by repeated literal path/name terms before extension and display caps, with `--name-contains` as a readable alias.
+- `grep --pattern PATTERN` makes every positional value a path, matching `--pattern-file` ergonomics when the search pattern is shell-fragile or visually ambiguous.
+- `contextmink-bridge` and `capture`/`run` refuse known destructive argv before spawn: built-in `git clean` blocking, nested shell payload scanning, and optional repository-configured protected deletion fragments. `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` is a human break-glass override and prints a warning.
+- `capture` gains `--expect-exit CODE[,CODE...]`, recording `expected_exit_codes` and `exit_expected` without overwriting the child's actual `success`.
+- `capture` gains `--receipt-out FILE`, writing the full JSON capture receipt with retained stdout/stderr text while keeping terminal output bounded.
 - `hook-guard` evaluates an agent PreToolUse hook payload (JSON on stdin) against the same destructive-command deny scan the bridge and `capture`/`run` apply to child argv, so the harness hook layer, spawn paths, and shell payload scanning enforce one policy from one config. It extracts the command string at `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code hook shape), exits 0 to allow, and exits 2 with the deny message on stderr to block. Unparseable payloads or a missing command field allow with a stderr note rather than blocking: a hook that fails closed on payload-shape drift blocks every shell command for every agent (the 2026-07-05 outage), while the guard's job is only to block recognized destructive commands. `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` downgrades a deny to a loud stderr warning, matching the bridge.
 - `hook-snippet` prints a Claude `.claude/settings.json` fragment for `hook-guard`, using single `command` strings and Bash-safe Windows path spelling instead of raw backslash paths or an unverified `args` field.
+
+### Changed
+
+- `capture` now separates bounded display text from retained receipt text: terminal output still obeys line and byte caps, while `--json`, `--receipt-out`, and encoding-suspect scans use the retained head/tail text with explicit omitted-byte markers.
+- `sqlite --sql-file` help now documents `-` for reading SQL from stdin.
 
 ## [0.5.0] - 2026-07-04
 
@@ -26,10 +38,7 @@ The release workflow extracts the section for the requested version and fails if
 - `outline` C/C++ emits section-banner comment titles: `// ==== Renderer ====` one-liners and the title line of a `// ====`-fenced banner.
 - `grep`/`grep-terms` receipts split `skipped_large` and `skipped_binary` alongside the combined `skipped_large_or_binary`; only skipped large files leave text unexamined and mark match totals as lower bounds.
 - `sqlite-schema` receipts gain `tables_detail_elided` and per-table `detail_elided`.
-- `slice` and `outline` receipts gain an `encoding_suspects` object (and a one-line note) when the decoded file carries mojibake. `double_encoded` counts character runs whose CP1252 bytes re-decode as valid multi-byte UTF-8 (the recovered character is named in `sample`), `replacement_chars` counts U+FFFD, and `c1_controls` counts raw C1 characters. A 2-byte run counts only with a Latin-1 lead or when it clusters, so accented text does not trip it. `capture` reports the double-encoded count for retained child output, where UTF-8 written through a CP1252 boundary appears. The field is absent when nothing is found, and it never fails a command.
-- `contextmink-bridge` and `capture`/`run` refuse known destructive argv before spawn: built-in `git clean` blocking, nested shell payload scanning, and optional repository-configured protected deletion fragments. `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` is a human break-glass override and prints a warning.
-- `capture` gains `--expect-exit CODE[,CODE...]`, recording `expected_exit_codes` and `exit_expected` without overwriting the child's actual `success`.
-- `capture` gains `--receipt-out FILE`, writing the full JSON capture receipt with retained stdout/stderr text while keeping terminal output bounded.
+- `slice` and `outline` receipts gain an `encoding_suspects` object (and a one-line note) when the decoded file carries mojibake. `double_encoded` counts character runs whose CP1252 bytes re-decode as valid multi-byte UTF-8 (the recovered character is named in `sample`), `replacement_chars` counts U+FFFD, and `c1_controls` counts raw C1 characters. A 2-byte run counts only with a Latin-1 lead or when it clusters, so accented text does not trip it. `capture` reports the double-encoded count for child output, where UTF-8 written through a CP1252 boundary appears. The field is absent when nothing is found, and it never fails a command.
 
 ### Changed
 
