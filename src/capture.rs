@@ -39,6 +39,7 @@ struct CapturedStream {
     char_truncated: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn command_capture(
     cli: &Cli,
     config: &ContextConfig,
@@ -396,16 +397,12 @@ fn render_captured_stream(
     let mut clamp_state = ClampState::default();
     let (head_lines, head_partial_last) = decode_lines(&raw.head);
     let mut head_lines = head_lines;
-    if !raw.tail.is_empty() && head_partial_last && !tail_contiguous {
-        // The head ends mid-line and the rest of that line was dropped.
-        head_lines.pop();
-    }
     let mut tail_lines = Vec::new();
     if !raw.tail.is_empty() {
-        let (mut lines, _) = decode_lines(&raw.tail);
-        if !tail_contiguous && !lines.is_empty() {
-            // The first retained tail line is almost certainly partial.
-            lines.remove(0);
+        let (lines, _) = decode_lines(&raw.tail);
+        if head_partial_last && !tail_contiguous && head_lines.is_empty() && !raw.head.is_empty() {
+            let head_fragment = String::from_utf8_lossy(&raw.head).to_string();
+            head_lines.push(head_fragment);
         }
         tail_lines = lines;
     }
@@ -453,6 +450,7 @@ fn render_captured_stream(
             .total_lines
             .saturating_sub(head_shown)
             .saturating_sub(tail_shown);
+        let omitted_bytes = raw.tail_start.saturating_sub(raw.head.len());
         let mut parts = Vec::new();
         parts.extend(
             head_lines
@@ -462,6 +460,10 @@ fn render_captured_stream(
         );
         if omitted > 0 {
             parts.push(format!("[contextmink] ... omitted {omitted} line(s) ..."));
+        } else if !tail_contiguous && omitted_bytes > 0 {
+            parts.push(format!(
+                "[contextmink] ... omitted {omitted_bytes} byte(s) ..."
+            ));
         }
         parts.extend(
             tail_lines
@@ -562,3 +564,6 @@ fn captured_stream_json(stream: &CapturedStream) -> Value {
         "char_truncated": stream.char_truncated,
     })
 }
+
+#[cfg(test)]
+mod tests;

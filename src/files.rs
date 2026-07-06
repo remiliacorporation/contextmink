@@ -425,6 +425,7 @@ fn explicit_excluded_roots(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn file_is_included(
     path: &Path,
     mapper: &PolicyMapper,

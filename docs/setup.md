@@ -129,6 +129,18 @@ for script fallback.
    scripts/contextmink grep contextmink --path . --limit 5
    ```
 
+8. Optional but recommended for repositories with destructive-command
+   trip-wires: generate a Claude hook fragment from the installed binary and
+   merge it into `.claude/settings.json`:
+
+   ```bash
+   scripts/contextmink hook-snippet
+   ```
+
+   The generated fragment registers `hook-guard` for `Bash` and `PowerShell`
+   PreToolUse hooks. It uses single `command` strings, not a separate `args`
+   field, and emits shell-safe path spelling for each matcher.
+
 Delegated setup prompt:
 
 ```text
@@ -137,8 +149,39 @@ the release binary, not a source build. Install
 tools/contextmink/bin/contextmink(.exe), scripts/contextmink, and
 .contextmink.toml with repo-appropriate high-output excludes. Merge the
 AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with
-scripts/contextmink files --path . --max 20.
+scripts/contextmink files --path . --max 20. If Claude PreToolUse protection is
+wanted, generate the .claude/settings.json hook fragment with
+scripts/contextmink hook-snippet instead of hand-writing command paths.
 ```
+
+## Optional: Claude PreToolUse Hook Guard
+
+`hook-guard` is the same destructive-command deny scan used by
+`contextmink-bridge` and `capture`/`run`, exposed as a Claude PreToolUse hook.
+It reads Claude's hook payload JSON on stdin, scans `tool_input.command`, and
+exits 2 only when it recognizes a destructive command.
+
+Generate the settings fragment instead of hand-writing it:
+
+```bash
+scripts/contextmink hook-snippet
+```
+
+For source-vendored or custom layouts, pass explicit paths:
+
+```bash
+scripts/contextmink hook-snippet \
+  --binary F:/repo/tools/contextmink/target/release/contextmink.exe \
+  --guard-config F:/repo/.contextmink.toml
+```
+
+On Windows, Claude `Bash` hooks are shell command strings. Do not put raw
+backslash paths in that string: `F:\repo\tools\contextmink.exe` is parsed by
+Bash as escape sequences and collapses before execution. The generated snippet
+normalizes Windows paths to `F:/repo/...`, quotes paths with spaces, and emits
+PowerShell hooks with the call operator when needed. Prefer the generated
+single-string `command` form unless the host's hook schema has been verified to
+support an `args` field.
 
 ## Optional: PowerShell -> Git Bash Bridge (Windows + Codex-style hosts)
 

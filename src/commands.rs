@@ -331,6 +331,7 @@ pub(crate) fn command_grep(
     config: &ContextConfig,
     args: &[String],
     named_paths: &[PathBuf],
+    pattern_arg: Option<&str>,
     pattern_file: Option<&Path>,
     literal: bool,
     ignore_case: bool,
@@ -342,18 +343,21 @@ pub(crate) fn command_grep(
     quiet: bool,
     caps: &GrepCaps,
 ) -> Result<()> {
-    let (pattern, effective_paths) = if pattern_file.is_some() {
+    let (pattern, effective_paths) = if pattern_arg.is_some() || pattern_file.is_some() {
         (None, merged_paths(&string_args_to_paths(args), named_paths))
     } else {
         let Some((pattern, paths)) = args.split_first() else {
-            return Err(anyhow!("grep requires PATTERN or --pattern-file <file>"));
+            return Err(anyhow!(
+                "grep requires PATTERN, --pattern <pattern>, or --pattern-file <file>"
+            ));
         };
         (
             Some(pattern.as_str()),
             merged_paths(&string_args_to_paths(paths), named_paths),
         )
     };
-    let pattern = collect_single_text_source("grep pattern", pattern, pattern_file, true)?;
+    let pattern =
+        collect_single_text_source("grep pattern", pattern.or(pattern_arg), pattern_file, true)?;
     let matcher = TextMatcher::new(&pattern, literal, ignore_case)?;
     command_grep_with_matcher(
         cli,

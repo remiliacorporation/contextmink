@@ -10,6 +10,7 @@ mod encoding;
 mod files;
 mod grep_scan;
 mod hook_guard;
+mod hook_snippet;
 mod json_tools;
 mod outline;
 mod output;
@@ -28,6 +29,7 @@ use commands::{
 };
 use config::load_context_config;
 use hook_guard::command_hook_guard;
+use hook_snippet::command_hook_snippet;
 use json_tools::{command_json_find, command_json_select};
 use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
@@ -91,6 +93,7 @@ fn main() -> Result<()> {
         Command::Grep {
             args,
             path,
+            pattern,
             pattern_file,
             literal,
             ignore_case,
@@ -113,6 +116,7 @@ fn main() -> Result<()> {
             &config,
             args,
             path,
+            pattern.as_deref(),
             pattern_file.as_deref(),
             *literal,
             *ignore_case,
@@ -366,6 +370,19 @@ fn main() -> Result<()> {
         Command::HookGuard { command_field } => {
             command_hook_guard(&config.destructive_guard, command_field)
         }
+        Command::HookSnippet {
+            binary,
+            guard_config,
+            matchers,
+            command_field,
+        } => command_hook_snippet(
+            binary.as_deref(),
+            guard_config.as_deref(),
+            cli.config.as_deref(),
+            cli.no_config,
+            matchers,
+            command_field,
+        ),
     }
 }
 

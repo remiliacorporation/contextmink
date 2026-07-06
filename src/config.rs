@@ -284,7 +284,7 @@ fn parse_string_array(body: &str) -> Result<Vec<String>> {
     Ok(values)
 }
 
-fn find_config_path() -> Option<PathBuf> {
+pub(crate) fn find_config_path() -> Option<PathBuf> {
     let mut current = std::env::current_dir().ok()?;
     loop {
         let candidate = current.join(CONFIG_NAME);

@@ -65,6 +65,46 @@ fn assert_envelope(value: &Value, command: &str, unit: &str) {
 }
 
 #[test]
+fn hook_snippet_emits_claude_command_hooks() {
+    let root = fixture_root("hook-snippet");
+    let binary = root.join("tools/contextmink/contextmink.exe");
+    let config = root.join(".contextmink.toml");
+    let snippet = parse_json_output(
+        &root,
+        &[
+            "hook-snippet",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--guard-config",
+            config.to_str().unwrap(),
+        ],
+    );
+
+    let entries = snippet["hooks"]["PreToolUse"]
+        .as_array()
+        .expect("PreToolUse entries");
+    assert_eq!(entries.len(), 2);
+    let bash = entries
+        .iter()
+        .find(|entry| entry["matcher"] == "Bash")
+        .expect("Bash matcher");
+    let powershell = entries
+        .iter()
+        .find(|entry| entry["matcher"] == "PowerShell")
+        .expect("PowerShell matcher");
+    let bash_command = bash["hooks"][0]["command"].as_str().unwrap();
+    assert!(bash_command.contains("hook-guard --config"));
+    assert!(!bash_command.contains('\\'));
+    assert!(bash["hooks"][0].get("args").is_none());
+    assert!(
+        powershell["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .starts_with("& ")
+    );
+}
+
+#[test]
 fn json_commands_share_receipt_envelope() {
     let root = fixture_root("json-envelope");
 

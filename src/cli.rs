@@ -169,6 +169,12 @@ pub(crate) enum Command {
         )]
         path: Vec<PathBuf>,
         #[arg(
+            long = "pattern",
+            value_name = "PATTERN",
+            help = "Regex or literal pattern to search for; with this flag, all positional values are paths"
+        )]
+        pattern: Option<String>,
+        #[arg(
             long = "pattern-file",
             value_name = "FILE",
             help = "Read the regex or literal pattern from a UTF-8 file"
@@ -621,7 +627,7 @@ pub(crate) enum Command {
         #[arg(
             long = "sql-file",
             value_name = "FILE",
-            help = "Read the SQL query from a UTF-8 file"
+            help = "Read the SQL query from a UTF-8 file; use '-' to read SQL from stdin"
         )]
         sql_file: Option<PathBuf>,
         #[arg(
@@ -769,6 +775,34 @@ pub(crate) enum Command {
     /// Evaluate an agent PreToolUse hook payload (JSON on stdin) against the
     /// destructive-command guard; exit 2 blocks the tool call.
     HookGuard {
+        #[arg(
+            long = "command-field",
+            default_value = "tool_input.command",
+            value_name = "DOT.PATH",
+            help = "Dot-separated JSON object path of the command string in the hook payload"
+        )]
+        command_field: String,
+    },
+    /// Print a Claude settings fragment that installs hook-guard safely.
+    HookSnippet {
+        #[arg(
+            long,
+            value_name = "FILE",
+            help = "contextmink executable path to register; defaults to the current executable"
+        )]
+        binary: Option<PathBuf>,
+        #[arg(
+            long = "guard-config",
+            value_name = "FILE",
+            help = "Config path passed to hook-guard; defaults to --config or discovered .contextmink.toml"
+        )]
+        guard_config: Option<PathBuf>,
+        #[arg(
+            long = "matcher",
+            value_name = "TOOL",
+            help = "Claude tool matcher to include; repeatable. Defaults to Bash and PowerShell."
+        )]
+        matchers: Vec<String>,
         #[arg(
             long = "command-field",
             default_value = "tool_input.command",

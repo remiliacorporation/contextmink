@@ -92,6 +92,11 @@ below is the short map.
 - `capture` (alias `run`) — execute argv and print capped stdout/stderr with
   the exit status. Truncation keeps both head and tail, since verdicts sit at
   the end of tool output.
+- `hook-snippet` — print a Claude `.claude/settings.json` fragment that
+  registers `hook-guard` with shell-safe command strings.
+- `hook-guard` — evaluate an agent PreToolUse hook payload from stdin against
+  the destructive-command guard; exits 2 to block a recognized destructive
+  command.
 
 Global flags: `--json` emits one JSON object for machine consumption;
 `--fail-if-truncated` exits nonzero on capped output;
@@ -120,6 +125,7 @@ scripts/contextmink sqlite --path state.sqlite --sql-file join.sql --jsonl-param
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
+scripts/contextmink hook-snippet
 ```
 
 ## Receipts
@@ -177,12 +183,14 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   it reads the hook event JSON from stdin, extracts the command string at
   `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
   shape), and exits 2 with the deny message on stderr to block the tool call.
-  Register it as the hook command, e.g.
-  `<repo>/tools/contextmink/target/release/contextmink.exe hook-guard
-  --config <repo>/.contextmink.toml`. Unparseable payloads allow with a
-  stderr note: the guard blocks recognized destructive commands, it does not
-  validate harness payloads (fail-closed payload handling turns any schema
-  drift into a total shell outage).
+  Generate the Claude settings fragment with `contextmink hook-snippet`; it
+  emits single `command` strings rather than a non-portable `args` array and
+  normalizes Windows paths to forward slashes for Bash hooks. Raw backslash
+  paths such as `F:\repo\tools\contextmink.exe` are wrong inside a Bash hook:
+  Bash treats the backslashes as escapes and tries to execute a collapsed path.
+  Unparseable payloads allow with a stderr note: the guard blocks recognized
+  destructive commands, it does not validate harness payloads (fail-closed
+  payload handling turns any schema drift into a total shell outage).
 - Broad scans enter git-ignored directories that are themselves repository
   roots, apply that repository's own ignore rules, and disclose each entry in
   `nested_repos_entered`. Multi-repo workspaces would otherwise report
