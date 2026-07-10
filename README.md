@@ -16,7 +16,7 @@ Download the archive for your platform from
 unpack it, and put `contextmink` on `PATH` or run it in place:
 
 ```bash
-contextmink files --path . --max 20
+contextmink files --path . --limit 20
 ```
 
 Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
@@ -49,9 +49,9 @@ Copy from the unpacked archive into the target repository:
 
    | Active shell | Command |
    | --- | --- |
-   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink files --path . --max 20` |
-   | Windows PowerShell, direct contextmink command | `tools\contextmink\bin\contextmink.exe files --path . --max 20` |
-   | Windows PowerShell, Bash launcher path | `tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --max 20` |
+   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink files --path . --limit 20` |
+   | Windows PowerShell, direct contextmink command | `tools\contextmink\bin\contextmink.exe files --path . --limit 20` |
+   | Windows PowerShell, Bash launcher path | `tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --limit 20` |
 
 Variants (standalone binary, vendored source, delegated setup) and the
 Windows bridge are covered in [docs/setup.md](docs/setup.md).
@@ -72,7 +72,7 @@ below is the short map.
   match content and file lists and emits only the receipt (totals, caps,
   truncation, scan-scope fields) — for existence/count checks that do not need
   the matching lines.
-- `grep-terms` — match lines containing every `--term` value (`--or` for
+- `grep-terms` — match lines containing every `--term` value (`--any` for
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
 - `outline` — declaration map of one source file, printed as `line: text`
@@ -89,20 +89,20 @@ below is the short map.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
   `encoding` and `total_lines`.
 - `json-find` — locate JSON values by key, path, or summarized value.
-- `json-select` — project JSON or JSONL rows to selected fields (bare key,
+- `json-select` — project JSON or JSONL rows with `--fields` (bare key,
   JSON Pointer, or comma-separated list). `--where FIELD=VALUE` and
   `--where-contains FIELD=TEXT` filter rows; `--keys` reports the union of
   row keys with presence counts and value types for one-call shape
   discovery; `*.jsonl` streams without loading; fields null in every
   scanned row are flagged in `all_null_fields`.
-- `sqlite` — read-only query from `--sql` or `--sql-file` with row caps,
+- `sqlite` — read-only query against required `--path DB` from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
   strings to INTEGER for indexed joins against integer address columns),
   and a `--timeout-secs` watchdog (default 60).
-- `sqlite-schema` — tables, columns, indexes, and foreign keys of a
-  database.
-- `capture` (alias `run`) — execute argv and print capped stdout/stderr with
+- `sqlite-schema` — tables, columns, indexes, and foreign keys of the
+  required `--path DB`.
+- `capture` — execute argv and print capped stdout/stderr with
   the exit status. Truncation keeps both head and tail, since verdicts sit at
   the end of tool output.
 - `hook-snippet` — print a Claude `.claude/settings.json` fragment that
@@ -124,22 +124,22 @@ bounds.
 ## Examples
 
 ```bash
-scripts/contextmink dirs crates --depth 2 --max 40
-scripts/contextmink files --path specs --ext json --max 20
-scripts/contextmink files --path crates --term render --term tests --max 20
-scripts/contextmink files --path vendor --with-git-ignored --max 20
+scripts/contextmink dirs crates --depth 2 --limit 40
+scripts/contextmink files --path specs --ext json --limit 20
+scripts/contextmink files --path crates --term render --term tests --limit 20
+scripts/contextmink files --path vendor --with-git-ignored --limit 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
-scripts/contextmink grep-terms --term "--flag-like" --term panic --or src --max-matches 12
+scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --max-matches 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
 scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
-scripts/contextmink outline capture_sidecar.json --max-items 30
+scripts/contextmink outline capture_sidecar.json --limit 30
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
-scripts/contextmink json-select queue.jsonl --field addr --where-contains name=Cache --limit 10
+scripts/contextmink json-select queue.jsonl --fields addr --where-contains name=Cache --limit 10
 scripts/contextmink json-select capture_sidecar.json --array entries --keys
-scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --max-rows 20
+scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --limit 20
 scripts/contextmink sqlite --path state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
 scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
@@ -193,7 +193,7 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   em-dash becomes when UTF-8 is re-read as CP1252), U+FFFD replacement
   characters, or raw C1 controls. The field is omitted when nothing is found,
   and it never fails a command — it discloses.
-- `contextmink-bridge` and `capture`/`run` refuse known destructive argv
+- `contextmink-bridge` and `capture` refuse known destructive argv
   before spawn. The evaluator preserves shell quoting and command boundaries,
   resolves Git's actual subcommand, recursively inspects real shell payloads
   and command substitutions, and matches protected paths only against deletion
@@ -287,7 +287,7 @@ Excludes quiet broad scans only: pass an explicit file or subdirectory when an
 excluded tree is the target, or `--with-excluded` to lift the globs for one
 command. Git ignore rules are separate; `--with-git-ignored` lifts those.
 Configured destructive guard fragments are literal case-insensitive substrings
-matched against argv before `capture`/`run` or `contextmink-bridge` spawn a
+matched against argv before `capture` or `contextmink-bridge` spawn a
 child process.
 
 ## Scope

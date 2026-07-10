@@ -1186,7 +1186,7 @@ pub(crate) fn command_outline(
     max_line_chars: usize,
 ) -> Result<()> {
     if max_items == 0 {
-        return Err(anyhow!("outline --max-items must be greater than zero"));
+        return Err(anyhow!("outline --limit must be greater than zero"));
     }
     // Read before resolving the language so a missing/unreadable file reports
     // as such instead of as a heuristic gap.
@@ -1286,7 +1286,7 @@ pub(crate) fn command_outline(
         if truncated {
             writeln!(
                 stdout,
-                "[contextmink] capped outline at {max_items} items; filter with --contains or raise --max-items."
+                "[contextmink] capped outline at {max_items} items; filter with --contains or raise --limit."
             )?;
         }
         if !suspects.is_empty() {

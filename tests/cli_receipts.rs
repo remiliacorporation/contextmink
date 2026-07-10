@@ -148,7 +148,7 @@ fn guard_check_explains_commands_without_spawning_them() {
 fn json_commands_share_receipt_envelope() {
     let root = fixture_root("json-envelope");
 
-    let files = parse_json_output(&root, &["--json", "files", ".", "--max", "1"]);
+    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
     assert_envelope(&files, "files", "files");
     assert_eq!(files["truncated"], true);
     assert_eq!(files["complete"], false);
@@ -185,7 +185,7 @@ fn files_filters_by_literal_path_terms() {
     let files = parse_json_output(
         &root,
         &[
-            "--json", "files", ".", "--term", "render", "--term", "cgx", "--max", "10",
+            "--json", "files", ".", "--term", "render", "--term", "cgx", "--limit", "10",
         ],
     );
 
@@ -195,13 +195,10 @@ fn files_filters_by_literal_path_terms() {
 }
 
 #[test]
-fn slice_accepts_named_path_alias() {
-    let root = fixture_root("slice-path-alias");
+fn slice_accepts_positional_file() {
+    let root = fixture_root("slice-positional-file");
 
-    let json = parse_json_output(
-        &root,
-        &["--json", "slice", "--path", "sample.txt", "--range", "2:2"],
-    );
+    let json = parse_json_output(&root, &["--json", "slice", "sample.txt", "--range", "2:2"]);
     assert_envelope(&json, "slice", "lines");
     assert_eq!(json["path"], "sample.txt");
     assert_eq!(json["lines"][0]["line"], 2);
@@ -250,7 +247,6 @@ fn outline_maps_declarations_with_receipt_envelope() {
         &[
             "--json",
             "outline",
-            "--path",
             "sample.rs",
             "--contains",
             "CULL",
@@ -264,10 +260,7 @@ fn outline_maps_declarations_with_receipt_envelope() {
         "    fn cull_hidden(&mut self) {}"
     );
 
-    let capped = parse_json_output(
-        &root,
-        &["--json", "outline", "sample.rs", "--max-items", "2"],
-    );
+    let capped = parse_json_output(&root, &["--json", "outline", "sample.rs", "--limit", "2"]);
     assert_eq!(capped["truncated"], true);
     assert_eq!(capped["cap_reason"], "max_items");
     assert_eq!(capped["shown"], 2);
@@ -306,15 +299,14 @@ fn outline_fails_fast_without_language_heuristic() {
 }
 
 #[test]
-fn json_commands_accept_named_path_alias() {
-    let root = fixture_root("json-path-alias");
+fn json_commands_accept_positional_file() {
+    let root = fixture_root("json-positional-file");
 
     let find = parse_json_output(
         &root,
         &[
             "--json",
             "json-find",
-            "--path",
             "sidecar.json",
             "--key-contains",
             "mode",
@@ -325,14 +317,7 @@ fn json_commands_accept_named_path_alias() {
 
     let select = parse_json_output(
         &root,
-        &[
-            "--json",
-            "json-select",
-            "--path",
-            "sidecar.json",
-            "--field",
-            "/mode",
-        ],
+        &["--json", "json-select", "sidecar.json", "--fields", "/mode"],
     );
     assert_envelope(&select, "json-select", "rows");
     assert_eq!(select["rows"][0]["fields"]["/mode"], "\"demo\"");
@@ -448,15 +433,15 @@ fn capture_blocks_configured_protected_fragment_before_spawn() {
 }
 
 #[test]
-fn run_alias_uses_capture_receipt_shape() {
-    let root = fixture_root("run-alias");
+fn capture_uses_capture_receipt_shape() {
+    let root = fixture_root("capture-receipt-shape");
     let bin = env!("CARGO_BIN_EXE_contextmink");
 
     let json = parse_json_output(
         &root,
         &[
             "--json",
-            "run",
+            "capture",
             "--max-lines",
             "1",
             "--",
@@ -483,7 +468,7 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
             "--fail-if-truncated",
             "files",
             ".",
-            "--max",
+            "--limit",
             "1",
             "--max-scan-files",
             "20",
@@ -498,12 +483,15 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
 }
 
 #[test]
-fn strict_alias_and_scan_guard_fail_after_receipt() {
-    let root = fixture_root("strict-aliases");
+fn strict_flags_and_scan_guard_fail_after_receipt() {
+    let root = fixture_root("strict-flags");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
     fs::write(root.join("extra_b.txt"), "b\n").unwrap();
 
-    let strict = run_contextmink_raw(&root, &["--strict-complete", "files", ".", "--max", "1"]);
+    let strict = run_contextmink_raw(
+        &root,
+        &["--fail-if-truncated", "files", ".", "--limit", "1"],
+    );
     assert!(!strict.status.success());
     let strict_stdout = String::from_utf8(strict.stdout).unwrap();
     assert!(strict_stdout.contains("CONTEXTMINK_RECEIPT "));
@@ -514,7 +502,7 @@ fn strict_alias_and_scan_guard_fail_after_receipt() {
             "--require-complete-scan",
             "files",
             ".",
-            "--max",
+            "--limit",
             "1",
             "--max-scan-files",
             "20",
@@ -530,7 +518,7 @@ fn strict_alias_and_scan_guard_fail_after_receipt() {
             "--require-complete-scan",
             "files",
             ".",
-            "--max",
+            "--limit",
             "10",
             "--max-scan-files",
             "1",
@@ -746,7 +734,7 @@ fn files_scan_cap_sets_complete_false() {
             "--json",
             "files",
             ".",
-            "--max",
+            "--limit",
             "10",
             "--max-scan-files",
             "2",
@@ -822,7 +810,7 @@ fn files_term_matches_literal_decomp_ledger_name() {
             "decompilation_outputs",
             "--term",
             "rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl",
-            "--max",
+            "--limit",
             "20",
         ],
     );
@@ -869,15 +857,7 @@ fn files_ext_filters_without_shell_glob_patterns() {
     let files = parse_json_output(
         &root,
         &[
-            "--json",
-            "files",
-            "queue",
-            "--ext",
-            ".json",
-            "--extension",
-            "jsonl",
-            "--limit",
-            "5",
+            "--json", "files", "queue", "--ext", ".json", "--ext", "jsonl", "--limit", "5",
         ],
     );
 
@@ -890,7 +870,7 @@ fn files_ext_filters_without_shell_glob_patterns() {
 
 #[test]
 fn files_accepts_named_path_without_default_root() {
-    let root = fixture_root("files-path-alias");
+    let root = fixture_root("files-named-path");
     fs::create_dir_all(root.join("queue")).unwrap();
     fs::write(root.join("queue").join("work.jsonl"), "{}\n").unwrap();
 
@@ -926,7 +906,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
     )
     .unwrap();
 
-    let broad = parse_json_output(&root, &["--json", "files", ".", "--max", "20"]);
+    let broad = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
     assert_envelope(&broad, "files", "files");
     let broad_files = broad["files"].as_array().unwrap();
     assert!(
@@ -942,7 +922,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
             "files",
             ".",
             "--with-excluded",
-            "--max",
+            "--limit",
             "20",
             "--max-scan-files",
             "20",
@@ -963,7 +943,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
             "--json",
             "files",
             "artifacts/notes",
-            "--max",
+            "--limit",
             "20",
             "--max-scan-files",
             "20",
@@ -1019,7 +999,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "--json",
             "files",
             ".",
-            "--max",
+            "--limit",
             "20",
             "--max-scan-files",
             "20",
@@ -1048,7 +1028,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "files",
             ".",
             "--skip-nested-repos",
-            "--max",
+            "--limit",
             "20",
             "--max-scan-files",
             "20",
@@ -1071,7 +1051,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "files",
             ".",
             "--with-git-ignored",
-            "--max",
+            "--limit",
             "20",
             "--max-scan-files",
             "20",
@@ -1180,8 +1160,7 @@ fn grep_terms_supports_any_mode_and_term_files() {
         &[
             "--json",
             "grep-terms",
-            "--mode",
-            "any",
+            "--any",
             "--term",
             "alpha",
             "--term",
@@ -1193,30 +1172,12 @@ fn grep_terms_supports_any_mode_and_term_files() {
     assert_eq!(any["pattern"], "any_terms(alpha,beta)");
     assert_eq!(any["total_matches"], 3);
 
-    let or_alias = parse_json_output(
-        &root,
-        &[
-            "--json",
-            "grep-terms",
-            "--or",
-            "--term",
-            "alpha",
-            "--term",
-            "beta",
-            "sample.txt",
-        ],
-    );
-    assert_envelope(&or_alias, "grep-terms", "files");
-    assert_eq!(or_alias["pattern"], "any_terms(alpha,beta)");
-    assert_eq!(or_alias["total_matches"], 3);
-
     let term_file = parse_json_output(
         &root,
         &[
             "--json",
             "grep-terms",
-            "--mode",
-            "any",
+            "--any",
             "--term-file",
             "phrases.txt",
             "sample.txt",
@@ -1228,8 +1189,8 @@ fn grep_terms_supports_any_mode_and_term_files() {
 }
 
 #[test]
-fn grep_terms_accepts_agent_friendly_limit_aliases() {
-    let root = fixture_root("grep-terms-aliases");
+fn grep_terms_accepts_canonical_limits() {
+    let root = fixture_root("grep-terms-canonical-limits");
     fs::write(root.join("flags.txt"), "--flag-like value\n").unwrap();
 
     let json = parse_json_output(
@@ -1260,10 +1221,12 @@ fn grep_terms_accepts_agent_friendly_limit_aliases() {
     assert_eq!(flag_like["total_matches"], 1);
 
     let help = run_contextmink(&root, &["grep-terms", "--help"]);
-    assert!(help.contains("--max-matched-files"));
+    assert!(help.contains("--max-count-files"));
     assert!(help.contains("--limit"));
     assert!(help.contains("--max-matches"));
-    assert!(help.contains("--max-lines"));
+    assert!(help.contains("--any"));
+    assert!(!help.contains("--max-lines"));
+    assert!(!help.contains("--mode"));
 }
 
 #[test]
@@ -1284,7 +1247,7 @@ fn grep_stops_content_scan_at_matching_file_cap() {
             "needle",
             "--max-count-files",
             "2",
-            "--max-files",
+            "--limit",
             "2",
             "matches",
         ],
@@ -1339,7 +1302,7 @@ fn grep_marks_match_totals_lower_bound_when_candidate_scan_is_capped() {
             "1",
             "--max-count-files",
             "10",
-            "--max-files",
+            "--limit",
             "10",
             "matches",
         ],
@@ -1369,7 +1332,7 @@ fn grep_json_honors_global_sample_cap() {
             "sample.txt",
             "--lines-per-file",
             "3",
-            "--max-sample-lines",
+            "--max-matches",
             "1",
         ],
     );
@@ -1405,7 +1368,7 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
 
 #[test]
 fn grep_accepts_named_search_paths() {
-    let root = fixture_root("grep-path-alias");
+    let root = fixture_root("grep-named-path");
 
     let json = parse_json_output(&root, &["--json", "grep", "alpha", "--path", "sample.txt"]);
     assert_envelope(&json, "grep", "files");
@@ -1444,9 +1407,9 @@ fn json_select_projects_array_fields_without_jq_filters() {
             "sidecar.json",
             "--array",
             "/textures",
-            "--field",
+            "--fields",
             "index",
-            "--field",
+            "--fields",
             "path",
         ],
     );
@@ -1457,8 +1420,8 @@ fn json_select_projects_array_fields_without_jq_filters() {
 }
 
 #[test]
-fn json_select_accepts_comma_separated_fields_alias() {
-    let root = fixture_root("json-select-fields-alias");
+fn json_select_accepts_comma_separated_fields() {
+    let root = fixture_root("json-select-fields-list");
 
     let json = parse_json_output(
         &root,
@@ -1493,7 +1456,7 @@ fn json_select_tolerates_msys_converted_json_pointers() {
             "sidecar.json",
             "--array",
             "C:/Program Files/Git/textures",
-            "--field",
+            "--fields",
             "C:/Program Files/Git/path",
             "--limit",
             "1",
@@ -1514,7 +1477,7 @@ fn json_select_tolerates_msys_converted_json_pointers() {
 }
 
 #[test]
-fn json_select_projects_jsonl_rows_and_limit_alias() {
+fn json_select_projects_jsonl_rows_with_limit() {
     let root = fixture_root("json-select-jsonl");
     fs::write(
         root.join("queue.jsonl"),
@@ -1528,9 +1491,9 @@ fn json_select_projects_jsonl_rows_and_limit_alias() {
             "--json",
             "json-select",
             "queue.jsonl",
-            "--field",
+            "--fields",
             "addr",
-            "--field",
+            "--fields",
             "flags",
             "--limit",
             "1",
@@ -1550,8 +1513,8 @@ fn json_select_projects_jsonl_rows_and_limit_alias() {
 }
 
 #[test]
-fn limit_aliases_match_canonical_caps() {
-    let root = fixture_root("limit-aliases");
+fn canonical_limits_cap_outputs() {
+    let root = fixture_root("canonical-limits");
     fs::write(root.join("extra.txt"), "alpha\n").unwrap();
 
     let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
@@ -1589,6 +1552,7 @@ fn limit_aliases_match_canonical_caps() {
         &[
             "--json",
             "sqlite",
+            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
@@ -1607,10 +1571,11 @@ fn limit_aliases_match_canonical_caps() {
         &[
             "--json",
             "sqlite",
+            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
-            "--max-rows",
+            "--limit",
             "1",
             "--max-scan-rows",
             "1",
@@ -1625,10 +1590,11 @@ fn limit_aliases_match_canonical_caps() {
         &[
             "--require-complete-scan",
             "sqlite",
+            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
-            "--max-rows",
+            "--limit",
             "1",
             "--max-scan-rows",
             "1",
@@ -1668,7 +1634,7 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
             "sample.sqlite",
             "--sql-file",
             "query.sql",
-            "--max-rows",
+            "--limit",
             "1",
         ],
     );
@@ -1677,25 +1643,6 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
     assert_eq!(json["total"], 2);
     assert_eq!(json["cap_reason"], "rows");
     assert_eq!(json["rows"][0]["fields"]["joined"], "\"alpha:beta\"");
-
-    let duplicate_db = run_contextmink_raw(
-        &root,
-        &[
-            "--json",
-            "sqlite",
-            "sample.sqlite",
-            "--db",
-            "sample.sqlite",
-            "--sql",
-            "SELECT 1",
-        ],
-    );
-    assert!(!duplicate_db.status.success());
-    assert!(
-        String::from_utf8(duplicate_db.stderr)
-            .unwrap()
-            .contains("either positional <DB> or --db/--path <DB>, not both")
-    );
 }
 
 #[test]
@@ -1853,6 +1800,7 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         &[
             "--json",
             "sqlite-schema",
+            "--path",
             "schema.sqlite",
             "--max-tables",
             "1",
@@ -2034,7 +1982,7 @@ fn json_select_where_filters_rows() {
             "--json",
             "json-select",
             "queue.jsonl",
-            "--field",
+            "--fields",
             "addr",
             "--where",
             "state=open",
@@ -2052,7 +2000,7 @@ fn json_select_where_filters_rows() {
             "--json",
             "json-select",
             "queue.jsonl",
-            "--field",
+            "--fields",
             "addr",
             "--where-contains",
             "state=clo",
@@ -2077,9 +2025,9 @@ fn json_select_reports_all_null_fields() {
             "--json",
             "json-select",
             "rows.jsonl",
-            "--field",
+            "--fields",
             "addr",
-            "--field",
+            "--fields",
             "typo_field",
         ],
     );
@@ -2089,7 +2037,7 @@ fn json_select_reports_all_null_fields() {
 
     let human = run_contextmink(
         &root,
-        &["json-select", "rows.jsonl", "--field", "typo_field"],
+        &["json-select", "rows.jsonl", "--fields", "typo_field"],
     );
     assert!(human.contains("warning: field(s) typo_field"));
 }
@@ -2107,7 +2055,7 @@ fn json_commands_tolerate_utf8_bom_documents() {
 
     let select = parse_json_output(
         &root,
-        &["--json", "json-select", "bom.json", "--field", "mode"],
+        &["--json", "json-select", "bom.json", "--fields", "mode"],
     );
     assert_eq!(select["rows"][0]["fields"]["mode"], "\"demo\"");
 }
@@ -2151,7 +2099,7 @@ fn config_typos_fail_fast() {
     )
     .unwrap();
 
-    let output = run_contextmink_raw(&root, &["files", ".", "--max", "1"]);
+    let output = run_contextmink_raw(&root, &["files", ".", "--limit", "1"]);
     assert!(!output.status.success());
     assert!(
         String::from_utf8(output.stderr)
@@ -2164,7 +2112,7 @@ fn config_typos_fail_fast() {
 fn receipts_carry_duration_ms() {
     let root = fixture_root("duration-ms");
 
-    let json = parse_json_output(&root, &["--json", "files", ".", "--max", "1"]);
+    let json = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
     assert!(json["duration_ms"].is_number());
 }
 
@@ -2183,7 +2131,7 @@ fn excludes_hold_for_absolute_scan_roots() {
     // path (or the command runs from a subdirectory), not only for
     // config-root-relative spellings.
     let absolute_root = root.to_string_lossy().replace('\\', "/");
-    let files = parse_json_output(&root, &["--json", "files", &absolute_root, "--max", "50"]);
+    let files = parse_json_output(&root, &["--json", "files", &absolute_root, "--limit", "50"]);
     assert_envelope(&files, "files", "files");
     let listed = files["files"].as_array().unwrap();
     assert!(
@@ -2202,7 +2150,7 @@ fn excludes_hold_for_absolute_scan_roots() {
     let absolute_excluded = format!("{absolute_root}/artifacts");
     let explicit = parse_json_output(
         &root,
-        &["--json", "files", &absolute_excluded, "--max", "10"],
+        &["--json", "files", &absolute_excluded, "--limit", "10"],
     );
     assert_eq!(explicit["total"], 1);
     assert!(
@@ -2345,7 +2293,7 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
 }
 
 #[test]
-fn grep_terms_quiet_composes_with_or_mode() {
+fn grep_terms_quiet_composes_with_any_mode() {
     let root = fixture_root("grep-terms-quiet");
 
     let json = parse_json_output(
@@ -2357,7 +2305,7 @@ fn grep_terms_quiet_composes_with_or_mode() {
             "alpha",
             "--term",
             "nowhere",
-            "--or",
+            "--any",
             "sample.txt",
             "--quiet",
         ],

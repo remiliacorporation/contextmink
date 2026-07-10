@@ -19,7 +19,7 @@ mod output;
 mod sqlite;
 mod text;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
@@ -36,7 +36,7 @@ use hook_snippet::command_hook_snippet;
 use json_tools::{command_json_find, command_json_select};
 use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
-use text::{TextMatcher, collect_terms, resolve_term_mode};
+use text::{TermMode, TextMatcher, collect_terms};
 
 fn main() -> Result<()> {
     output::mark_command_start();
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
             with_git_ignored,
             skip_nested_repos,
             quiet,
-            max,
+            limit,
             max_line_chars,
             max_scan_files,
         } => command_files(
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
             *with_git_ignored,
             *skip_nested_repos,
             *quiet,
-            *max,
+            *limit,
             *max_line_chars,
             *max_scan_files,
         ),
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
             with_excluded,
             with_git_ignored,
             skip_nested_repos,
-            max,
+            limit,
             max_line_chars,
             max_scan_files,
         } => command_dirs(
@@ -89,7 +89,7 @@ fn main() -> Result<()> {
             *with_excluded,
             *with_git_ignored,
             *skip_nested_repos,
-            *max,
+            *limit,
             *max_line_chars,
             *max_scan_files,
         ),
@@ -107,10 +107,10 @@ fn main() -> Result<()> {
             skip_nested_repos,
             quiet,
             max_count_files,
-            max_files,
+            limit,
             lines_per_file,
             context,
-            max_sample_lines,
+            max_matches,
             max_line_chars,
             max_scan_files,
             max_file_bytes,
@@ -131,10 +131,10 @@ fn main() -> Result<()> {
             *quiet,
             &GrepCaps {
                 max_count_files: *max_count_files,
-                max_files: *max_files,
+                max_files: *limit,
                 lines_per_file: *lines_per_file,
                 context: *context,
-                max_sample_lines: *max_sample_lines,
+                max_sample_lines: *max_matches,
                 max_line_chars: *max_line_chars,
                 max_scan_files: *max_scan_files,
                 max_file_bytes: *max_file_bytes,
@@ -143,9 +143,7 @@ fn main() -> Result<()> {
         Command::GrepTerms {
             terms,
             term_files,
-            mode,
             any,
-            all,
             ignore_case,
             globs,
             extensions,
@@ -156,16 +154,16 @@ fn main() -> Result<()> {
             skip_nested_repos,
             quiet,
             max_count_files,
-            max_files,
+            limit,
             lines_per_file,
             context,
-            max_sample_lines,
+            max_matches,
             max_line_chars,
             max_scan_files,
             max_file_bytes,
         } => {
             let terms = collect_terms(terms, term_files)?;
-            let mode = resolve_term_mode(*mode, *any, *all)?;
+            let mode = if *any { TermMode::Any } else { TermMode::All };
             command_grep_with_matcher(
                 &cli,
                 &config,
@@ -180,10 +178,10 @@ fn main() -> Result<()> {
                 *quiet,
                 &GrepCaps {
                     max_count_files: *max_count_files,
-                    max_files: *max_files,
+                    max_files: *limit,
                     lines_per_file: *lines_per_file,
                     context: *context,
-                    max_sample_lines: *max_sample_lines,
+                    max_sample_lines: *max_matches,
                     max_line_chars: *max_line_chars,
                     max_scan_files: *max_scan_files,
                     max_file_bytes: *max_file_bytes,
@@ -192,7 +190,6 @@ fn main() -> Result<()> {
         }
         Command::Slice {
             file,
-            path,
             range,
             start,
             end,
@@ -205,9 +202,7 @@ fn main() -> Result<()> {
         } => command_slice(
             &cli,
             &config,
-            file.as_deref()
-                .or(path.as_deref())
-                .expect("clap requires a slice file through <FILE> or --path"),
+            file,
             range.as_deref(),
             *start,
             *end,
@@ -220,113 +215,94 @@ fn main() -> Result<()> {
         ),
         Command::Outline {
             file,
-            path,
             lang,
             prefix,
             pattern,
             contains,
             ignore_case,
-            max_items,
+            limit,
             max_line_chars,
         } => command_outline(
             &cli,
             &config,
-            file.as_deref()
-                .or(path.as_deref())
-                .expect("clap requires an outline file through <FILE> or --path"),
+            file,
             lang.as_deref(),
             prefix.as_deref(),
             pattern.as_deref(),
             contains,
             *ignore_case,
-            *max_items,
+            *limit,
             *max_line_chars,
         ),
         Command::JsonFind {
             file,
-            path,
             key_contains,
             key_regex,
             path_contains,
             path_regex,
             value_contains,
-            max,
+            limit,
             max_value_chars,
         } => command_json_find(
             &cli,
             &config,
-            file.as_deref()
-                .or(path.as_deref())
-                .expect("clap requires a JSON input through <FILE> or --path"),
+            file,
             key_contains,
             key_regex.as_deref(),
             path_contains,
             path_regex.as_deref(),
             value_contains,
-            *max,
+            *limit,
             *max_value_chars,
         ),
         Command::JsonSelect {
             file,
-            path,
             array,
             fields,
-            fields_csv,
             keys,
             where_exact,
             where_contains,
-            max,
+            limit,
             max_value_chars,
-        } => {
-            let mut selected_fields = fields.clone();
-            selected_fields.extend(fields_csv.iter().cloned());
-            command_json_select(
-                &cli,
-                &config,
-                file.as_deref()
-                    .or(path.as_deref())
-                    .expect("clap requires a JSON input through <FILE> or --path"),
-                array.as_deref(),
-                &selected_fields,
-                where_exact,
-                where_contains,
-                *keys,
-                *max,
-                *max_value_chars,
-            )
-        }
+        } => command_json_select(
+            &cli,
+            &config,
+            file,
+            array.as_deref(),
+            fields,
+            where_exact,
+            where_contains,
+            *keys,
+            *limit,
+            *max_value_chars,
+        ),
         Command::Sqlite {
-            positional_db,
-            db,
+            path,
             sql,
             sql_file,
             json_params,
             jsonl_params,
             max_param_bytes,
-            max_rows,
+            limit,
             max_scan_rows,
             timeout_secs,
             max_value_chars,
-        } => {
-            let db = resolve_db_path("sqlite", positional_db.as_ref(), db.as_ref())?;
-            command_sqlite(
-                &cli,
-                &config,
-                db,
-                sql.as_deref(),
-                sql_file.as_deref(),
-                json_params,
-                jsonl_params,
-                *max_param_bytes,
-                *max_rows,
-                *max_scan_rows,
-                *timeout_secs,
-                *max_value_chars,
-            )
-        }
+        } => command_sqlite(
+            &cli,
+            &config,
+            path,
+            sql.as_deref(),
+            sql_file.as_deref(),
+            json_params,
+            jsonl_params,
+            *max_param_bytes,
+            *limit,
+            *max_scan_rows,
+            *timeout_secs,
+            *max_value_chars,
+        ),
         Command::SqliteSchema {
-            positional_db,
-            db,
+            path,
             tables,
             name_contains,
             include_shadow,
@@ -335,22 +311,19 @@ fn main() -> Result<()> {
             max_columns,
             max_indexes,
             max_line_chars,
-        } => {
-            let db = resolve_db_path("sqlite-schema", positional_db.as_ref(), db.as_ref())?;
-            command_sqlite_schema(
-                &cli,
-                &config,
-                db,
-                tables,
-                name_contains,
-                *include_shadow,
-                *include_system,
-                *max_tables,
-                *max_columns,
-                *max_indexes,
-                *max_line_chars,
-            )
-        }
+        } => command_sqlite_schema(
+            &cli,
+            &config,
+            path,
+            tables,
+            name_contains,
+            *include_shadow,
+            *include_system,
+            *max_tables,
+            *max_columns,
+            *max_indexes,
+            *max_line_chars,
+        ),
         Command::Capture {
             max_lines,
             max_bytes,
@@ -441,22 +414,6 @@ pub(crate) fn merged_paths(positional: &[PathBuf], named: &[PathBuf]) -> Vec<Pat
         paths.push(PathBuf::from("."));
     }
     paths
-}
-
-pub(crate) fn resolve_db_path<'a>(
-    command_name: &str,
-    positional_db: Option<&'a PathBuf>,
-    named_db: Option<&'a PathBuf>,
-) -> Result<&'a Path> {
-    match (positional_db, named_db) {
-        (Some(_), Some(_)) => Err(anyhow!(
-            "{command_name} accepts either positional <DB> or --db/--path <DB>, not both"
-        )),
-        (Some(path), None) | (None, Some(path)) => Ok(path.as_path()),
-        (None, None) => Err(anyhow!(
-            "{command_name} requires a SQLite database path as <DB> or --db/--path <DB>"
-        )),
-    }
 }
 
 #[cfg(test)]

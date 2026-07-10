@@ -231,13 +231,13 @@ pub(crate) fn command_json_select(
     max_value_chars: usize,
 ) -> Result<()> {
     if max == 0 {
-        return Err(anyhow!("json-select --max must be greater than zero"));
+        return Err(anyhow!("json-select --limit must be greater than zero"));
     }
     let array = array.map(normalize_json_selector_arg);
     let fields = expand_json_select_fields(fields);
     if keys && !fields.is_empty() {
         return Err(anyhow!(
-            "json-select --keys reports row shape and cannot be combined with --field/--fields"
+            "json-select --keys reports row shape and cannot be combined with --fields"
         ));
     }
     let predicates = parse_where_predicates(where_exact, where_contains)?;
@@ -587,7 +587,7 @@ fn render_json_select_keys(
         if truncated {
             writeln!(
                 stdout,
-                "[contextmink] capped keys at {max}; raise --max or filter rows."
+                "[contextmink] capped keys at {max}; raise --limit or filter rows."
             )?;
         }
         write_receipt_checked(cli, map)

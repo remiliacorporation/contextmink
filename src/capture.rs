@@ -67,7 +67,7 @@ pub(crate) fn command_capture(
         .ok_or_else(|| anyhow!("capture requires a command after --"))?;
     let expected_exit_codes = parse_expected_exit_codes(expect_exit)?;
 
-    // Same blocking deny-list as contextmink-bridge: capture/run spawn
+    // Same blocking deny-list as contextmink-bridge: capture spawn
     // arbitrary commands and must refuse destructive argv before spawn.
     match crate::destructive_guard::evaluate_argv(
         argv,

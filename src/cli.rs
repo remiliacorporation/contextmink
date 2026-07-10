@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::destructive_guard::ShellDialect;
-use crate::text::TermMode;
-
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub(crate) struct Cli {
@@ -12,11 +10,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) json: bool,
     /// Exit nonzero after emitting a receipt if the command output was capped.
-    #[arg(
-        long,
-        aliases = ["fail-on-truncated", "fail-on-truncate", "strict-complete"],
-        global = true
-    )]
+    #[arg(long, global = true)]
     pub(crate) fail_if_truncated: bool,
     /// Exit nonzero after emitting a receipt if scan-capped totals are lower bounds.
     #[arg(long, global = true)]
@@ -50,14 +44,12 @@ pub(crate) enum Command {
         globs: Vec<String>,
         #[arg(
             long = "term",
-            visible_alias = "name-contains",
             value_name = "TEXT",
             help = "Only include paths containing this literal text; repeat for all required terms"
         )]
         path_terms: Vec<String>,
         #[arg(
             long = "ext",
-            alias = "extension",
             value_name = "EXT",
             help = "Only include files with this extension (comma-separated list ok); leading dot is optional"
         )]
@@ -82,13 +74,8 @@ pub(crate) enum Command {
             help = "Suppress the file list; emit only the receipt (totals, caps, truncation, scan-scope fields)"
         )]
         quiet: bool,
-        #[arg(
-            long,
-            alias = "limit",
-            default_value_t = 80,
-            help = "Maximum paths to print"
-        )]
-        max: usize,
+        #[arg(long, default_value_t = 80, help = "Maximum paths to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -133,13 +120,8 @@ pub(crate) enum Command {
             help = "Do not enter git-ignored nested repository roots during broad scans"
         )]
         skip_nested_repos: bool,
-        #[arg(
-            long,
-            alias = "limit",
-            default_value_t = 60,
-            help = "Maximum directories to print"
-        )]
-        max: usize,
+        #[arg(long, default_value_t = 60, help = "Maximum directories to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -192,7 +174,6 @@ pub(crate) enum Command {
         globs: Vec<String>,
         #[arg(
             long = "ext",
-            alias = "extension",
             value_name = "EXT",
             help = "Only search files with this extension (comma-separated list ok); leading dot is optional"
         )]
@@ -226,18 +207,12 @@ pub(crate) enum Command {
         quiet: bool,
         #[arg(
             long,
-            visible_alias = "max-matched-files",
             default_value_t = 80,
             help = "Maximum matching files to count before stopping content scan"
         )]
         max_count_files: usize,
-        #[arg(
-            long,
-            visible_alias = "limit",
-            default_value_t = 12,
-            help = "Maximum matching files to print"
-        )]
-        max_files: usize,
+        #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 3,
@@ -245,12 +220,11 @@ pub(crate) enum Command {
         )]
         lines_per_file: usize,
         #[arg(
-            long,
-            visible_aliases = ["max-matches", "max-lines"],
+            long = "max-matches",
             default_value_t = 36,
             help = "Maximum sample match lines to print across all files"
         )]
-        max_sample_lines: usize,
+        max_matches: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -276,6 +250,7 @@ pub(crate) enum Command {
         #[arg(
             long = "term",
             allow_hyphen_values = true,
+            value_name = "TERM",
             help = "Literal term to search for"
         )]
         terms: Vec<String>,
@@ -285,12 +260,11 @@ pub(crate) enum Command {
             help = "Read literal terms from a UTF-8 file, one per line"
         )]
         term_files: Vec<PathBuf>,
-        #[arg(long = "mode", value_enum, default_value_t = TermMode::All, help = "Require all terms or any term on a matching line")]
-        mode: TermMode,
-        #[arg(long, alias = "or", help = "Shortcut for --mode any")]
+        #[arg(
+            long,
+            help = "Match a line containing any term instead of requiring all terms"
+        )]
         any: bool,
-        #[arg(long, alias = "and", help = "Shortcut for --mode all")]
-        all: bool,
         #[arg(long = "ignore-case", short = 'i', help = "Match case-insensitively")]
         ignore_case: bool,
         #[arg(
@@ -300,7 +274,6 @@ pub(crate) enum Command {
         globs: Vec<String>,
         #[arg(
             long = "ext",
-            alias = "extension",
             value_name = "EXT",
             help = "Only search files with this extension (comma-separated list ok); leading dot is optional"
         )]
@@ -342,18 +315,12 @@ pub(crate) enum Command {
         quiet: bool,
         #[arg(
             long,
-            visible_alias = "max-matched-files",
             default_value_t = 80,
             help = "Maximum matching files to count before stopping content scan"
         )]
         max_count_files: usize,
-        #[arg(
-            long,
-            visible_alias = "limit",
-            default_value_t = 12,
-            help = "Maximum matching files to print"
-        )]
-        max_files: usize,
+        #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 3,
@@ -361,12 +328,11 @@ pub(crate) enum Command {
         )]
         lines_per_file: usize,
         #[arg(
-            long,
-            visible_aliases = ["max-matches", "max-lines"],
+            long = "max-matches",
             default_value_t = 36,
             help = "Maximum sample match lines to print across all files"
         )]
-        max_sample_lines: usize,
+        max_matches: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -388,19 +354,8 @@ pub(crate) enum Command {
     },
     /// Print a bounded line or character window from one text file.
     Slice {
-        #[arg(
-            value_name = "FILE",
-            required_unless_present = "path",
-            help = "Text file to slice"
-        )]
-        file: Option<PathBuf>,
-        #[arg(
-            long = "path",
-            value_name = "FILE",
-            conflicts_with = "file",
-            help = "Text file to slice"
-        )]
-        path: Option<PathBuf>,
+        #[arg(value_name = "FILE", help = "Text file to slice")]
+        file: PathBuf,
         #[arg(long, help = "One-based inclusive line range START:END")]
         range: Option<String>,
         #[arg(long, default_value_t = 1, help = "First one-based line to print")]
@@ -446,19 +401,8 @@ pub(crate) enum Command {
     /// not a parser: use it to locate the right region of a large file, then
     /// read that region with `slice`.
     Outline {
-        #[arg(
-            value_name = "FILE",
-            required_unless_present = "path",
-            help = "Source file to outline"
-        )]
-        file: Option<PathBuf>,
-        #[arg(
-            long = "path",
-            value_name = "FILE",
-            conflicts_with = "file",
-            help = "Source file to outline"
-        )]
-        path: Option<PathBuf>,
+        #[arg(value_name = "FILE", help = "Source file to outline")]
+        file: PathBuf,
         #[arg(
             long,
             value_name = "LANG",
@@ -491,13 +435,8 @@ pub(crate) enum Command {
             help = "Match --contains case-insensitively"
         )]
         ignore_case: bool,
-        #[arg(
-            long,
-            alias = "limit",
-            default_value_t = 120,
-            help = "Maximum outline rows to print"
-        )]
-        max_items: usize,
+        #[arg(long, default_value_t = 120, help = "Maximum outline rows to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -507,19 +446,8 @@ pub(crate) enum Command {
     },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
-        #[arg(
-            value_name = "FILE",
-            required_unless_present = "path",
-            help = "JSON or JSONL file to inspect"
-        )]
-        file: Option<PathBuf>,
-        #[arg(
-            long = "path",
-            value_name = "FILE",
-            conflicts_with = "file",
-            help = "JSON or JSONL file to inspect"
-        )]
-        path: Option<PathBuf>,
+        #[arg(value_name = "FILE", help = "JSON or JSONL file to inspect")]
+        file: PathBuf,
         #[arg(long, help = "Match object keys containing this text")]
         key_contains: Vec<String>,
         #[arg(long, help = "Match object keys with this regex")]
@@ -530,13 +458,8 @@ pub(crate) enum Command {
         path_regex: Option<String>,
         #[arg(long, help = "Match summarized values containing this text")]
         value_contains: Vec<String>,
-        #[arg(
-            long,
-            alias = "limit",
-            default_value_t = 40,
-            help = "Maximum matches to print"
-        )]
-        max: usize,
+        #[arg(long, default_value_t = 40, help = "Maximum matches to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 260,
@@ -547,19 +470,8 @@ pub(crate) enum Command {
     /// Project JSON root or array rows to bounded field summaries.
     #[command(name = "json-select")]
     JsonSelect {
-        #[arg(
-            value_name = "FILE",
-            required_unless_present = "path",
-            help = "JSON or JSONL file to project"
-        )]
-        file: Option<PathBuf>,
-        #[arg(
-            long = "path",
-            value_name = "FILE",
-            conflicts_with = "file",
-            help = "JSON or JSONL file to project"
-        )]
-        path: Option<PathBuf>,
+        #[arg(value_name = "FILE", help = "JSON or JSONL file to project")]
+        file: PathBuf,
         #[arg(
             long,
             value_name = "KEY_OR_POINTER",
@@ -567,17 +479,11 @@ pub(crate) enum Command {
         )]
         array: Option<String>,
         #[arg(
-            long = "field",
-            value_name = "KEY_OR_POINTER",
-            help = "Field key, JSON Pointer, or comma-separated field list to include in each row"
-        )]
-        fields: Vec<String>,
-        #[arg(
             long = "fields",
             value_name = "KEY_OR_POINTERS",
             help = "Comma-separated field keys or JSON Pointers to include in each row"
         )]
-        fields_csv: Vec<String>,
+        fields: Vec<String>,
         #[arg(
             long,
             help = "Report the union of top-level row keys (presence counts and value types) instead of projecting rows; discovers an unknown row shape in one call"
@@ -595,13 +501,8 @@ pub(crate) enum Command {
             help = "Only keep rows whose field value contains TEXT; repeatable, all must hold"
         )]
         where_contains: Vec<String>,
-        #[arg(
-            long,
-            alias = "limit",
-            default_value_t = 40,
-            help = "Maximum rows to print"
-        )]
-        max: usize,
+        #[arg(long, default_value_t = 40, help = "Maximum rows to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 260,
@@ -611,18 +512,8 @@ pub(crate) enum Command {
     },
     /// Run a read-only SQLite query with bounded row output.
     Sqlite {
-        #[arg(
-            value_name = "DB",
-            help = "SQLite database file; may also be passed with --db/--path"
-        )]
-        positional_db: Option<PathBuf>,
-        #[arg(
-            long = "db",
-            alias = "path",
-            value_name = "DB",
-            help = "SQLite database file"
-        )]
-        db: Option<PathBuf>,
+        #[arg(long = "path", value_name = "DB", help = "SQLite database file")]
+        path: PathBuf,
         #[arg(long, help = "Read-only SQL query to run")]
         sql: Option<String>,
         #[arg(
@@ -649,13 +540,8 @@ pub(crate) enum Command {
             help = "Maximum bytes per --json-param/--jsonl-param file"
         )]
         max_param_bytes: u64,
-        #[arg(
-            long = "max-rows",
-            alias = "limit",
-            default_value_t = 40,
-            help = "Maximum rows to print"
-        )]
-        max_rows: usize,
+        #[arg(long, default_value_t = 40, help = "Maximum rows to print")]
+        limit: usize,
         #[arg(
             long,
             default_value_t = 5000,
@@ -678,18 +564,8 @@ pub(crate) enum Command {
     /// Summarize SQLite tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
     SqliteSchema {
-        #[arg(
-            value_name = "DB",
-            help = "SQLite database file; may also be passed with --db/--path"
-        )]
-        positional_db: Option<PathBuf>,
-        #[arg(
-            long = "db",
-            alias = "path",
-            value_name = "DB",
-            help = "SQLite database file"
-        )]
-        db: Option<PathBuf>,
+        #[arg(long = "path", value_name = "DB", help = "SQLite database file")]
+        path: PathBuf,
         #[arg(
             long = "table",
             value_name = "NAME",
@@ -728,7 +604,6 @@ pub(crate) enum Command {
         max_line_chars: usize,
     },
     /// Execute argv directly and print bounded stdout/stderr summaries.
-    #[command(visible_alias = "run")]
     Capture {
         #[arg(
             long,

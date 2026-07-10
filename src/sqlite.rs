@@ -84,14 +84,14 @@ pub(crate) fn command_sqlite(
     max_value_chars: usize,
 ) -> Result<()> {
     if max_rows == 0 {
-        return Err(anyhow!("sqlite --max-rows must be greater than zero"));
+        return Err(anyhow!("sqlite --limit must be greater than zero"));
     }
     if max_scan_rows == 0 {
         return Err(anyhow!("sqlite --max-scan-rows must be greater than zero"));
     }
     if max_scan_rows < max_rows {
         return Err(anyhow!(
-            "sqlite --max-scan-rows must be greater than or equal to --max-rows"
+            "sqlite --max-scan-rows must be greater than or equal to --limit"
         ));
     }
     if max_param_bytes == 0 {
@@ -206,7 +206,7 @@ pub(crate) fn command_sqlite(
         } else if shown < total_seen {
             writeln!(
                 stdout,
-                "[contextmink] capped sqlite output at {max_rows} rows; increase --max-rows or narrow the query."
+                "[contextmink] capped sqlite output at {max_rows} rows; increase --limit or narrow the query."
             )?;
         }
         let mut map = base_receipt(

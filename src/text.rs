@@ -3,7 +3,6 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use clap::ValueEnum;
 use regex::Regex;
 
 #[derive(Clone)]
@@ -23,7 +22,7 @@ pub(crate) enum TextMatcher {
     },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum TermMode {
     All,
     Any,
@@ -179,17 +178,6 @@ pub(crate) fn collect_terms(terms: &[String], term_files: &[PathBuf]) -> Result<
         ));
     }
     Ok(collected)
-}
-
-pub(crate) fn resolve_term_mode(mode: TermMode, any: bool, all: bool) -> Result<TermMode> {
-    match (any, all) {
-        (true, true) => Err(anyhow!(
-            "grep-terms accepts only one of --any/--or or --all/--and"
-        )),
-        (true, false) => Ok(TermMode::Any),
-        (false, true) => Ok(TermMode::All),
-        (false, false) => Ok(mode),
-    }
 }
 
 pub(crate) fn collect_single_text_source(

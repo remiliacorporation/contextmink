@@ -10,7 +10,7 @@ more output than the transcript should carry.
   `tools/contextmink/bin/contextmink-bridge.exe --script scripts/contextmink ...`
   when a PowerShell-hosted Windows session needs the Bash launcher.
 - Start with `dirs` to orient in an unfamiliar tree, then `files` or `grep`
-  for candidate discovery. Prefer `files --ext json` / `--extension jsonl`
+  for candidate discovery. Prefer `files --ext json` (or `--ext jsonl`)
   (comma-separated lists work: `--ext rs,toml`) across Windows-to-Bash
   boundaries because wildcard globs can expand before contextmink receives
   them.
@@ -24,8 +24,9 @@ more output than the transcript should carry.
   220-line ceiling); narrow an oversized read with `outline` or
   `grep --context` instead of raising `--max-lines`.
 - Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
-  for literal tokens or phrases (`--or` / `--any`, `--term-file`, `--limit`,
-  `--max-matches`). Narrow either with `--glob` / `--ext`, add `-i` for
+  for literal tokens or phrases (AND by default; pass `--any` for OR). Load
+  phrases with `--term-file` and cap with `--limit` / `--max-matches`. Narrow
+  either with `--glob` / `--ext`, add `-i` for
   case-insensitive matching, and `--context N` when the surrounding lines
   would otherwise need a follow-up `slice`.
 - Use `slice --tail N` for the end of logs, `json-find`, `json-select` (with
@@ -37,7 +38,7 @@ more output than the transcript should carry.
   registers `hexint(x)` for joining `0x...` hex strings against integer
   columns.
 - Prefer a domain command's native compact/projection/limit flags first. Use
-  `capture -- <command> ...` or `run` only when output size is uncertain and no
+  `capture -- <command> ...` only when output size is uncertain and no
   native bound exists; read the child `exit_code`/`success` fields in the
   receipt. Truncated captures keep both the head and the tail of the output.
 - Configured excludes keep broad scans quiet. Pass an explicit file or

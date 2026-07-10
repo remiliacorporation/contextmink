@@ -2,7 +2,7 @@
 //!
 //! Shared by every subprocess-spawn path in this crate: the
 //! `contextmink-bridge` binary (all four command forms, including `--script`
-//! mode) and `contextmink capture`/`run`.
+//! mode) and `contextmink capture`.
 //!
 //! The built-in rule blocks `git clean` because its flags are easy to
 //! misunderstand and it deletes ignored files that the tool cannot enumerate

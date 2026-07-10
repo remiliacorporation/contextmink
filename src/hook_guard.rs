@@ -3,7 +3,7 @@
 //! Reads one hook event JSON object from stdin (the shape Claude Code and
 //! compatible harnesses emit: `{"tool_input": {"command": "..."}}`), extracts
 //! the command string, and evaluates it with the same deny rules the bridge
-//! and `capture`/`run` apply to child argv — one policy, three enforcement
+//! and `capture` apply to child argv — one policy, three enforcement
 //! points. Exit 0 allows the tool call; exit 2 blocks it with the deny
 //! message on stderr (the blocking exit code hook protocols reserve).
 //!

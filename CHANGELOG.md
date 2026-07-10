@@ -21,6 +21,10 @@ The release workflow extracts the section for the requested version and fails if
 
 - `guard-check` evaluates shell text or direct argv without spawning it and returns a structured allow/deny explanation, making guard diagnostics safe to automate.
 
+### Changed
+
+- CLI v2 now exposes one canonical spelling per operation: `--fail-if-truncated`, `--term`, `--ext`, `--limit`, grep `--max-matches`/`--max-count-files`, `grep-terms --any`, positional single-file inputs, SQLite `--path`, `json-select --fields`, and `capture`. Superseded aliases and duplicate input forms are rejected.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added

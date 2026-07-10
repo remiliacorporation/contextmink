@@ -17,7 +17,7 @@ replacement for project-native tools.
   2024.
 - A POSIX-compatible shell is needed only for the optional `scripts/contextmink`
   launcher. On Windows, Git Bash works. Without Bash, call the release binary
-  directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml -- ...`.
+  directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml --bin contextmink -- ...`.
   Choose invocation by the active shell:
 
   | Active shell | Command form |
@@ -73,7 +73,7 @@ This installs `contextmink` on `PATH` instead of vendoring it per repository:
 3. Verify:
 
    ```bash
-   contextmink files --path . --max 20
+   contextmink files --path . --limit 20
    ```
 
 The binary can use a repository-local `.contextmink.toml`; it searches upward
@@ -153,7 +153,7 @@ for script fallback.
 7. Verify from the target repository root:
 
    ```bash
-   scripts/contextmink files --path . --max 20
+   scripts/contextmink files --path . --limit 20
    scripts/contextmink grep contextmink --path . --limit 5
    ```
 
@@ -180,9 +180,9 @@ scripts/contextmink, and
 .contextmink.toml with repo-appropriate high-output excludes. Merge the
 AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with the
 active-shell invocation from this guide, for example:
-- Bash-hosted: scripts/contextmink files --path . --max 20
-- Windows PowerShell direct: tools\contextmink\bin\contextmink.exe files --path . --max 20
-- Windows PowerShell bridge: tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --max 20
+- Bash-hosted: scripts/contextmink files --path . --limit 20
+- Windows PowerShell direct: tools\contextmink\bin\contextmink.exe files --path . --limit 20
+- Windows PowerShell bridge: tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --limit 20
 If Claude PreToolUse protection is wanted, generate the .claude/settings.json
 hook fragment with contextmink hook-snippet instead of hand-writing command
 paths. Keep host-specific binaries ignored unless a reviewed hermetic install
@@ -192,7 +192,7 @@ is explicitly required.
 ## Optional: Claude PreToolUse Hook Guard
 
 `hook-guard` is the same command-aware destructive-command evaluator used by
-`contextmink-bridge` and `capture`/`run`, exposed as a Claude PreToolUse hook.
+`contextmink-bridge` and `capture`, exposed as a Claude PreToolUse hook.
 It preserves quoting and command boundaries, resolves Git's actual subcommand,
 binds protected-path rules to deletion operands, and parses Bash and PowerShell
 escaping according to the matcher that invoked it. It reads Claude's hook
@@ -350,7 +350,7 @@ copy of the Rust crate:
 5. Verify the integration from the target repository root:
 
    ```bash
-   scripts/contextmink files --path . --max 20
+   scripts/contextmink files --path . --limit 20
    scripts/contextmink grep contextmink --path . --limit 5
    ```
 
@@ -366,7 +366,7 @@ the host:
 
 ```bash
 cargo install --path .
-contextmink files --path . --max 20
+contextmink files --path . --limit 20
 ```
 
 ## Config Template
