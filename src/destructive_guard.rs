@@ -15,6 +15,40 @@
 //! deliberate, understood maintenance only; agents must never set it.
 
 use crate::config::DestructiveGuardConfig;
+use clap::ValueEnum;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ShellDialect {
+    Posix,
+    Powershell,
+    Cmd,
+}
+
+impl ShellDialect {
+    // This module is also compiled directly into contextmink-bridge, whose
+    // argv-only surface uses the parser but not the hook-facing constructors.
+    #[allow(dead_code)]
+    pub(crate) fn command_argv(self, command: &str) -> Vec<String> {
+        match self {
+            Self::Posix => vec!["sh".to_owned(), "-c".to_owned(), command.to_owned()],
+            Self::Powershell => vec![
+                "powershell".to_owned(),
+                "-Command".to_owned(),
+                command.to_owned(),
+            ],
+            Self::Cmd => vec!["cmd".to_owned(), "/c".to_owned(), command.to_owned()],
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn cli_name(self) -> &'static str {
+        match self {
+            Self::Posix => "posix",
+            Self::Powershell => "powershell",
+            Self::Cmd => "cmd",
+        }
+    }
+}
 
 /// Break-glass override — human operators only. `=1` runs a denied command
 /// anyway; callers must print a loud stderr warning when it fires.
@@ -71,91 +105,532 @@ pub(crate) fn destructive_override_active() -> bool {
 
 /// Pure deny scan: `Some(message)` when the argv matches a deny rule.
 ///
-/// Tokens are matched at any position (an `env`/`nice`/`xargs` prefix must
-/// not hide `rm`), and when argv[0] is a shell the remaining arguments are
-/// additionally split into words and re-scanned, so `-lc '<script>'`
-/// payloads face the same rules.
+/// Direct argv is already structurally tokenized, so inspect only the command
+/// that will execute. Shell payloads are parsed into simple commands while
+/// preserving quotes and command boundaries before the same rules are applied.
 fn deny_destructive_argv(argv: &[String], config: &DestructiveGuardConfig) -> Option<String> {
-    let first_stem = stem_lower(argv.first()?);
-    if let Some(message) = deny_tokens(argv, config) {
+    deny_command(argv, config, 0)
+}
+
+const MAX_NESTED_SHELL_DEPTH: usize = 16;
+
+fn deny_command(
+    tokens: &[String],
+    config: &DestructiveGuardConfig,
+    depth: usize,
+) -> Option<String> {
+    if depth > MAX_NESTED_SHELL_DEPTH {
+        return Some("destructive-command inspection exceeded the nested shell limit".to_owned());
+    }
+    let program_index = command_program_index(tokens)?;
+    let stem = stem_lower(&tokens[program_index]);
+    let args = &tokens[program_index + 1..];
+
+    if stem == "git"
+        && let Some((subcommand_index, subcommand)) = git_subcommand(args)
+    {
+        if subcommand.eq_ignore_ascii_case("clean") {
+            return Some(GIT_CLEAN_MESSAGE.to_owned());
+        }
+        if subcommand.eq_ignore_ascii_case("rm") {
+            let git_rm_args = &args[subcommand_index + 1..];
+            let targets = path_operands("git-rm", git_rm_args);
+            if git_rm_args
+                .iter()
+                .any(|token| rm_flag(token, &['r', 'R'], "--recursive"))
+                && let Some(fragment) = any_fragment(&targets, &config.recursive_delete_fragments)
+            {
+                return Some(protected_recursive_delete_message(fragment));
+            }
+            if let Some(fragment) = any_fragment(&targets, &config.delete_fragments) {
+                return Some(protected_delete_message(fragment));
+            }
+        }
+    }
+
+    if SHELL_STEMS.contains(&stem.as_str())
+        && let Some(payload) = shell_payload(&stem, args)
+        && let Some(message) = deny_shell_payload(&payload, config, depth + 1, shell_dialect(&stem))
+    {
         return Some(message);
     }
-    if SHELL_STEMS.contains(&first_stem.as_str()) {
-        let nested: Vec<String> = argv[1..].iter().flat_map(|arg| shell_words(arg)).collect();
-        if let Some(message) = deny_tokens(&nested, config) {
+    if stem == "eval"
+        && !args.is_empty()
+        && let Some(message) =
+            deny_shell_payload(&args.join(" "), config, depth + 1, ShellDialect::Posix)
+    {
+        return Some(message);
+    }
+
+    let recursive = match stem.as_str() {
+        "rm" => args
+            .iter()
+            .any(|token| rm_flag(token, &['r', 'R'], "--recursive")),
+        "remove-item" | "ri" => args.iter().any(|token| powershell_recurse_flag(token)),
+        // `del`/`erase` are both a cmd builtin (`/s` recurses) and
+        // PowerShell aliases of Remove-Item (`-Recurse`).
+        "del" | "erase" => args
+            .iter()
+            .any(|token| powershell_recurse_flag(token) || token.eq_ignore_ascii_case("/s")),
+        "rmdir" | "rd" => args.iter().any(|token| token.eq_ignore_ascii_case("/s")),
+        _ => false,
+    };
+    let is_delete = matches!(
+        stem.as_str(),
+        "rm" | "del" | "erase" | "unlink" | "remove-item" | "ri" | "rmdir" | "rd"
+    );
+    if !is_delete {
+        return None;
+    }
+    let targets = path_operands(&stem, args);
+    if recursive && let Some(fragment) = any_fragment(&targets, &config.recursive_delete_fragments)
+    {
+        return Some(protected_recursive_delete_message(fragment));
+    }
+    if let Some(fragment) = any_fragment(&targets, &config.delete_fragments) {
+        return Some(protected_delete_message(fragment));
+    }
+    None
+}
+
+fn deny_shell_payload(
+    payload: &str,
+    config: &DestructiveGuardConfig,
+    depth: usize,
+    dialect: ShellDialect,
+) -> Option<String> {
+    let parsed = parse_shell_payload(payload, dialect);
+    for command in parsed.commands {
+        if let Some(message) = deny_command(&command, config, depth) {
+            return Some(message);
+        }
+    }
+    for substitution in parsed.substitutions {
+        if let Some(message) = deny_shell_payload(&substitution, config, depth + 1, dialect) {
             return Some(message);
         }
     }
     None
 }
 
-fn deny_tokens(tokens: &[String], config: &DestructiveGuardConfig) -> Option<String> {
-    let stems: Vec<String> = tokens.iter().map(|token| stem_lower(token)).collect();
-
-    // Rule 1: any `git clean` invocation. Flags and `-C <dir>` may sit
-    // between `git` and `clean`; a bare later token equal to `clean` is
-    // enough (false positives like `git commit -m clean` are acceptable).
-    for (index, stem) in stems.iter().enumerate() {
-        if stem == "git"
-            && tokens[index + 1..]
-                .iter()
-                .any(|token| token.eq_ignore_ascii_case("clean"))
-        {
-            return Some(GIT_CLEAN_MESSAGE.to_owned());
-        }
+fn shell_dialect(stem: &str) -> ShellDialect {
+    match stem {
+        "powershell" | "pwsh" => ShellDialect::Powershell,
+        "cmd" => ShellDialect::Cmd,
+        _ => ShellDialect::Posix,
     }
+}
 
-    // Rule 2: recursive/forced deletion whose argv also references a fragment
-    // the repository explicitly configured as protected.
-    if let Some(fragment) = any_fragment(tokens, &config.recursive_delete_fragments) {
-        for (index, stem) in stems.iter().enumerate() {
-            let after = &tokens[index + 1..];
-            let recursive_forced = match stem.as_str() {
-                "rm" => {
-                    after
-                        .iter()
-                        .any(|token| rm_flag(token, &['r', 'R'], "--recursive"))
-                        && after
-                            .iter()
-                            .any(|token| rm_flag(token, &['f', 'F'], "--force"))
+fn command_program_index(tokens: &[String]) -> Option<usize> {
+    let mut index = 0usize;
+    while index < tokens.len() && shell_assignment(&tokens[index]) {
+        index += 1;
+    }
+    for _ in 0..8 {
+        let stem = stem_lower(tokens.get(index)?);
+        match stem.as_str() {
+            "env" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if shell_assignment(token) {
+                        index += 1;
+                    } else if matches!(token.as_str(), "-u" | "--unset" | "-C" | "--chdir") {
+                        index += 2;
+                    } else if token.starts_with('-') {
+                        index += 1;
+                    } else {
+                        break;
+                    }
                 }
-                "remove-item" | "ri" => after.iter().any(|token| powershell_recurse_flag(token)),
-                // `del`/`erase` are both a cmd builtin (`/s` recurses) and
-                // PowerShell aliases of Remove-Item (`-Recurse`).
-                "del" | "erase" => after.iter().any(|token| {
-                    powershell_recurse_flag(token) || token.eq_ignore_ascii_case("/s")
-                }),
-                "rmdir" | "rd" => after.iter().any(|token| token.eq_ignore_ascii_case("/s")),
-                _ => false,
-            };
-            if recursive_forced {
-                return Some(format!(
-                    "recursive forced deletion references configured protected path fragment \
-                     {fragment:?}; remove or change the fragment in .contextmink.toml only for \
-                     deliberate human maintenance"
-                ));
             }
+            "command" => {
+                index += 1;
+                if tokens[index..]
+                    .iter()
+                    .any(|token| matches!(token.as_str(), "-v" | "-V"))
+                {
+                    return None;
+                }
+                while tokens
+                    .get(index)
+                    .is_some_and(|token| token.starts_with('-'))
+                {
+                    index += 1;
+                }
+            }
+            "sudo" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(
+                        token.as_str(),
+                        "-u" | "--user"
+                            | "-g"
+                            | "--group"
+                            | "-h"
+                            | "--host"
+                            | "-p"
+                            | "--prompt"
+                            | "-C"
+                            | "--close-from"
+                            | "-R"
+                            | "--chroot"
+                            | "-D"
+                            | "--chdir"
+                    ) {
+                        index += 2;
+                    } else if token.starts_with('-') {
+                        index += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "nice" => {
+                index += 1;
+                if tokens.get(index).is_some_and(|token| token == "-n") {
+                    index += 2;
+                } else if tokens
+                    .get(index)
+                    .is_some_and(|token| token.starts_with('-'))
+                {
+                    index += 1;
+                }
+            }
+            "nohup" => index += 1,
+            "exec" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "-a" | "--argv0") {
+                        index += 2;
+                    } else if matches!(token.as_str(), "-c" | "-l" | "-cl" | "-lc") {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "time" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "--help" | "--version") {
+                        return None;
+                    }
+                    if matches!(token.as_str(), "-f" | "--format" | "-o" | "--output") {
+                        index += 2;
+                    } else if matches!(
+                        token.as_str(),
+                        "-p" | "-a" | "--append" | "-v" | "--verbose" | "-q" | "--quiet"
+                    ) || token.starts_with("--format=")
+                        || token.starts_with("--output=")
+                    {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "timeout" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "--help" | "--version") {
+                        return None;
+                    }
+                    if matches!(token.as_str(), "-k" | "--kill-after" | "-s" | "--signal") {
+                        index += 2;
+                    } else if matches!(
+                        token.as_str(),
+                        "--preserve-status" | "--foreground" | "-v" | "--verbose"
+                    ) || token.starts_with("--kill-after=")
+                        || token.starts_with("--signal=")
+                        || token.starts_with("-k") && token.len() > 2
+                        || token.starts_with("-s") && token.len() > 2
+                    {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+                if index < tokens.len() {
+                    index += 1;
+                }
+            }
+            "stdbuf" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "--help" | "--version") {
+                        return None;
+                    }
+                    if matches!(
+                        token.as_str(),
+                        "-i" | "-o" | "-e" | "--input" | "--output" | "--error"
+                    ) {
+                        index += 2;
+                    } else if token.starts_with("-i")
+                        || token.starts_with("-o")
+                        || token.starts_with("-e")
+                        || token.starts_with("--input=")
+                        || token.starts_with("--output=")
+                        || token.starts_with("--error=")
+                    {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "setsid" => {
+                index += 1;
+                while let Some(token) = tokens.get(index) {
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "--help" | "--version") {
+                        return None;
+                    }
+                    if matches!(
+                        token.as_str(),
+                        "-c" | "--ctty" | "-f" | "--fork" | "-w" | "--wait"
+                    ) {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "chronic" => index += 1,
+            "doas" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(token.as_str(), "-a" | "-C" | "-u") {
+                        index += 2;
+                    } else if matches!(token.as_str(), "-L" | "-n" | "-s") {
+                        index += 1;
+                    } else if token.starts_with('-') {
+                        return None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "xargs" => {
+                index += 1;
+                while index < tokens.len() {
+                    let token = &tokens[index];
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if matches!(
+                        token.as_str(),
+                        "-a" | "--arg-file"
+                            | "-d"
+                            | "--delimiter"
+                            | "-E"
+                            | "-I"
+                            | "-L"
+                            | "-n"
+                            | "-P"
+                            | "-s"
+                    ) {
+                        index += 2;
+                    } else if token.starts_with('-') {
+                        index += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => return Some(index),
         }
     }
-
-    // Rule 3: any deletion verb at all next to a repository-configured
-    // protected fragment. Copy/backup tools (robocopy, cp, sqlite3 .backup)
-    // are deliberately not listed; backups must not be blocked.
-    if let Some(fragment) = any_fragment(tokens, &config.delete_fragments)
-        && stems.iter().any(|stem| {
-            matches!(
-                stem.as_str(),
-                "rm" | "del" | "erase" | "unlink" | "remove-item" | "ri" | "rmdir" | "rd"
-            )
-        })
-    {
-        return Some(format!(
-            "deletion references configured protected path fragment {fragment:?}; remove or \
-             change the fragment in .contextmink.toml only for deliberate human maintenance"
-        ));
-    }
-
     None
+}
+
+fn shell_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name.chars().enumerate().all(|(index, ch)| {
+            ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+        })
+}
+
+fn git_subcommand(args: &[String]) -> Option<(usize, &str)> {
+    let mut index = 0usize;
+    while index < args.len() {
+        let token = &args[index];
+        if token == "--" {
+            index += 1;
+            break;
+        }
+        if !token.starts_with('-') || token == "-" {
+            break;
+        }
+        if git_global_option_takes_value(token) {
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    args.get(index)
+        .map(|subcommand| (index, subcommand.as_str()))
+}
+
+fn git_global_option_takes_value(token: &str) -> bool {
+    matches!(
+        token,
+        "-C" | "-c"
+            | "--exec-path"
+            | "--git-dir"
+            | "--work-tree"
+            | "--namespace"
+            | "--super-prefix"
+            | "--config-env"
+    )
+}
+
+fn shell_payload(stem: &str, args: &[String]) -> Option<String> {
+    match stem {
+        "bash" | "sh" | "dash" | "zsh" | "ksh" => {
+            args.iter().enumerate().find_map(|(index, token)| {
+                (token.starts_with('-') && !token.starts_with("--") && token[1..].contains('c'))
+                    .then(|| args.get(index + 1).cloned())
+                    .flatten()
+            })
+        }
+        "powershell" | "pwsh" => args.iter().enumerate().find_map(|(index, token)| {
+            let option = token.strip_prefix('-')?.to_ascii_lowercase();
+            (!option.is_empty() && "command".starts_with(&option))
+                .then(|| args.get(index + 1..).map(|tail| tail.join(" ")))
+                .flatten()
+        }),
+        "cmd" => args.iter().enumerate().find_map(|(index, token)| {
+            token
+                .eq_ignore_ascii_case("/c")
+                .then(|| args.get(index + 1..).map(|tail| tail.join(" ")))
+                .flatten()
+        }),
+        _ => None,
+    }
+}
+
+fn path_operands<'a>(stem: &str, args: &'a [String]) -> Vec<&'a str> {
+    let mut targets = Vec::new();
+    let mut options_done = false;
+    let mut skip_value = false;
+    for token in args {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if !options_done && token == "--" {
+            options_done = true;
+            continue;
+        }
+        if !options_done && token.starts_with('-') {
+            if matches!(stem, "remove-item" | "ri" | "del" | "erase")
+                && let Some(path) = powershell_attached_path_operand(token)
+            {
+                targets.push(path);
+                continue;
+            }
+            if matches!(
+                token.to_ascii_lowercase().as_str(),
+                "-exclude"
+                    | "-filter"
+                    | "-include"
+                    | "-whatif"
+                    | "-confirm"
+                    | "--pathspec-from-file"
+            ) {
+                skip_value = true;
+            }
+            continue;
+        }
+        if !options_done
+            && matches!(stem, "del" | "erase" | "rmdir" | "rd")
+            && token.starts_with('/')
+        {
+            continue;
+        }
+        targets.push(token.as_str());
+    }
+    targets
+}
+
+fn powershell_attached_path_operand(token: &str) -> Option<&str> {
+    let (parameter, value) = token.split_once(':')?;
+    let parameter = parameter.strip_prefix('-')?;
+    if value.is_empty()
+        || !matches!(
+            parameter.to_ascii_lowercase().as_str(),
+            "path" | "literalpath"
+        )
+    {
+        return None;
+    }
+    Some(value)
+}
+
+fn protected_recursive_delete_message(fragment: &str) -> String {
+    format!(
+        "recursive deletion references configured protected path fragment {fragment:?}; remove or \
+         change the fragment in .contextmink.toml only for deliberate human maintenance"
+    )
+}
+
+fn protected_delete_message(fragment: &str) -> String {
+    format!(
+        "deletion references configured protected path fragment {fragment:?}; remove or change \
+         the fragment in .contextmink.toml only for deliberate human maintenance"
+    )
 }
 
 /// Lowercased program stem: `git`, `git.exe`, `/usr/bin/git`, and
@@ -170,7 +645,7 @@ fn stem_lower(token: &str) -> String {
     stem.to_ascii_lowercase()
 }
 
-fn any_fragment<'a>(tokens: &[String], fragments: &'a [String]) -> Option<&'a str> {
+fn any_fragment<'a>(tokens: &[&str], fragments: &'a [String]) -> Option<&'a str> {
     tokens.iter().find_map(|token| {
         let lower = token.to_ascii_lowercase();
         fragments.iter().find_map(|fragment| {
@@ -199,23 +674,332 @@ fn powershell_recurse_flag(token: &str) -> bool {
     let Some(rest) = token.strip_prefix('-') else {
         return false;
     };
-    !rest.is_empty() && "recurse".starts_with(&rest.to_ascii_lowercase())
+    let (name, value) = rest
+        .split_once(':')
+        .map_or((rest, None), |(name, value)| (name, Some(value)));
+    let enabled = value.is_none_or(|value| {
+        !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "false" | "$false" | "0"
+        )
+    });
+    enabled && !name.is_empty() && "recurse".starts_with(&name.to_ascii_lowercase())
 }
 
-/// Conservative word split for nested shell payloads: whitespace plus common
-/// shell separators/quotes. `cd x && git clean -fdX` yields `git` and
-/// `clean` as separate words regardless of quoting style.
-fn shell_words(text: &str) -> Vec<String> {
-    text.split(|ch: char| {
-        ch.is_whitespace()
-            || matches!(
-                ch,
-                ';' | '&' | '|' | '(' | ')' | '{' | '}' | '<' | '>' | '"' | '\'' | '`'
-            )
-    })
-    .filter(|word| !word.is_empty())
-    .map(str::to_owned)
-    .collect()
+#[derive(Debug, Default)]
+struct ParsedShellPayload {
+    commands: Vec<Vec<String>>,
+    substitutions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellQuote {
+    Unquoted,
+    Single,
+    Double,
+}
+
+/// Parse enough shell structure to identify executable commands without
+/// treating quoted arguments, comments, or heredoc bodies as commands. The
+/// guard is not a shell interpreter: expansions remain opaque except for
+/// command substitutions, which are recursively inspected.
+fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload {
+    let text = strip_heredoc_bodies(text);
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut parsed = ParsedShellPayload::default();
+    let mut command = Vec::new();
+    let mut word = String::new();
+    let mut word_started = false;
+    let mut quote = ShellQuote::Unquoted;
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        match quote {
+            ShellQuote::Single => {
+                if ch == '\'' {
+                    quote = ShellQuote::Unquoted;
+                } else {
+                    word.push(ch);
+                }
+                word_started = true;
+                index += 1;
+            }
+            ShellQuote::Double => {
+                if ch == '"' {
+                    quote = ShellQuote::Unquoted;
+                    word_started = true;
+                    index += 1;
+                } else if (ch == '\\' || dialect == ShellDialect::Powershell && ch == '`')
+                    && index + 1 < chars.len()
+                {
+                    word.push(chars[index + 1]);
+                    word_started = true;
+                    index += 2;
+                } else if ch == '$' && chars.get(index + 1) == Some(&'(') {
+                    if let Some((substitution, next)) = extract_parenthesized(&chars, index + 2) {
+                        parsed.substitutions.push(substitution);
+                        word.push_str("$()");
+                        word_started = true;
+                        index = next;
+                    } else {
+                        word.push(ch);
+                        word_started = true;
+                        index += 1;
+                    }
+                } else if dialect == ShellDialect::Posix && ch == '`' {
+                    if let Some((substitution, next)) = extract_backticks(&chars, index + 1) {
+                        parsed.substitutions.push(substitution);
+                        word.push_str("``");
+                        word_started = true;
+                        index = next;
+                    } else {
+                        word.push(ch);
+                        word_started = true;
+                        index += 1;
+                    }
+                } else {
+                    word.push(ch);
+                    word_started = true;
+                    index += 1;
+                }
+            }
+            ShellQuote::Unquoted => match ch {
+                '\'' => {
+                    quote = ShellQuote::Single;
+                    word_started = true;
+                    index += 1;
+                }
+                '"' => {
+                    quote = ShellQuote::Double;
+                    word_started = true;
+                    index += 1;
+                }
+                '`' if dialect == ShellDialect::Powershell && index + 1 < chars.len() => {
+                    word.push(chars[index + 1]);
+                    word_started = true;
+                    index += 2;
+                }
+                '^' if dialect == ShellDialect::Cmd && index + 1 < chars.len() => {
+                    word.push(chars[index + 1]);
+                    word_started = true;
+                    index += 2;
+                }
+                '\\' if dialect != ShellDialect::Cmd && index + 1 < chars.len() => {
+                    word.push(chars[index + 1]);
+                    word_started = true;
+                    index += 2;
+                }
+                '$' if chars.get(index + 1) == Some(&'(') => {
+                    if let Some((substitution, next)) = extract_parenthesized(&chars, index + 2) {
+                        parsed.substitutions.push(substitution);
+                        word.push_str("$()");
+                        word_started = true;
+                        index = next;
+                    } else {
+                        word.push(ch);
+                        word_started = true;
+                        index += 1;
+                    }
+                }
+                '`' if dialect == ShellDialect::Posix => {
+                    if let Some((substitution, next)) = extract_backticks(&chars, index + 1) {
+                        parsed.substitutions.push(substitution);
+                        word.push_str("``");
+                        word_started = true;
+                        index = next;
+                    } else {
+                        word.push(ch);
+                        word_started = true;
+                        index += 1;
+                    }
+                }
+                '#' if !word_started => {
+                    flush_shell_word(&mut word, &mut word_started, &mut command);
+                    while index < chars.len() && chars[index] != '\n' {
+                        index += 1;
+                    }
+                }
+                ';' | '&' | '|' | '\n' | '(' | ')' | '{' | '}' => {
+                    flush_shell_word(&mut word, &mut word_started, &mut command);
+                    flush_shell_command(&mut command, &mut parsed.commands);
+                    index += 1;
+                    if matches!(ch, '&' | '|') && chars.get(index) == Some(&ch) {
+                        index += 1;
+                    }
+                }
+                '<' | '>' => {
+                    flush_shell_word(&mut word, &mut word_started, &mut command);
+                    index += 1;
+                    while chars.get(index) == Some(&ch) {
+                        index += 1;
+                    }
+                }
+                _ if ch.is_whitespace() => {
+                    flush_shell_word(&mut word, &mut word_started, &mut command);
+                    index += 1;
+                }
+                _ => {
+                    word.push(ch);
+                    word_started = true;
+                    index += 1;
+                }
+            },
+        }
+    }
+    flush_shell_word(&mut word, &mut word_started, &mut command);
+    flush_shell_command(&mut command, &mut parsed.commands);
+    parsed
+}
+
+fn flush_shell_word(word: &mut String, started: &mut bool, command: &mut Vec<String>) {
+    if *started {
+        command.push(std::mem::take(word));
+        *started = false;
+    }
+}
+
+fn flush_shell_command(command: &mut Vec<String>, commands: &mut Vec<Vec<String>>) {
+    if !command.is_empty() {
+        commands.push(std::mem::take(command));
+    }
+}
+
+fn extract_parenthesized(chars: &[char], mut index: usize) -> Option<(String, usize)> {
+    let mut depth = 1usize;
+    let mut quote = ShellQuote::Unquoted;
+    let mut value = String::new();
+    while index < chars.len() {
+        let ch = chars[index];
+        match quote {
+            ShellQuote::Single => {
+                if ch == '\'' {
+                    quote = ShellQuote::Unquoted;
+                }
+                value.push(ch);
+            }
+            ShellQuote::Double => {
+                if ch == '"' {
+                    quote = ShellQuote::Unquoted;
+                }
+                value.push(ch);
+            }
+            ShellQuote::Unquoted => match ch {
+                '\'' => {
+                    quote = ShellQuote::Single;
+                    value.push(ch);
+                }
+                '"' => {
+                    quote = ShellQuote::Double;
+                    value.push(ch);
+                }
+                '(' => {
+                    depth += 1;
+                    value.push(ch);
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((value, index + 1));
+                    }
+                    value.push(ch);
+                }
+                _ => value.push(ch),
+            },
+        }
+        index += 1;
+    }
+    None
+}
+
+fn extract_backticks(chars: &[char], mut index: usize) -> Option<(String, usize)> {
+    let mut value = String::new();
+    while index < chars.len() {
+        match chars[index] {
+            '`' => return Some((value, index + 1)),
+            '\\' if index + 1 < chars.len() => {
+                value.push(chars[index + 1]);
+                index += 2;
+                continue;
+            }
+            ch => value.push(ch),
+        }
+        index += 1;
+    }
+    None
+}
+
+fn strip_heredoc_bodies(text: &str) -> String {
+    let mut lines = text.split_inclusive('\n');
+    let mut stripped = String::with_capacity(text.len());
+    while let Some(line) = lines.next() {
+        stripped.push_str(line);
+        let Some((delimiter, strip_tabs)) = heredoc_delimiter(line) else {
+            continue;
+        };
+        for body_line in lines.by_ref() {
+            let candidate = body_line.trim_end_matches(['\r', '\n']);
+            let candidate = if strip_tabs {
+                candidate.trim_start_matches('\t')
+            } else {
+                candidate
+            };
+            if candidate == delimiter {
+                break;
+            }
+        }
+    }
+    stripped
+}
+
+fn heredoc_delimiter(line: &str) -> Option<(String, bool)> {
+    let chars = line.chars().collect::<Vec<_>>();
+    let mut quote = ShellQuote::Unquoted;
+    let mut index = 0usize;
+    while index + 1 < chars.len() {
+        match (quote, chars[index]) {
+            (ShellQuote::Single, '\'') => quote = ShellQuote::Unquoted,
+            (ShellQuote::Double, '"') => quote = ShellQuote::Unquoted,
+            (ShellQuote::Unquoted, '\'') => quote = ShellQuote::Single,
+            (ShellQuote::Unquoted, '"') => quote = ShellQuote::Double,
+            (ShellQuote::Unquoted, '<') if chars[index + 1] == '<' => {
+                if chars.get(index + 2) == Some(&'<') {
+                    index += 3;
+                    continue;
+                }
+                index += 2;
+                let strip_tabs = chars.get(index) == Some(&'-');
+                if strip_tabs {
+                    index += 1;
+                }
+                while chars.get(index).is_some_and(|ch| ch.is_whitespace()) {
+                    index += 1;
+                }
+                let mut delimiter = String::new();
+                let mut delimiter_quote = ShellQuote::Unquoted;
+                while let Some(ch) = chars.get(index).copied() {
+                    match (delimiter_quote, ch) {
+                        (ShellQuote::Unquoted, '\'') => delimiter_quote = ShellQuote::Single,
+                        (ShellQuote::Unquoted, '"') => delimiter_quote = ShellQuote::Double,
+                        (ShellQuote::Single, '\'') | (ShellQuote::Double, '"') => {
+                            delimiter_quote = ShellQuote::Unquoted
+                        }
+                        (ShellQuote::Unquoted, ch)
+                            if ch.is_whitespace() || matches!(ch, ';' | '&' | '|') =>
+                        {
+                            break;
+                        }
+                        (_, ch) => delimiter.push(ch),
+                    }
+                    index += 1;
+                }
+                return (!delimiter.is_empty()).then_some((delimiter, strip_tabs));
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 // Explicit path: this module is #[path]-included by both the contextmink

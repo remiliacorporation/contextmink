@@ -30,7 +30,9 @@ To build from source instead: `cargo build --release` (stable Rust, edition
 
 Copy from the unpacked archive into the target repository:
 
-1. `contextmink(.exe)` to `tools/contextmink/bin/`.
+1. `contextmink(.exe)` to `tools/contextmink/bin/`. On Windows also copy
+   `contextmink-bridge.exe`; the PowerShell-to-Git-Bash launcher path requires
+   both release binaries.
 2. `templates/scripts/contextmink` to `scripts/contextmink`. The launcher
    picks or builds the right binary and smooths Git Bash argument handling on
    Windows.
@@ -39,7 +41,11 @@ Copy from the unpacked archive into the target repository:
 4. `templates/AGENTS.contextmink.md` into `AGENTS.md` (Codex) and/or
    `templates/CLAUDE.contextmink.md` into `CLAUDE.md` (Claude). These carry
    the usage policy agents follow.
-5. Verify with the invocation for the active shell:
+5. Ignore host-specific local binaries by default. Add
+   `/tools/contextmink/bin/contextmink*` to the target repository's
+   `.gitignore`. Tracking binaries is an explicit hermetic-install choice, not
+   the portable default.
+6. Verify with the invocation for the active shell:
 
    | Active shell | Command |
    | --- | --- |
@@ -104,6 +110,11 @@ below is the short map.
 - `hook-guard` — evaluate an agent PreToolUse hook payload from stdin against
   the destructive-command guard; exits 2 to block a recognized destructive
   command.
+- `guard-check --command <shell-text> [--shell posix|powershell|cmd]` (or
+  `guard-check -- <argv...>`) —
+  explain the guard decision as JSON without spawning the input. Use this for
+  policy probes and regression reports instead of constructing a disposable
+  hook payload.
 
 Global flags: `--json` emits one JSON object for machine consumption;
 `--fail-if-truncated` exits nonzero on capped output;
@@ -183,8 +194,11 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   characters, or raw C1 controls. The field is omitted when nothing is found,
   and it never fails a command — it discloses.
 - `contextmink-bridge` and `capture`/`run` refuse known destructive argv
-  before spawn: built-in `git clean` blocking, nested shell payload scanning,
-  and optional repository-configured protected deletion fragments. The
+  before spawn. The evaluator preserves shell quoting and command boundaries,
+  resolves Git's actual subcommand, recursively inspects real shell payloads
+  and command substitutions, and matches protected paths only against deletion
+  operands. Recursive deletion of a protected tree is blocked with or without
+  a force flag. The
   `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override is for human maintenance
   only and prints a warning.
 - `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
@@ -192,8 +206,13 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
   shape), and exits 2 with the deny message on stderr to block the tool call.
   Generate the Claude settings fragment with `contextmink hook-snippet`; it
-  emits single `command` strings rather than a non-portable `args` array and
-  normalizes Windows paths to forward slashes for Bash hooks. Raw backslash
+  emits single `command` strings rather than a non-portable `args` array,
+  normalizes Windows paths to forward slashes for Bash hooks, and binds the
+  policy to its repository root with `--expected-root`. Each generated matcher
+  also passes its shell dialect explicitly, so PowerShell backtick escapes are
+  not interpreted as POSIX command substitutions. A copied or stale hook
+  whose payload `cwd` belongs to another checkout allows with a diagnostic
+  note instead of applying foreign config. Raw backslash
   paths such as `F:\repo\tools\contextmink.exe` are wrong inside a Bash hook:
   Bash treats the backslashes as escapes and tries to execute a collapsed path.
   Unparseable payloads allow with a stderr note: the guard blocks recognized
@@ -222,8 +241,13 @@ whose scripts are Bash-first while the agent runs in PowerShell:
   quoting cannot corrupt arguments. In direct mode a program spelled as a
   path (`./gradlew`) resolves against `--cwd` like a POSIX exec and
   extensionless bash scripts retry through Git Bash; `--script <path>`
-  resolves repo scripts from the bridge root instead. `--print-argv` shows
-  exactly what arrived; `--print-root` shows the resolved bridge root.
+  resolves repo scripts from the bridge root instead. Every bridge-owned Git
+  Bash boundary hex-relays startup argv before decoding it and installs scoped
+  MSYS conversion exclusions for the caller's slash-bearing values, so a
+  quoted `"$@"` forwarded to a native child preserves leading-slash selectors,
+  `@file` arguments, and JSON without caller-managed `MSYS2_ARG_CONV_EXCL` state.
+  `--print-argv` shows exactly what arrived; `--print-root` shows the resolved
+  bridge root.
   Destructive argv matching the safety deny-list is refused before spawn;
   `--help` prints the current deny-list and break-glass override.
 - `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for

@@ -8,7 +8,18 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- Native bridge Bash boundaries now hex-relay startup argv and apply scoped MSYS conversion exclusions, preserving leading-slash selectors, existing `@file` paths, inline JSON, Unicode, and empty arguments byte-for-byte when `--script` or the extensionless-script fallback launches native Windows children.
+
+- The destructive guard now parses simple commands with quoting and operator boundaries, resolves Git's actual subcommand, and binds protected-path checks to deletion operands. Commit messages, probe data, and unrelated `make clean` commands no longer look like `git clean`; real recursive protected-tree deletion is blocked even without a force flag.
+- Hook and diagnostic command parsing now carries an explicit POSIX, PowerShell, or cmd dialect; PowerShell backtick escapes remain data, attached `-Path:<value>` deletion operands are protected, and transparent wrappers such as `exec`, `time`, `timeout`, `stdbuf`, `setsid`, and `doas` cannot conceal `git clean`.
+- Generated hook snippets bind policy to the target repository root. A copied or moved hook whose payload `cwd` belongs to another checkout fails open with a diagnostic instead of applying stale foreign configuration.
+- Project-binary setup now installs both Windows executables when the bridge is used and defaults host-specific binaries to ignored rather than silently encouraging platform-specific binary commits.
+
 - The Bash launcher now finds Cargo in common Windows/WSL layouts (`$HOME/.cargo/bin` and a login-Bash lookup) instead of relying only on non-login `PATH`, and the installed launcher template is tested against the repo launcher so the two cannot drift.
+
+### Added
+
+- `guard-check` evaluates shell text or direct argv without spawning it and returns a structured allow/deny explanation, making guard diagnostics safe to automate.
 
 ## [0.6.0] - 2026-07-06
 

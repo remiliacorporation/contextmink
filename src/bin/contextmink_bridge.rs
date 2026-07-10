@@ -37,6 +37,26 @@ const EXIT_NO_BASH: i32 = 127;
 /// bounded-output instructions (same knob as the codex-bash.sh template).
 const DUMP_WARN_LINES: usize = 150;
 const SUPPRESS_ENV: &str = "CODEX_BASH_SUPPRESS_DUMP_WARNING";
+const MSYS2_ARG_CONV_EXCL_ENV: &str = "MSYS2_ARG_CONV_EXCL";
+const BASH_ARGV_RELAY: &str = r#"set -euo pipefail
+decode_hex() {
+    local hex=$1 out= byte
+    while [[ -n $hex ]]; do
+        printf -v byte '%b' "\\x${hex:0:2}"
+        out+=$byte
+        hex=${hex:2}
+    done
+    REPLY=$out
+}
+decode_hex "$1"
+program=$REPLY
+shift
+args=()
+for encoded in "$@"; do
+    decode_hex "$encoded"
+    args+=("$REPLY")
+done
+exec "$program" "${args[@]}""#;
 
 fn usage() -> String {
     "Usage:\n\
@@ -233,17 +253,16 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 "unable to locate a Git Bash executable (set CONTEXTMINK_BASH to override)",
             )
         })?;
-        let mut command = Command::new(&bash);
+        let mut command = git_bash_command(&bash, &argv);
         if login {
             command.arg("--login");
         }
-        if script_mode {
-            command.args(&argv);
-        } else {
-            // Constant -c text; the user command rides in as positional
-            // parameters, so no command text is shell-reparsed.
-            command.arg("-c").arg("exec \"$@\"").arg("bash").args(&argv);
-        }
+        // Every user argument crosses the native-Windows -> MSYS startup
+        // boundary as hex-only data. Git Bash otherwise expands an existing
+        // `@file`, strips JSON quotes, and may reinterpret other shell-shaped
+        // values before the repository script starts. The constant relay
+        // decodes argv with Bash builtins and execs it without reparsing.
+        append_bash_argv_relay(&mut command, &argv);
         command.current_dir(&target_cwd);
         command.status().map_err(|error| {
             fail(
@@ -391,17 +410,17 @@ fn spawn_direct(
                     bash.display()
                 );
             }
-            Command::new(&bash)
-                .arg(&program)
-                .args(args)
-                .current_dir(target_cwd)
-                .status()
-                .map_err(|error| {
-                    fail(
-                        EXIT_SPAWN_FAILED,
-                        format!("failed to spawn {bash:?}: {error}"),
-                    )
-                })
+            let mut fallback_argv = Vec::with_capacity(argv.len());
+            fallback_argv.push(program.clone());
+            fallback_argv.extend(args.iter().cloned());
+            let mut command = git_bash_command(&bash, &fallback_argv);
+            append_bash_argv_relay(&mut command, &fallback_argv);
+            command.current_dir(target_cwd).status().map_err(|error| {
+                fail(
+                    EXIT_SPAWN_FAILED,
+                    format!("failed to spawn {bash:?}: {error}"),
+                )
+            })
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(fail(EXIT_NO_BASH, not_found_message(given, &program)))
@@ -411,6 +430,61 @@ fn spawn_direct(
             format!("failed to spawn {program}: {error}"),
         )),
     }
+}
+
+/// Build a Git Bash boundary that preserves the caller's argv while allowing
+/// repository scripts to generate ordinary POSIX paths for native children.
+///
+/// Git for Windows otherwise rewrites POSIX-looking values when a repository
+/// script launches a native Windows child (`/type/path` becomes a Git install
+/// path). Exact caller values that contain slash-bearing material are installed
+/// as exclusion prefixes. A blanket `*` exclusion would also suppress the
+/// intentional conversion of script-generated paths such as `/f/repo/tools`,
+/// breaking native tools that consume those internal paths.
+fn git_bash_command(bash: &Path, argv: &[String]) -> Command {
+    let mut command = Command::new(bash);
+    let exclusions = msys2_arg_conversion_exclusions(argv);
+    if exclusions.is_empty() {
+        command.env_remove(MSYS2_ARG_CONV_EXCL_ENV);
+    } else {
+        command.env(MSYS2_ARG_CONV_EXCL_ENV, exclusions);
+    }
+    command
+}
+
+fn msys2_arg_conversion_exclusions(argv: &[String]) -> String {
+    let mut exclusions = std::collections::BTreeSet::new();
+    for arg in argv {
+        if !arg.contains(['/', '\\']) {
+            continue;
+        }
+        // MSYS2 uses semicolons as exclusion separators. The prefix before the
+        // first semicolon is sufficient to match this argument and avoids
+        // accidentally adding extra exclusion entries from its payload.
+        let prefix = arg.split(';').next().unwrap_or_default();
+        if !prefix.is_empty() && prefix != "*" {
+            exclusions.insert(prefix);
+        }
+    }
+    exclusions.into_iter().collect::<Vec<_>>().join(";")
+}
+
+fn append_bash_argv_relay(command: &mut Command, argv: &[String]) {
+    command
+        .arg("-c")
+        .arg(BASH_ARGV_RELAY)
+        .arg("contextmink-bridge");
+    command.args(argv.iter().map(|arg| hex_encode_arg(arg)));
+}
+
+fn hex_encode_arg(arg: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(arg.len() * 2);
+    for byte in arg.as_bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// A program spelled as a path (containing a separator) resolves against the

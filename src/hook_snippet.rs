@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
 use crate::config::find_config_path;
+use crate::destructive_guard::ShellDialect;
 use crate::output::emit_json;
 
 const DEFAULT_COMMAND_FIELD: &str = "tool_input.command";
@@ -19,10 +20,15 @@ pub(crate) fn command_hook_snippet(
 ) -> Result<()> {
     let binary = resolve_binary(binary)?;
     let guard_config = resolve_guard_config(guard_config, cli_config, no_config)?;
+    let expected_root = match guard_config.as_deref().and_then(Path::parent) {
+        Some(root) => root.to_path_buf(),
+        None => std::env::current_dir().context("failed to resolve hook policy root")?,
+    };
     let selected_matchers = selected_matchers(matchers);
     emit_json(claude_hook_settings(
         &binary,
         guard_config.as_deref(),
+        &expected_root,
         no_config && guard_config.is_none(),
         &selected_matchers,
         command_field,
@@ -77,6 +83,7 @@ fn selected_matchers(matchers: &[String]) -> Vec<String> {
 pub(crate) fn claude_hook_settings(
     binary: &Path,
     guard_config: Option<&Path>,
+    expected_root: &Path,
     no_config: bool,
     matchers: &[String],
     command_field: &str,
@@ -84,13 +91,24 @@ pub(crate) fn claude_hook_settings(
     let hooks = matchers
         .iter()
         .map(|matcher| {
-            let shell = HookShell::for_matcher(matcher);
+            let shell = if matcher.eq_ignore_ascii_case("PowerShell") {
+                ShellDialect::Powershell
+            } else {
+                ShellDialect::Posix
+            };
             json!({
                 "matcher": matcher,
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command(shell, binary, guard_config, no_config, command_field)
+                        "command": hook_command(
+                            shell,
+                            binary,
+                            guard_config,
+                            expected_root,
+                            no_config,
+                            command_field,
+                        )
                     }
                 ]
             })
@@ -99,26 +117,11 @@ pub(crate) fn claude_hook_settings(
     json!({ "hooks": { "PreToolUse": hooks } })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HookShell {
-    Bash,
-    PowerShell,
-}
-
-impl HookShell {
-    fn for_matcher(matcher: &str) -> Self {
-        if matcher.eq_ignore_ascii_case("PowerShell") {
-            Self::PowerShell
-        } else {
-            Self::Bash
-        }
-    }
-}
-
 fn hook_command(
-    shell: HookShell,
+    shell: ShellDialect,
     binary: &Path,
     guard_config: Option<&Path>,
+    expected_root: &Path,
     no_config: bool,
     command_field: &str,
 ) -> String {
@@ -130,16 +133,20 @@ fn hook_command(
     } else if no_config {
         args.push("--no-config".to_owned());
     }
+    args.push("--expected-root".to_owned());
+    args.push(hook_path(expected_root));
+    args.push("--shell".to_owned());
+    args.push(shell.cli_name().to_owned());
     if command_field != DEFAULT_COMMAND_FIELD {
         args.push("--command-field".to_owned());
         args.push(command_field.to_owned());
     }
     match shell {
-        HookShell::Bash => std::iter::once(shell_word(&binary, quote_bash))
+        ShellDialect::Posix | ShellDialect::Cmd => std::iter::once(shell_word(&binary, quote_bash))
             .chain(args.iter().map(|arg| shell_word(arg, quote_bash)))
             .collect::<Vec<_>>()
             .join(" "),
-        HookShell::PowerShell => {
+        ShellDialect::Powershell => {
             std::iter::once(format!("& {}", shell_word(&binary, quote_powershell)))
                 .chain(args.iter().map(|arg| shell_word(arg, quote_powershell)))
                 .collect::<Vec<_>>()

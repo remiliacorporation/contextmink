@@ -106,7 +106,23 @@ for script fallback.
    cp /path/to/unpacked/contextmink tools/contextmink/bin/contextmink
    # Windows binary name:
    # cp /path/to/unpacked/contextmink.exe tools/contextmink/bin/contextmink.exe
+   # The PowerShell launcher path also needs the Windows bridge binary:
+   # cp /path/to/unpacked/contextmink-bridge.exe tools/contextmink/bin/contextmink-bridge.exe
    ```
+
+   Host-specific binaries should be ignored by default. Add this to the target
+   repository's `.gitignore`:
+
+   ```gitignore
+   /tools/contextmink/bin/contextmink
+   /tools/contextmink/bin/contextmink.exe
+   /tools/contextmink/bin/contextmink-bridge
+   /tools/contextmink/bin/contextmink-bridge.exe
+   ```
+
+   Tracking release binaries is an explicit hermetic-install choice. It is not
+   the project-neutral default because one host's binary does not serve other
+   supported platforms.
 
 4. Copy the release launcher:
 
@@ -158,7 +174,9 @@ Delegated setup prompt:
 ```text
 Set up contextmink in <target-repo> from the unpacked release at <path>. Use
 the release binary, not a source build. Install
-tools/contextmink/bin/contextmink(.exe), scripts/contextmink, and
+tools/contextmink/bin/contextmink(.exe), the Windows
+tools/contextmink/bin/contextmink-bridge.exe when applicable,
+scripts/contextmink, and
 .contextmink.toml with repo-appropriate high-output excludes. Merge the
 AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with the
 active-shell invocation from this guide, for example:
@@ -167,21 +185,31 @@ active-shell invocation from this guide, for example:
 - Windows PowerShell bridge: tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --max 20
 If Claude PreToolUse protection is wanted, generate the .claude/settings.json
 hook fragment with contextmink hook-snippet instead of hand-writing command
-paths.
+paths. Keep host-specific binaries ignored unless a reviewed hermetic install
+is explicitly required.
 ```
 
 ## Optional: Claude PreToolUse Hook Guard
 
-`hook-guard` is the same destructive-command deny scan used by
+`hook-guard` is the same command-aware destructive-command evaluator used by
 `contextmink-bridge` and `capture`/`run`, exposed as a Claude PreToolUse hook.
-It reads Claude's hook payload JSON on stdin, scans `tool_input.command`, and
-exits 2 only when it recognizes a destructive command.
+It preserves quoting and command boundaries, resolves Git's actual subcommand,
+binds protected-path rules to deletion operands, and parses Bash and PowerShell
+escaping according to the matcher that invoked it. It reads Claude's hook
+payload JSON on stdin and exits 2 only for a recognized destructive command.
 
 Generate the settings fragment instead of hand-writing it:
 
 ```bash
 scripts/contextmink hook-snippet
 ```
+
+The generated hook is bound to the directory containing the selected
+`.contextmink.toml` via `--expected-root`. If settings are copied from another
+checkout or the repository moves, a hook payload whose `cwd` is outside that
+root is allowed with a diagnostic note instead of applying the foreign
+repository's policy. Regenerate the snippet in the target repository to restore
+protection.
 
 For source-vendored or custom layouts, pass explicit paths:
 
@@ -236,6 +264,17 @@ its script path from the bridge root instead of `--cwd`. Bare names (`git`)
 use PATH. Destructive argv matching the safety deny-list is refused before
 spawn; `contextmink-bridge --help` prints the current deny-list and
 break-glass override.
+
+Both `--script` and the extensionless-script retry hex-encode argv across Git
+Bash startup, decode it with a constant builtin-only relay, and install scoped
+MSYS conversion exclusions for the caller's slash-bearing values. A repository
+script that forwards with quoted `"$@"` therefore passes `/type/path`,
+`@request.json`, and inline JSON to native Windows children byte-for-byte while
+its own generated POSIX paths still receive normal MSYS conversion. Do not set
+`MSYS2_ARG_CONV_EXCL` at the caller; the native bridge owns that boundary
+setting. (`--print-argv` exits before spawning and diagnoses only the
+PowerShell-to-bridge boundary; the installed regression probe also covers the
+Bash-to-native-child hop.)
 
 **Script launcher (bash-first setups).** Install the template when the
 repository prefers a shell entrypoint or must not carry a second binary:

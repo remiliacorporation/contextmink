@@ -2,6 +2,8 @@ mod capture;
 mod cli;
 mod commands;
 mod config;
+// Guard enforcement and guard-check share one parser so diagnostics cannot
+// disagree with bridge/capture policy.
 // #[path]-loaded so child-module resolution matches the contextmink-bridge
 // target, which shares this file via #[path] from src/bin/.
 #[path = "destructive_guard.rs"]
@@ -28,6 +30,7 @@ use commands::{
     GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
 };
 use config::load_context_config;
+use destructive_guard::{DenyDecision, ShellDialect, evaluate_argv};
 use hook_guard::command_hook_guard;
 use hook_snippet::command_hook_snippet;
 use json_tools::{command_json_find, command_json_select};
@@ -367,8 +370,52 @@ fn main() -> Result<()> {
             receipt_out.as_ref(),
             argv,
         ),
-        Command::HookGuard { command_field } => {
-            command_hook_guard(&config.destructive_guard, command_field)
+        Command::HookGuard {
+            command_field,
+            expected_root,
+            shell,
+        } => command_hook_guard(
+            &config.destructive_guard,
+            command_field,
+            expected_root.as_deref(),
+            *shell,
+        ),
+        Command::GuardCheck {
+            command,
+            shell,
+            argv,
+        } => {
+            let (input_kind, evaluated_argv) = match (command.as_deref(), argv.is_empty()) {
+                (Some(command), true) => (
+                    "shell_command",
+                    shell.unwrap_or(ShellDialect::Posix).command_argv(command),
+                ),
+                (None, false) => ("argv", argv.clone()),
+                (Some(_), false) => {
+                    return Err(anyhow!(
+                        "guard-check accepts either --command or argv, not both"
+                    ));
+                }
+                (None, true) => {
+                    return Err(anyhow!("guard-check requires --command or argv"));
+                }
+            };
+            let decision = evaluate_argv(&evaluated_argv, &config.destructive_guard, false);
+            let (outcome, message) = match decision {
+                DenyDecision::Allow => ("allow", None),
+                DenyDecision::AllowWithOverride { message } => {
+                    ("allow_with_override", Some(message))
+                }
+                DenyDecision::Deny { message } => ("deny", Some(message)),
+            };
+            output::emit_json(serde_json::json!({
+                "schema": "contextmink.guard_check.v1",
+                "input_kind": input_kind,
+                "shell": command.as_ref().map(|_| shell.unwrap_or(ShellDialect::Posix).cli_name()),
+                "decision": outcome,
+                "message": message,
+                "executed": false,
+            }))
         }
         Command::HookSnippet {
             binary,

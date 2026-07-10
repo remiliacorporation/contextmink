@@ -86,10 +86,53 @@ fn nested_shell_payloads_are_scanned() {
 }
 
 #[test]
-fn configured_recursive_forced_deletion_of_protected_paths_is_denied() {
+fn shell_commands_preserve_boundaries_quotes_comments_and_heredocs() {
+    allowed(&[
+        "sh",
+        "-c",
+        "git status --short && echo '(clean = history intact)'",
+    ]);
+    allowed(&["sh", "-c", "git status && make clean"]);
+    allowed(&["sh", "-c", "git commit -m \"fix git clean parser\""]);
+    allowed(&["sh", "-c", "python -c 'payload = \"git clean -fdX\"'"]);
+    allowed(&["sh", "-c", "echo done # git clean -fdX"]);
+    allowed(&[
+        "sh",
+        "-c",
+        "python - <<'PY'\npayload = \"git clean -fdX\"\nPY\n",
+    ]);
+
+    denied(&["sh", "-c", "git status && git clean -fdX"]);
+    denied(&["sh", "-c", "echo $(git clean -fdX)"]);
+    denied(&["sh", "-c", "echo `git clean -fdX`"]);
+
+    allowed(&[
+        "powershell",
+        "-Command",
+        r#"git commit -m "fix `git clean` parser""#,
+    ]);
+    denied(&["powershell", "-Command", "& git clean -fdX"]);
+}
+
+#[test]
+fn configured_path_rules_stay_with_the_deletion_command() {
+    let config = protected_config();
+    allowed_with_config(
+        &["sh", "-c", "echo protected_cache && rm -rf scratch_only"],
+        &config,
+    );
+    allowed_with_config(
+        &["sh", "-c", "echo critical.sqlite && rm scratch.txt"],
+        &config,
+    );
+}
+
+#[test]
+fn configured_recursive_deletion_of_protected_paths_is_denied() {
     let config = protected_config();
     let message = denied_with_config(&["rm", "-rf", "protected_cache"], &config);
     assert!(message.contains("protected_cache"), "message: {message}");
+    denied_with_config(&["rm", "-r", "protected_cache"], &config);
     denied_with_config(&["rm", "-r", "-f", "F:/work/protected_cache"], &config);
     denied_with_config(&["rm", "-fR", "generated/protected_cache"], &config);
     denied_with_config(
@@ -98,8 +141,13 @@ fn configured_recursive_forced_deletion_of_protected_paths_is_denied() {
     );
     denied_with_config(&["Remove-Item", "-Recurse", "protected_cache"], &config);
     denied_with_config(&["Remove-Item", "-r", "-Force", "protected_cache"], &config);
+    denied_with_config(
+        &["Remove-Item", "-Recurse", "-Path:protected_cache"],
+        &config,
+    );
     denied_with_config(&["rmdir", "/s", "/q", "protected_cache"], &config);
     denied_with_config(&["del", "/s", "protected_cache\\notes"], &config);
+    denied_with_config(&["git", "rm", "-r", "protected_cache"], &config);
 }
 
 #[test]
@@ -110,6 +158,7 @@ fn configured_direct_deletion_of_protected_paths_is_denied() {
     denied_with_config(&["rm", "project.gpr"], &config);
     denied_with_config(&["del", "F:\\repo\\project.gpr"], &config);
     denied_with_config(&["Remove-Item", "critical.sqlite"], &config);
+    denied_with_config(&["Remove-Item", "-LiteralPath:db/critical.sqlite"], &config);
 }
 
 #[test]
@@ -160,10 +209,37 @@ fn configured_fragments_ignore_empty_entries() {
 fn ordinary_commands_stay_allowed() {
     allowed(&["git", "status"]);
     allowed(&["git", "log", "--grep=clean"]);
+    allowed(&["git", "commit", "-m", "fix git clean parser"]);
+    allowed(&["git", "status", "--short", "clean"]);
+    allowed(&["git", "checkout", "clean"]);
+    allowed(&["command", "-v", "git", "clean"]);
     allowed(&["cargo", "clean"]);
     allowed(&["rm", "-f", "C:/Temp/scratch.txt"]);
     allowed(&["rm", "-rf", "target/debug"]);
     allowed(&[]);
+}
+
+#[test]
+fn execution_wrappers_do_not_hide_git_clean() {
+    denied(&["command", "git", "clean", "-fdX"]);
+    denied(&["sudo", "-u", "builder", "git", "clean", "-fdX"]);
+    denied(&["nice", "-n", "5", "git", "clean", "-fdX"]);
+    denied(&["nohup", "git", "clean", "-fdX"]);
+    denied(&["xargs", "-n", "1", "git", "clean", "-fdX"]);
+    denied(&["exec", "git", "clean", "-fdX"]);
+    denied(&["exec", "-a", "maintenance", "git", "clean", "-fdX"]);
+    denied(&["time", "-f", "%E", "git", "clean", "-fdX"]);
+    denied(&["timeout", "--signal=KILL", "5", "git", "clean", "-fdX"]);
+    denied(&["stdbuf", "-oL", "git", "clean", "-fdX"]);
+    denied(&["setsid", "-f", "git", "clean", "-fdX"]);
+    denied(&["doas", "-u", "builder", "git", "clean", "-fdX"]);
+
+    allowed(&["exec", "printf", "%s", "git", "clean"]);
+    allowed(&["time", "printf", "%s", "git", "clean"]);
+    allowed(&["exec", "--unknown", "git", "clean"]);
+    allowed(&["time", "--help", "git", "clean"]);
+    allowed(&["timeout", "--help", "git", "clean"]);
+    allowed(&["setsid", "--help", "git", "clean"]);
 }
 
 #[test]

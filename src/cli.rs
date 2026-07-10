@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::destructive_guard::ShellDialect;
 use crate::text::TermMode;
 
 #[derive(Debug, Parser)]
@@ -782,6 +783,43 @@ pub(crate) enum Command {
             help = "Dot-separated JSON object path of the command string in the hook payload"
         )]
         command_field: String,
+        #[arg(
+            long = "expected-root",
+            value_name = "DIR",
+            help = "Apply this hook policy only when the hook payload cwd is inside DIR"
+        )]
+        expected_root: Option<PathBuf>,
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = ShellDialect::Posix,
+            help = "Shell dialect used by the intercepted command string"
+        )]
+        shell: ShellDialect,
+    },
+    /// Explain whether a direct argv or shell command would be allowed by the
+    /// destructive-command guard. This command never spawns the input.
+    GuardCheck {
+        #[arg(
+            long,
+            value_name = "SHELL_COMMAND",
+            conflicts_with = "argv",
+            help = "Shell command text to parse and evaluate without executing"
+        )]
+        command: Option<String>,
+        #[arg(
+            long,
+            value_enum,
+            conflicts_with = "argv",
+            help = "Shell dialect for --command (default: posix)"
+        )]
+        shell: Option<ShellDialect>,
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            help = "Already-tokenized argv to evaluate without executing"
+        )]
+        argv: Vec<String>,
     },
     /// Print a Claude settings fragment that installs hook-guard safely.
     HookSnippet {

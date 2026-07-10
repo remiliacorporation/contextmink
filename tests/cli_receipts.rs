@@ -105,6 +105,46 @@ fn hook_snippet_emits_claude_command_hooks() {
 }
 
 #[test]
+fn guard_check_explains_commands_without_spawning_them() {
+    let root = fixture_root("guard-check");
+    let denied = parse_json_output(
+        &root,
+        &["guard-check", "--command", "git status && git clean -fdX"],
+    );
+    assert_eq!(denied["schema"], "contextmink.guard_check.v1");
+    assert_eq!(denied["decision"], "deny");
+    assert_eq!(denied["executed"], false);
+    assert!(denied["message"].as_str().unwrap().contains("git clean"));
+
+    let allowed = parse_json_output(
+        &root,
+        &[
+            "guard-check",
+            "--command",
+            "git commit -m 'fix git clean parser'",
+        ],
+    );
+    assert_eq!(allowed["decision"], "allow");
+    assert_eq!(allowed["message"], Value::Null);
+
+    let powershell = parse_json_output(
+        &root,
+        &[
+            "guard-check",
+            "--command",
+            r#"git commit -m "fix `git clean` parser""#,
+            "--shell",
+            "powershell",
+        ],
+    );
+    assert_eq!(powershell["decision"], "allow");
+    assert_eq!(powershell["shell"], "powershell");
+
+    let wrapped = parse_json_output(&root, &["guard-check", "--command", "exec git clean -fdX"]);
+    assert_eq!(wrapped["decision"], "deny");
+}
+
+#[test]
 fn json_commands_share_receipt_envelope() {
     let root = fixture_root("json-envelope");
 

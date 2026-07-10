@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{
-    assemble_argv, decode_base64, not_found_message, resolve_program, resolve_root_from_exe_dir,
-    sed_window_span, windows_bash_candidates,
+    MSYS2_ARG_CONV_EXCL_ENV, assemble_argv, decode_base64, git_bash_command, not_found_message,
+    resolve_program, resolve_root_from_exe_dir, sed_window_span, windows_bash_candidates,
 };
 
 fn encode_base64(bytes: &[u8]) -> String {
@@ -124,6 +124,29 @@ fn windows_bash_candidates_are_git_for_windows_only() {
 }
 
 #[test]
+fn git_bash_boundaries_exclude_only_caller_slash_arguments() {
+    let argv = vec![
+        "/lua_5_1_1/_union_41".to_owned(),
+        "@C:/requests/type-graph.json".to_owned(),
+        "{\"type\":\"/lua_5_1_1/_union_41\"}".to_owned(),
+        "plain".to_owned(),
+    ];
+    let command = git_bash_command(std::path::Path::new("bash"), &argv);
+    let value = command
+        .get_envs()
+        .find_map(|(name, value)| {
+            (name == MSYS2_ARG_CONV_EXCL_ENV).then(|| value.map(ToOwned::to_owned))
+        })
+        .flatten();
+    assert_eq!(
+        value.as_deref(),
+        Some(std::ffi::OsStr::new(
+            "/lua_5_1_1/_union_41;@C:/requests/type-graph.json;{\"type\":\"/lua_5_1_1/_union_41\"}"
+        ))
+    );
+}
+
+#[test]
 fn pathlike_programs_resolve_against_cwd_and_bare_names_keep_path_lookup() {
     let cwd = std::path::Path::new("/ws/sub");
     // POSIX exec semantics: a separator makes the name a path relative to
@@ -230,14 +253,15 @@ fn run_blocks_destructive_argv_from_argfile_form() {
     );
 }
 
-/// Script mode skips the warn-only dump trip-wire but must not skip the
-/// deny-list: destructive tokens in script arguments are refused.
+/// Script arguments are data owned by the script, not independent commands.
+/// Treating words inside them as executable commands makes test probes and
+/// commit-message helpers impossible to invoke safely.
 #[test]
-fn run_blocks_destructive_argv_in_script_mode() {
+fn run_allows_command_words_as_script_arguments() {
     let root = temp_tree("deny-script");
     let script = root.join("probe.sh");
     fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-    let error = super::run(vec![
+    let exit_code = super::run(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--script".to_owned(),
@@ -246,17 +270,12 @@ fn run_blocks_destructive_argv_in_script_mode() {
         "clean".to_owned(),
         "-fdX".to_owned(),
     ])
-    .unwrap_err();
-    assert_eq!(error.code, super::EXIT_USAGE);
-    assert!(
-        error.message.contains("destructive command blocked"),
-        "message: {}",
-        error.message
-    );
+    .unwrap();
+    assert_eq!(exit_code, 0);
 }
 
 #[test]
-fn run_blocks_configured_protected_fragment_in_script_mode() {
+fn run_keeps_protected_path_words_local_to_the_script_command() {
     let root = temp_tree("deny-config-script");
     fs::write(
         root.join(".contextmink.toml"),
@@ -265,7 +284,7 @@ fn run_blocks_configured_protected_fragment_in_script_mode() {
     .unwrap();
     let script = root.join("probe.sh");
     fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-    let error = super::run_with_root(
+    let exit_code = super::run_with_root(
         vec![
             "--cwd".to_owned(),
             root.to_string_lossy().into_owned(),
@@ -277,13 +296,8 @@ fn run_blocks_configured_protected_fragment_in_script_mode() {
         ],
         root,
     )
-    .unwrap_err();
-    assert_eq!(error.code, super::EXIT_USAGE);
-    assert!(
-        error.message.contains("protected_cache"),
-        "message: {}",
-        error.message
-    );
+    .unwrap();
+    assert_eq!(exit_code, 0);
 }
 
 #[test]

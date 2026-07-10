@@ -17,8 +17,9 @@ fn command_for(settings: &serde_json::Value, matcher: &str) -> String {
 #[test]
 fn claude_snippet_uses_command_string_not_args() {
     let settings = claude_hook_settings(
-        &PathBuf::from("F:/AI/wow_modernclient/tools/contextmink/target/release/contextmink.exe"),
-        Some(&PathBuf::from("F:/AI/wow_modernclient/.contextmink.toml")),
+        &PathBuf::from("F:/work/example/tools/contextmink/bin/contextmink.exe"),
+        Some(&PathBuf::from("F:/work/example/.contextmink.toml")),
+        &PathBuf::from("F:/work/example"),
         false,
         &["Bash".to_owned()],
         "tool_input.command",
@@ -32,18 +33,19 @@ fn claude_snippet_uses_command_string_not_args() {
 #[test]
 fn windows_paths_are_bash_safe() {
     let settings = claude_hook_settings(
-        &PathBuf::from(r"F:\AI\wow_modernclient\tools\contextmink\target\release\contextmink.exe"),
-        Some(&PathBuf::from(r"F:\AI\wow_modernclient\.contextmink.toml")),
+        &PathBuf::from(r"F:\work\example\tools\contextmink\bin\contextmink.exe"),
+        Some(&PathBuf::from(r"F:\work\example\.contextmink.toml")),
+        &PathBuf::from(r"F:\work\example"),
         false,
         &["Bash".to_owned()],
         "tool_input.command",
     );
 
     let command = command_for(&settings, "Bash");
-    assert!(
-        command.contains("F:/AI/wow_modernclient/tools/contextmink/target/release/contextmink.exe")
-    );
-    assert!(command.contains("--config F:/AI/wow_modernclient/.contextmink.toml"));
+    assert!(command.contains("F:/work/example/tools/contextmink/bin/contextmink.exe"));
+    assert!(command.contains("--config F:/work/example/.contextmink.toml"));
+    assert!(command.contains("--expected-root F:/work/example"));
+    assert!(command.contains("--shell posix"));
     assert!(
         !command.contains('\\'),
         "raw backslashes in a Claude Bash hook command are shell escapes: {command}"
@@ -54,7 +56,8 @@ fn windows_paths_are_bash_safe() {
 fn paths_with_spaces_are_shell_quoted_per_matcher() {
     let settings = claude_hook_settings(
         &PathBuf::from("C:/Program Files/contextmink/contextmink.exe"),
-        Some(&PathBuf::from("C:/Users/Onno/My Repo/.contextmink.toml")),
+        Some(&PathBuf::from("C:/Users/Agent/My Repo/.contextmink.toml")),
+        &PathBuf::from("C:/Users/Agent/My Repo"),
         false,
         &["Bash".to_owned(), "PowerShell".to_owned()],
         "tool_input.command",
@@ -62,11 +65,11 @@ fn paths_with_spaces_are_shell_quoted_per_matcher() {
 
     assert_eq!(
         command_for(&settings, "Bash"),
-        "'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Onno/My Repo/.contextmink.toml'"
+        "'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell posix"
     );
     assert_eq!(
         command_for(&settings, "PowerShell"),
-        "& 'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Onno/My Repo/.contextmink.toml'"
+        "& 'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell powershell"
     );
 }
 
@@ -75,6 +78,7 @@ fn custom_command_field_and_no_config_are_emitted() {
     let settings = claude_hook_settings(
         &PathBuf::from("/opt/contextmink/contextmink"),
         None,
+        &PathBuf::from("/work/example"),
         true,
         &["Bash".to_owned()],
         "tool.payload.command",
@@ -82,6 +86,6 @@ fn custom_command_field_and_no_config_are_emitted() {
 
     assert_eq!(
         command_for(&settings, "Bash"),
-        "/opt/contextmink/contextmink hook-guard --no-config --command-field tool.payload.command"
+        "/opt/contextmink/contextmink hook-guard --no-config --expected-root /work/example --shell posix --command-field tool.payload.command"
     );
 }

@@ -14,12 +14,15 @@
 //! allows with a stderr note; only a recognized destructive command blocks.
 
 use std::io::Read;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::config::DestructiveGuardConfig;
-use crate::destructive_guard::{DenyDecision, destructive_override_active, evaluate_argv};
+use crate::destructive_guard::{
+    DenyDecision, ShellDialect, destructive_override_active, evaluate_argv,
+};
 
 /// Exit code that hook protocols treat as "block this tool call".
 const EXIT_BLOCK: i32 = 2;
@@ -27,12 +30,21 @@ const EXIT_BLOCK: i32 = 2;
 pub(crate) fn command_hook_guard(
     config: &DestructiveGuardConfig,
     command_field: &str,
+    expected_root: Option<&Path>,
+    shell: ShellDialect,
 ) -> Result<()> {
     let mut raw = String::new();
     std::io::stdin()
         .read_to_string(&mut raw)
         .context("hook-guard: reading hook payload from stdin")?;
-    match evaluate_hook_payload(&raw, command_field, config, destructive_override_active()) {
+    match evaluate_hook_payload_for_root(
+        &raw,
+        command_field,
+        config,
+        destructive_override_active(),
+        expected_root,
+        shell,
+    ) {
         HookVerdict::Allow => Ok(()),
         HookVerdict::AllowUnparsed { note } => {
             eprintln!("[contextmink hook-guard] {note}; allowing (nothing to scan)");
@@ -71,11 +83,41 @@ pub(crate) enum HookVerdict {
 /// Pure evaluation: parse the payload, pull the command string at
 /// `command_field` (a dot-separated object path), and scan it as a shell
 /// payload so word-splitting matches what a shell would execute.
+#[cfg(test)]
 pub(crate) fn evaluate_hook_payload(
     raw: &str,
     command_field: &str,
     config: &DestructiveGuardConfig,
     override_active: bool,
+) -> HookVerdict {
+    evaluate_hook_payload_for_root(
+        raw,
+        command_field,
+        config,
+        override_active,
+        None,
+        ShellDialect::Posix,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn evaluate_hook_payload_with_shell(
+    raw: &str,
+    command_field: &str,
+    config: &DestructiveGuardConfig,
+    override_active: bool,
+    shell: ShellDialect,
+) -> HookVerdict {
+    evaluate_hook_payload_for_root(raw, command_field, config, override_active, None, shell)
+}
+
+pub(crate) fn evaluate_hook_payload_for_root(
+    raw: &str,
+    command_field: &str,
+    config: &DestructiveGuardConfig,
+    override_active: bool,
+    expected_root: Option<&Path>,
+    shell: ShellDialect,
 ) -> HookVerdict {
     // Windows shells prepend BOMs when files or pipelines re-encode; serde
     // rejects a BOM'd document, and an unparseable payload fails open here —
@@ -94,6 +136,24 @@ pub(crate) fn evaluate_hook_payload(
             };
         }
     };
+    if let Some(expected_root) = expected_root {
+        let Some(cwd) = payload.get("cwd").and_then(Value::as_str) else {
+            return HookVerdict::AllowUnparsed {
+                note: format!(
+                    "hook payload has no string `cwd`; policy is bound to {}",
+                    expected_root.display()
+                ),
+            };
+        };
+        if !hook_cwd_is_within(Path::new(cwd), expected_root) {
+            return HookVerdict::AllowUnparsed {
+                note: format!(
+                    "hook cwd {cwd:?} is outside policy root {}",
+                    expected_root.display()
+                ),
+            };
+        }
+    }
     let mut cursor = &payload;
     for key in command_field.split('.') {
         match cursor.get(key) {
@@ -114,13 +174,37 @@ pub(crate) fn evaluate_hook_payload(
         return HookVerdict::Allow;
     }
     // Present the command exactly as a shell payload: argv[0] is a shell
-    // stem, so the guard's nested word-scan applies the same rules it uses
-    // for `bash -lc '<script>'` children.
-    let argv = vec!["sh".to_owned(), "-c".to_owned(), command.to_owned()];
+    // stem, so the quote- and boundary-aware parser applies the same rules it
+    // uses for `bash -lc '<script>'` children.
+    let argv = shell.command_argv(command);
     match evaluate_argv(&argv, config, override_active) {
         DenyDecision::Allow => HookVerdict::Allow,
         DenyDecision::AllowWithOverride { message } => HookVerdict::AllowWithOverride { message },
         DenyDecision::Deny { message } => HookVerdict::Deny { message },
+    }
+}
+
+fn hook_cwd_is_within(cwd: &Path, expected_root: &Path) -> bool {
+    match (cwd.canonicalize(), expected_root.canonicalize()) {
+        (Ok(cwd), Ok(expected_root)) => cwd.starts_with(expected_root),
+        _ => {
+            let normalize = |path: &Path| {
+                let value = path.to_string_lossy().replace('\\', "/");
+                if cfg!(windows) {
+                    value.to_ascii_lowercase()
+                } else {
+                    value
+                }
+                .trim_end_matches('/')
+                .to_owned()
+            };
+            let cwd = normalize(cwd);
+            let root = normalize(expected_root);
+            cwd == root
+                || cwd
+                    .strip_prefix(&root)
+                    .is_some_and(|tail| tail.starts_with('/'))
+        }
     }
 }
 
