@@ -42,6 +42,7 @@ fn forward_slashes(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+#[cfg(windows)]
 fn forwarding_script(root: &Path) -> PathBuf {
     let script = root.join("forward-argv");
     fs::write(
@@ -52,6 +53,7 @@ fn forwarding_script(root: &Path) -> PathBuf {
     script
 }
 
+#[cfg(windows)]
 fn assert_bash_script_argv_round_trip(command_form: &str) {
     let root = temp_root(command_form.trim_start_matches('-'));
     let script = forwarding_script(&root);

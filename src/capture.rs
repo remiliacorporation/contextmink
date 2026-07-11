@@ -112,7 +112,7 @@ pub(crate) fn command_capture(
 
     let started = Instant::now();
     let (mut child, effective_argv) = spawn_captured_child(program, args)?;
-    let _child_supervisor = supervise_captured_child(&mut child)?;
+    let child_supervisor = supervise_captured_child(&mut child)?;
 
     let stdout_pipe = child
         .stdout
@@ -127,6 +127,7 @@ pub(crate) fn command_capture(
     let status = child
         .wait()
         .context("failed to wait for captured command")?;
+    drop(child_supervisor);
     let stdout_raw = stdout_handle
         .join()
         .map_err(|_| anyhow!("stdout capture thread panicked"))?
@@ -313,6 +314,7 @@ fn spawn_captured_child(
     args: &[String],
 ) -> Result<(std::process::Child, Option<Vec<String>>)> {
     let mut command = ProcessCommand::new(program);
+    configure_captured_command(&mut command);
     command
         .args(args)
         .stdout(Stdio::piped())
@@ -331,6 +333,7 @@ fn spawn_captured_child(
 
             let relay_args = bash_argv_relay_args(program, args);
             let mut fallback = ProcessCommand::new(&bash);
+            configure_captured_command(&mut fallback);
             fallback
                 .arg("-c")
                 .arg(BASH_ARGV_RELAY)
@@ -351,6 +354,16 @@ fn spawn_captured_child(
         }
     }
 }
+
+#[cfg(unix)]
+fn configure_captured_command(command: &mut ProcessCommand) {
+    use std::os::unix::process::CommandExt as _;
+
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_captured_command(_command: &mut ProcessCommand) {}
 
 #[cfg(windows)]
 struct CapturedChildSupervisor(windows_sys::Win32::Foundation::HANDLE);
@@ -409,12 +422,93 @@ fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedC
     Ok(CapturedChildSupervisor(job))
 }
 
-#[cfg(not(windows))]
-struct CapturedChildSupervisor;
+#[cfg(unix)]
+struct CapturedChildSupervisor {
+    release_fd: std::os::fd::RawFd,
+    watchdog_pid: libc::pid_t,
+}
 
-#[cfg(not(windows))]
-fn supervise_captured_child(_child: &mut std::process::Child) -> Result<CapturedChildSupervisor> {
-    Ok(CapturedChildSupervisor)
+#[cfg(unix)]
+impl Drop for CapturedChildSupervisor {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.release_fd);
+            while libc::waitpid(self.watchdog_pid, std::ptr::null_mut(), 0) == -1 {
+                if std::io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedChildSupervisor> {
+    let process_group = child.id() as libc::pid_t;
+    let mut release_pipe = [0; 2];
+    if unsafe { libc::pipe(release_pipe.as_mut_ptr()) } != 0 {
+        let error = std::io::Error::last_os_error();
+        terminate_captured_process_group(child);
+        return Err(error).context("failed to create capture supervision pipe");
+    }
+    for fd in release_pipe {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1
+        {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(release_pipe[0]);
+                libc::close(release_pipe[1]);
+            }
+            terminate_captured_process_group(child);
+            return Err(error).context("failed to configure capture supervision pipe");
+        }
+    }
+
+    let watchdog_pid = unsafe { libc::fork() };
+    if watchdog_pid == -1 {
+        let error = std::io::Error::last_os_error();
+        unsafe {
+            libc::close(release_pipe[0]);
+            libc::close(release_pipe[1]);
+        }
+        terminate_captured_process_group(child);
+        return Err(error).context("failed to fork capture supervision watchdog");
+    }
+    if watchdog_pid == 0 {
+        unsafe {
+            libc::close(release_pipe[1]);
+            let mut byte = 0_u8;
+            loop {
+                let read = libc::read(release_pipe[0], (&raw mut byte).cast(), 1);
+                if read == 0 {
+                    break;
+                }
+                // Keep the post-fork watchdog restricted to async-signal-safe
+                // libc calls. The blocking pipe is valid for its lifetime, so
+                // a negative read is transient and can be retried.
+            }
+            libc::close(release_pipe[0]);
+            libc::kill(-process_group, libc::SIGKILL);
+            libc::_exit(0);
+        }
+    }
+
+    unsafe {
+        libc::close(release_pipe[0]);
+    }
+    Ok(CapturedChildSupervisor {
+        release_fd: release_pipe[1],
+        watchdog_pid,
+    })
+}
+
+#[cfg(unix)]
+fn terminate_captured_process_group(child: &mut std::process::Child) {
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    let _ = child.wait();
 }
 
 fn bash_argv_relay_args(program: &str, args: &[String]) -> Vec<String> {

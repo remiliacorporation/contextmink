@@ -8,7 +8,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
-- Windows `capture` now supervises the full child process tree with a kill-on-close Job Object, so an outer timeout cannot leave a mutating descendant running after the capture wrapper exits.
+- `capture` now supervises child process trees on every supported platform, using kill-on-close Job Objects on Windows and process groups with independent parent-death watchdogs on Linux and macOS, so an outer timeout cannot leave a mutating descendant running after the wrapper exits.
 
 ## [0.7.0] - 2026-07-11
 

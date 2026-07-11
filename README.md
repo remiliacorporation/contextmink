@@ -104,8 +104,11 @@ below is the short map.
   required `--path DB`.
 - `capture` — execute argv and print capped stdout/stderr with
   the exit status. Truncation keeps both head and tail, since verdicts sit at
-  the end of tool output. On Windows the captured process tree is assigned to
-  a kill-on-close Job Object, so terminating `capture` also reaps descendants.
+  the end of tool output. Terminating `capture` also reaps the command and its
+  ordinary descendants: Windows uses a kill-on-close Job Object, while Linux
+  and macOS use a dedicated process group plus an independent parent-death
+  watchdog. Captured commands must not deliberately escape containment by
+  daemonizing into a new session or process group.
 - `hook-snippet` — print a Claude `.claude/settings.json` fragment that
   registers `hook-guard` with shell-safe command strings.
 - `hook-guard` — evaluate an agent PreToolUse hook payload from stdin against
