@@ -40,7 +40,9 @@ more output than the transcript should carry.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no
   native bound exists; read the child `exit_code`/`success` fields in the
-  receipt. Truncated captures keep both the head and the tail of the output.
+  receipt. Direct capture recognizes real shebang files; use
+  `capture --script -- <script> ...` for a no-shebang Bash script. Truncated
+  captures keep both the head and the tail of the output.
 - Configured excludes keep broad scans quiet. Pass an explicit file or
   subdirectory when an excluded tree is the target. Use `--with-excluded` to
   include files matched by contextmink exclude globs, and `--with-git-ignored`

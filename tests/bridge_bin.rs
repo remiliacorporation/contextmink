@@ -1,8 +1,7 @@
 //! Integration tests for the native `contextmink-bridge` binary. Direct argv
 //! modes spawn without any shell, so these run identically on Windows and
-//! Unix; Git-Bash-dependent modes (`--script`, `--login`) are covered by the
-//! bash-template tests in `codex_bash_bridge.rs` and exercised here only
-//! through the shared discovery logic.
+//! Unix; Windows script modes exercise the shared deterministic process
+//! boundary used by both the bridge and `capture`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -216,7 +215,7 @@ fn script_mode_preserves_native_child_argv_across_git_bash() {
 
 #[cfg(windows)]
 #[test]
-fn extensionless_fallback_preserves_native_child_argv_across_git_bash() {
+fn shebang_autodetection_preserves_native_child_argv_across_git_bash() {
     assert_bash_script_argv_round_trip("--");
 }
 
@@ -256,6 +255,23 @@ fn guards_fail_fast_with_usage_exit_codes() {
 
     let not_found = run_bridge(&["--", "no-such-program-anywhere"]);
     assert_eq!(not_found.status.code(), Some(127));
+}
+
+#[cfg(windows)]
+#[test]
+fn invalid_explicit_bash_override_fails_instead_of_falling_back() {
+    let root = temp_root("invalid-bash-override");
+    let script = forwarding_script(&root);
+    let output = Command::new(bridge_exe())
+        .current_dir(&root)
+        .env("CONTEXTMINK_BASH", root.join("missing-bash.exe"))
+        .args(["--script", &forward_slashes(&script)])
+        .output()
+        .expect("run bridge with invalid Bash override");
+    assert_eq!(output.status.code(), Some(127));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("CONTEXTMINK_BASH does not name a file")
+    );
 }
 
 #[test]

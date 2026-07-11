@@ -6,6 +6,15 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Changed
+
+- Native bridge and `capture` execution now share one Rust process boundary for Bash discovery, root resolution, shebang classification, hex-safe argv relay, and scoped MSYS exclusions. Direct mode classifies real shebang files before spawn instead of treating Windows `ERROR_BAD_EXE_FORMAT` as a script detector; `capture --script` is the explicit no-shebang Bash path, and receipts replace `spawn_fallback` with `execution_mode` plus an always-present effective argv.
+- Bridge project-root discovery now considers the caller's current repository before the executable's install tree, so a globally installed bridge resolves project scripts and destructive-guard policy correctly from nested working directories.
+
+### Removed
+
+- Removed the independently implemented `codex-bash.sh` bridge template and its duplicate test surface. Windows uses the guarded native bridge; POSIX hosts execute project scripts directly.
+
 ### Fixed
 
 - POSIX brace groups can no longer hide destructive commands while attached brace-expansion words remain supported.

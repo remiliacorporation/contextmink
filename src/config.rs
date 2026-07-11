@@ -285,16 +285,8 @@ fn parse_string_array(body: &str) -> Result<Vec<String>> {
 }
 
 pub(crate) fn find_config_path() -> Option<PathBuf> {
-    let mut current = std::env::current_dir().ok()?;
-    loop {
-        let candidate = current.join(CONFIG_NAME);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if !current.pop() {
-            return None;
-        }
-    }
+    let current = std::env::current_dir().ok()?;
+    crate::process_boundary::find_ancestor_file(&current, CONFIG_NAME)
 }
 
 #[cfg(test)]

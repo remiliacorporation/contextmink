@@ -16,6 +16,7 @@ mod hook_snippet;
 mod json_tools;
 mod outline;
 mod output;
+mod process_boundary;
 mod sqlite;
 mod text;
 
@@ -337,6 +338,7 @@ fn main() -> Result<()> {
             max_lines,
             max_bytes,
             max_line_chars,
+            script,
             fail_with_child,
             expect_exit,
             receipt_out,
@@ -347,6 +349,7 @@ fn main() -> Result<()> {
             *max_lines,
             *max_bytes,
             *max_line_chars,
+            *script,
             *fail_with_child,
             expect_exit,
             receipt_out.as_ref(),

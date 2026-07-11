@@ -421,6 +421,8 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
     assert_envelope(&json, "capture", "lines");
     assert_eq!(json["success"], true);
     assert_eq!(json["exit_code"], 0);
+    assert_eq!(json["execution_mode"], "native");
+    assert!(json["effective_argv"].is_array());
     assert_eq!(json["stdout"]["shown_lines"], 1);
     assert!(json["stdout"]["total_lines"].as_u64().unwrap() > 1);
     assert!(json["stdout"]["omitted_lines"].as_u64().unwrap() > 0);
@@ -530,6 +532,29 @@ fn capture_uses_capture_receipt_shape() {
     assert_envelope(&json, "capture", "lines");
     assert_eq!(json["success"], true);
     assert_eq!(json["exit_code"], 0);
+}
+
+#[test]
+fn capture_script_runs_no_shebang_bash_script_through_shared_boundary() {
+    let root = fixture_root("capture-explicit-script");
+    fs::write(root.join("probe_script"), "printf '%s\\n' \"$1\"\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--script",
+            "--",
+            "probe_script",
+            "two words",
+        ],
+    );
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["success"], true);
+    assert_eq!(json["execution_mode"], "bash_script");
+    assert!(json["stdout_text"].as_str().unwrap().contains("two words"));
+    assert_eq!(json["effective_argv"].as_array().unwrap().len(), 3);
 }
 
 #[test]

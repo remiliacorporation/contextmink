@@ -107,7 +107,10 @@ below is the short map.
   the end of tool output. Terminating `capture` also reaps the command and its
   ordinary descendants: Windows uses a kill-on-close Job Object, while Linux
   and macOS use a dedicated process group plus an independent parent-death
-  watchdog. Captured commands must not deliberately escape containment by
+  watchdog. Direct mode recognizes real shebang files before spawn; use
+  `capture --script -- <path> ...` for an intentional Bash script without a
+  shebang. Receipts disclose the deterministic `execution_mode` and effective
+  argv. Captured commands must not deliberately escape containment by
   daemonizing into a new session or process group.
 - `hook-snippet` — print a Claude `.claude/settings.json` fragment that
   registers `hook-guard` with shell-safe command strings.
@@ -234,8 +237,8 @@ including retained stdout/stderr text, while keeping terminal output bounded.
 
 ## Windows
 
-The binary itself needs no shell. Two optional pieces serve repositories
-whose scripts are Bash-first while the agent runs in PowerShell:
+The binary itself needs no shell. One optional native bridge serves
+repositories whose scripts are Bash-first while the agent runs in PowerShell:
 
 - `contextmink-bridge.exe` (Windows archive only) runs commands and repo bash
   scripts from PowerShell: it locates Git Bash itself (Git for Windows only;
@@ -243,9 +246,10 @@ whose scripts are Bash-first while the agent runs in PowerShell:
   exotic shell explicitly), spawns direct commands without MSYS argument
   rewriting, and takes argv as `--argv-b64` or `--argfile` so PowerShell 5.1
   quoting cannot corrupt arguments. In direct mode a program spelled as a
-  path (`./gradlew`) resolves against `--cwd` like a POSIX exec and
-  extensionless bash scripts retry through Git Bash; `--script <path>`
-  resolves repo scripts from the bridge root instead. Every bridge-owned Git
+  path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Real shebang
+  scripts are classified before spawn and enter Git Bash deterministically;
+  `--script <path>` explicitly selects a Bash script and resolves it from the
+  bridge root. Every bridge-owned Git
   Bash boundary hex-relays startup argv before decoding it and installs scoped
   MSYS conversion exclusions for the caller's slash-bearing values, so a
   quoted `"$@"` forwarded to a native child preserves leading-slash selectors,
@@ -253,9 +257,9 @@ whose scripts are Bash-first while the agent runs in PowerShell:
   `--print-argv` shows exactly what arrived; `--print-root` shows the resolved
   bridge root.
   Destructive argv matching the safety deny-list is refused before spawn;
-  `--help` prints the current deny-list and break-glass override.
-- `templates/scripts/codex-bash.sh` is the same bridge as a shell script, for
-  repositories that do not want a second binary.
+  `--help` prints the current deny-list and break-glass override. The bridge
+  and `capture` share the same Rust process-boundary implementation; no
+  parallel shell bridge is retained.
 
 The `scripts/contextmink` launcher additionally shields slash-bearing
 `--pattern`, `--prefix`, `--contains`, `--term`, and JSON Pointer values from

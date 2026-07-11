@@ -29,9 +29,9 @@ replacement for project-native tools.
   Do not rely on Windows to open the extensionless `scripts/contextmink` path
   directly from PowerShell. `contextmink-bridge.exe` is the preferred
   PowerShell-to-Git-Bash bridge when a Windows-native session needs the Bash
-  launcher or another Bash-first repository script. For `capture` of
-  extensionless repository scripts on Windows, use the launcher; it supplies the
-  Bash interpreter needed for script fallback.
+  launcher or another Bash-first repository script. Direct `contextmink.exe
+  capture` recognizes real shebang files; pass `--script` for a no-shebang
+  Bash script.
 
 ## Release Archives
 
@@ -79,18 +79,18 @@ This installs `contextmink` on `PATH` instead of vendoring it per repository:
 The binary can use a repository-local `.contextmink.toml`; it searches upward
 from the current directory.
 
-On Windows, direct `contextmink.exe` can run built-in commands and native
-executables. Use Project Binary Integration when `capture` needs to run
-extensionless Bash scripts from the repository.
+On Windows, direct `contextmink.exe` runs built-in commands, native executables,
+real shebang scripts, and explicit `capture --script` Bash scripts. Use Project
+Binary Integration when the repository wants a stable local launcher and
+policy-bearing tool layout.
 
 ## Project Binary Integration
 
 This gives a target repository a local `scripts/contextmink` entrypoint without
 a source build.
 
-Use this layout for Windows repositories that expect agents to run `capture`
-around extensionless Bash scripts. The launcher supplies the Bash interpreter
-for script fallback.
+Use this layout for repositories that want a checked-in launcher while keeping
+host-specific release binaries ignored and replaceable.
 
 1. Unpack the release archive next to, or outside, the target repository.
 
@@ -231,8 +231,8 @@ support an `args` field.
 
 The contextmink binary needs none of this — it runs natively from any shell.
 This section applies only to repositories that keep their scripts Bash-first
-while the agent runs in PowerShell. Two bridge options exist because Windows
-has two distinct argv hazards; neither exists on POSIX hosts.
+while the agent runs in PowerShell. The guarded native bridge is the sole
+retained implementation; POSIX hosts need no bridge.
 
 **Native binary (preferred on Windows).** The Windows release archive carries
 `contextmink-bridge.exe`. It locates Git Bash itself (no hardcoded path on the
@@ -252,21 +252,21 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [ch
 
 `--print-argv` shows exactly what survived the PowerShell boundary;
 `--argfile <file>` (one argument per line) is the file-based alternative;
-`--cwd` and `--login` work as in the script bridge. Relative paths resolve
-from `CONTEXTMINK_BRIDGE_ROOT`; else the nearest ancestor of the binary with
-`.contextmink.toml` — the policy root — so a vendored contextmink checkout
-(which is its own git repository) anchors to the workspace it serves; else
-the nearest ancestor with `.git`. In direct mode a program spelled as a path
-(`./gradlew`, `bin/tool`) resolves against `--cwd`, matching POSIX exec
-semantics, and an extensionless bash script retries through Git Bash — so
-`--cwd sub/project -- ./gradlew test` works; `--script` differs in resolving
-its script path from the bridge root instead of `--cwd`. Bare names (`git`)
-use PATH. Destructive argv matching the safety deny-list is refused before
-spawn; `contextmink-bridge --help` prints the current deny-list and
-break-glass override.
+`--cwd` and `--login` share the same process-boundary policy. Relative paths
+resolve from `CONTEXTMINK_BRIDGE_ROOT`; otherwise caller-side
+`.contextmink.toml`/`.git` discovery wins before executable-side discovery.
+This supports both globally installed and project-local bridges while keeping
+a vendored contextmink checkout anchored to the project it serves. In direct
+mode a path-like program (`./gradlew`, `bin/tool`) resolves against `--cwd`,
+matching POSIX exec semantics. A real shebang is classified before spawn and
+enters Git Bash deterministically; a Bash script without a shebang requires
+explicit `--script`, whose path resolves from the bridge root instead of
+`--cwd`. Bare names (`git`) use PATH. Destructive argv matching the safety
+deny-list is refused before spawn; `contextmink-bridge --help` prints the
+current deny-list and break-glass override.
 
-Both `--script` and the extensionless-script retry hex-encode argv across Git
-Bash startup, decode it with a constant builtin-only relay, and install scoped
+Both explicit `--script` and deterministic shebang execution hex-encode argv
+across Git Bash startup, decode it with a constant builtin-only relay, and install scoped
 MSYS conversion exclusions for the caller's slash-bearing values. A repository
 script that forwards with quoted `"$@"` therefore passes `/type/path`,
 `@request.json`, and inline JSON to native Windows children byte-for-byte while
@@ -275,38 +275,6 @@ its own generated POSIX paths still receive normal MSYS conversion. Do not set
 setting. (`--print-argv` exits before spawning and diagnoses only the
 PowerShell-to-bridge boundary; the installed regression probe also covers the
 Bash-to-native-child hop.)
-
-**Script launcher (bash-first setups).** Install the template when the
-repository prefers a shell entrypoint or must not carry a second binary:
-
-```bash
-cp /path/to/unpacked/templates/scripts/codex-bash.sh scripts/codex-bash.sh
-chmod +x scripts/codex-bash.sh
-```
-
-The agent then invokes Git Bash by absolute path with argv-safe forms instead
-of `bash -lc "<string>"`:
-
-```powershell
-& "C:\Program Files\Git\bin\bash.exe" scripts/codex-bash.sh -- <program> <args...>
-& "C:\Program Files\Git\bin\bash.exe" scripts/codex-bash.sh --script scripts/some_tool.sh <args...>
-```
-
-The bridge handles the two distinct Windows argv hazards separately:
-
-- PowerShell 5.1 drops embedded quotes and merges arguments at the
-  PowerShell -> bash boundary. Diagnose with `--print-argv`; pass fragile
-  argv through `--argfile <file>` (one argument per line, no quoting).
-- MSYS rewrites or collapses slash-bearing arguments (regex patterns,
-  POSIX-looking switches) at the bash -> native-exe boundary. Pass
-  `--no-msys-conversion` when a native child must receive argv verbatim.
-
-`--cwd <dir>` selects the working directory, `--login` supplies a login-shell
-environment argv-safely, and a built-in warn-only trip-wire flags raw content
-dumps (`sed -n` windows, `cat` on large files) toward `contextmink
-outline`/`slice`. Without a command form the launcher opens an interactive
-shell only on a real terminal; a headless agent gets a usage error instead of
-a hang.
 
 ## Source Vendored Integration
 
@@ -431,9 +399,10 @@ host mechanics the templates do not:
   selectors and slash-bearing `--pattern` / `--prefix` / `--contains` /
   `--term` values from MSYS path rewriting on Git Bash, while leaving normal
   file paths to the shell.
-- On Windows, the launcher lets `capture` retry extensionless shell scripts
-  through the current Bash interpreter as argv, not as a shell string;
-  receipts disclose `spawn_fallback` and `effective_argv` when that happens.
+- Bridge and `capture` share deterministic script classification. Real
+  shebang files enter the Bash boundary before spawn; use
+  `capture --script -- <script> ...` for a no-shebang Bash script. Receipts
+  disclose `execution_mode` and the always-present `effective_argv`.
 - Keep ordinary repository-specific scan policy and protected deletion
   fragments in `.contextmink.toml` and repository instructions.
 

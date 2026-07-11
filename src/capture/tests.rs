@@ -19,27 +19,6 @@ fn byte_truncated_single_line_keeps_head_and_tail_fragments_visible() {
     assert!(rendered.display_text.contains(r#""tail"]}"#));
 }
 
-#[test]
-fn bash_fallback_hides_response_file_and_shell_syntax_until_after_startup() {
-    let args = vec![
-        "--arguments".to_string(),
-        "@scratch/args with spaces.json".to_string(),
-        "semi;colon".to_string(),
-    ];
-
-    let encoded = bash_argv_relay_args("./scripts/tool", &args);
-
-    assert_eq!(encoded.len(), 4);
-    assert!(encoded.iter().all(|arg| !arg.contains('@')));
-    assert!(encoded.iter().all(|arg| !arg.contains(' ')));
-    assert!(encoded.iter().all(|arg| !arg.contains(';')));
-    assert!(
-        encoded
-            .iter()
-            .all(|arg| arg.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    );
-}
-
 #[cfg(windows)]
 #[test]
 fn capture_supervision_job_terminates_child_when_dropped() {
@@ -65,12 +44,17 @@ fn capture_supervision_job_contains_descendants_before_resume() {
     use std::io::BufRead as _;
 
     let script = "$p=Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 30' -PassThru; [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Wait-Process -Id $p.Id";
-    let (mut child, fallback) = spawn_captured_child(
+    let args = ["-NoProfile".into(), "-Command".into(), script.into()];
+    let prepared = prepare_command(
         "powershell.exe",
-        &["-NoProfile".into(), "-Command".into(), script.into()],
+        &args,
+        &std::env::current_dir().unwrap(),
+        false,
+        false,
     )
-    .expect("spawn suspended supervision fixture");
-    assert!(fallback.is_none());
+    .expect("prepare suspended supervision fixture");
+    let mut child = spawn_captured_child(prepared.command, "powershell.exe", "native")
+        .expect("spawn suspended supervision fixture");
     let supervisor = supervise_captured_child(&mut child).expect("assign and resume fixture");
     let mut descendant_pid = String::new();
     std::io::BufReader::new(child.stdout.take().expect("fixture stdout"))
@@ -116,10 +100,11 @@ fn windows_process_is_running(pid: u32) -> bool {
 fn capture_supervision_watchdog_terminates_process_group_when_dropped() {
     use std::io::BufRead as _;
 
-    let (mut child, fallback) =
-        spawn_captured_child("sh", &["-c".into(), "sleep 30 & echo $!; wait".into()])
-            .expect("spawn supervised fixture");
-    assert!(fallback.is_none());
+    let args = ["-c".into(), "sleep 30 & echo $!; wait".into()];
+    let prepared = prepare_command("sh", &args, &std::env::current_dir().unwrap(), false, false)
+        .expect("prepare supervised fixture");
+    let mut child =
+        spawn_captured_child(prepared.command, "sh", "native").expect("spawn supervised fixture");
     let supervisor = supervise_captured_child(&mut child).expect("supervise fixture child");
     let mut descendant_pid = String::new();
     std::io::BufReader::new(child.stdout.take().expect("fixture stdout"))

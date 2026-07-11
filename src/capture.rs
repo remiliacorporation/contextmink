@@ -12,29 +12,7 @@ use serde_json::{Value, json};
 use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::output::{base_receipt, clamp_text, emit_json, write_receipt_checked};
-
-// Raw argv must not appear on the Windows command line used to start Git Bash.
-// MSYS expands `@file` response arguments before Bash starts, which corrupts
-// structured argv intended for the child. Decode hex only after Bash is live.
-const BASH_ARGV_RELAY: &str = r#"set -euo pipefail
-decode_hex() {
-    local hex=$1 out= byte
-    while [[ -n $hex ]]; do
-        printf -v byte '%b' "\\x${hex:0:2}"
-        out+=$byte
-        hex=${hex:2}
-    done
-    REPLY=$out
-}
-decode_hex "$1"
-program=$REPLY
-shift
-args=()
-for encoded in "$@"; do
-    decode_hex "$encoded"
-    args+=("$REPLY")
-done
-exec "$program" "${args[@]}""#;
+use crate::process_boundary::prepare_command;
 
 struct RawCapturedStream {
     /// First `max_bytes` of the stream.
@@ -69,6 +47,7 @@ pub(crate) fn command_capture(
     max_lines: usize,
     max_bytes: usize,
     max_line_chars: usize,
+    script: bool,
     fail_with_child: bool,
     expect_exit: &[String],
     receipt_out: Option<&PathBuf>,
@@ -111,7 +90,13 @@ pub(crate) fn command_capture(
     }
 
     let started = Instant::now();
-    let (mut child, effective_argv) = spawn_captured_child(program, args)?;
+    let target_cwd =
+        std::env::current_dir().context("failed to resolve capture working directory")?;
+    let prepared = prepare_command(program, args, &target_cwd, script, false)
+        .map_err(|error| anyhow!(error))?;
+    let execution_mode = prepared.execution_mode;
+    let effective_argv = prepared.effective_argv.clone();
+    let mut child = spawn_captured_child(prepared.command, program, execution_mode)?;
     let child_supervisor = supervise_captured_child(&mut child)?;
 
     let stdout_pipe = child
@@ -155,10 +140,7 @@ pub(crate) fn command_capture(
     );
     map.insert("argv".to_string(), json!(argv));
     map.insert("effective_argv".to_string(), json!(effective_argv));
-    map.insert(
-        "spawn_fallback".to_string(),
-        json!(effective_argv.as_ref().map(|_| "bash")),
-    );
+    map.insert("execution_mode".to_string(), json!(execution_mode));
     map.insert("exit_code".to_string(), json!(status.code()));
     map.insert("success".to_string(), json!(status.success()));
     let exit_expected = status
@@ -212,13 +194,11 @@ pub(crate) fn command_capture(
         status.success(),
         duration_ms
     )?;
-    if let Some(effective_argv) = &effective_argv {
-        writeln!(
-            out,
-            "spawn_fallback=bash effective_command={}",
-            clamp_text(&format!("{effective_argv:?}"), 500)
-        )?;
-    }
+    writeln!(
+        out,
+        "execution_mode={execution_mode} effective_command={}",
+        clamp_text(&format!("{effective_argv:?}"), 500)
+    )?;
     writeln!(
         out,
         "stdout: shown_lines={} total_lines={} captured_bytes={} total_bytes={}",
@@ -310,49 +290,17 @@ fn write_capture_receipt(path: &PathBuf, receipt: &Value) -> Result<()> {
 }
 
 fn spawn_captured_child(
-    program: &str,
-    args: &[String],
-) -> Result<(std::process::Child, Option<Vec<String>>)> {
-    let mut command = ProcessCommand::new(program);
+    mut command: ProcessCommand,
+    requested_program: &str,
+    execution_mode: &str,
+) -> Result<std::process::Child> {
     configure_captured_command(&mut command);
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    match command.spawn() {
-        Ok(child) => Ok((child, None)),
-        Err(error) if cfg!(windows) && error.raw_os_error() == Some(193) => {
-            let Some(bash) = std::env::var_os("CONTEXTMINK_BASH") else {
-                return Err(error)
-                    .with_context(|| format!("failed to spawn captured command {program:?}"));
-            };
-            let mut effective_argv = Vec::with_capacity(args.len() + 2);
-            effective_argv.push(bash.to_string_lossy().into_owned());
-            effective_argv.push(program.to_owned());
-            effective_argv.extend(args.iter().cloned());
-
-            let relay_args = bash_argv_relay_args(program, args);
-            let mut fallback = ProcessCommand::new(&bash);
-            configure_captured_command(&mut fallback);
-            fallback
-                .arg("-c")
-                .arg(BASH_ARGV_RELAY)
-                .arg("contextmink-capture")
-                .args(relay_args)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            let child = fallback.spawn().with_context(|| {
-                format!(
-                    "failed to spawn captured command {program:?} through CONTEXTMINK_BASH={}",
-                    bash.to_string_lossy()
-                )
-            })?;
-            Ok((child, Some(effective_argv)))
-        }
-        Err(error) => {
-            Err(error).with_context(|| format!("failed to spawn captured command {program:?}"))
-        }
-    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.spawn().with_context(|| {
+        format!(
+            "failed to spawn captured command {requested_program:?} in {execution_mode} mode; use `capture --script -- <script> ...` for a Bash script without a shebang"
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -572,20 +520,6 @@ fn terminate_captured_process_group(child: &mut std::process::Child) {
         libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
     }
     let _ = child.wait();
-}
-
-fn bash_argv_relay_args(program: &str, args: &[String]) -> Vec<String> {
-    std::iter::once(program)
-        .chain(args.iter().map(String::as_str))
-        .map(|value| {
-            let mut encoded = String::with_capacity(value.len() * 2);
-            for byte in value.as_bytes() {
-                use std::fmt::Write as _;
-                write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
-            }
-            encoded
-        })
-        .collect()
 }
 
 /// Retain the first and last `max_bytes` of the stream. Tool output puts its

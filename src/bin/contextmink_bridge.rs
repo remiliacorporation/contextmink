@@ -15,18 +15,22 @@
 //! slash-bearing arguments (`^// PART`) are never rewritten. A program
 //! spelled as a path (`./gradlew`) resolves against `--cwd` like a POSIX
 //! exec; bare names use PATH. `--script` and `--login` locate Git Bash
-//! themselves (no hardcoded path needed on the agent side), and
-//! extensionless Bash scripts passed as the program are retried through Git
-//! Bash automatically.
+//! themselves (no hardcoded path needed on the agent side). Direct mode
+//! recognizes real shebang files before spawn; non-native files without a
+//! shebang require explicit `--script`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, exit};
+use std::process::exit;
 
 #[path = "../config.rs"]
 mod config;
 #[path = "../destructive_guard.rs"]
 mod destructive_guard;
+#[path = "../process_boundary.rs"]
+mod process_boundary;
+
+use process_boundary::{prepare_command, resolve_project_root};
 
 const EXIT_USAGE: i32 = 64;
 const EXIT_MISSING_PATH: i32 = 66;
@@ -34,29 +38,9 @@ const EXIT_SPAWN_FAILED: i32 = 126;
 const EXIT_NO_BASH: i32 = 127;
 
 /// Threshold tracks the contextmink slice window guidance in repository
-/// bounded-output instructions (same knob as the codex-bash.sh template).
+/// bounded-output instructions.
 const DUMP_WARN_LINES: usize = 150;
 const SUPPRESS_ENV: &str = "CODEX_BASH_SUPPRESS_DUMP_WARNING";
-const MSYS2_ARG_CONV_EXCL_ENV: &str = "MSYS2_ARG_CONV_EXCL";
-const BASH_ARGV_RELAY: &str = r#"set -euo pipefail
-decode_hex() {
-    local hex=$1 out= byte
-    while [[ -n $hex ]]; do
-        printf -v byte '%b' "\\x${hex:0:2}"
-        out+=$byte
-        hex=${hex:2}
-    done
-    REPLY=$out
-}
-decode_hex "$1"
-program=$REPLY
-shift
-args=()
-for encoded in "$@"; do
-    decode_hex "$encoded"
-    args+=("$REPLY")
-done
-exec "$program" "${args[@]}""#;
 
 fn usage() -> String {
     "Usage:\n\
@@ -68,10 +52,9 @@ fn usage() -> String {
      Flags (must precede the command form):\n\
      \x20 --cwd <dir>     Working directory; relative paths resolve from the\n\
      \x20                 bridge root (CONTEXTMINK_BRIDGE_ROOT; else the\n\
-     \x20                 nearest ancestor of the bridge binary with\n\
-     \x20                 .contextmink.toml, so a vendored checkout anchors to\n\
-     \x20                 the workspace it serves; else the nearest ancestor\n\
-     \x20                 with .git; else the current directory).\n\
+     \x20                 caller-side .contextmink.toml/.git root, then the\n\
+     \x20                 bridge binary's policy/repository root, else the\n\
+     \x20                 current directory).\n\
      \x20 --login         Run the command through a Git Bash login shell\n\
      \x20                 (argv-safe; no command text is shell-reparsed).\n\
      \x20 --print-argv    Print the assembled argv one entry per line and exit.\n\
@@ -88,7 +71,8 @@ fn usage() -> String {
      \n\
      Direct argv modes spawn natively (no MSYS argument rewriting). A program\n\
      spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
-     names use PATH; extensionless Bash scripts retry through Git Bash.\n\
+     names use PATH; real shebang scripts enter Git Bash deterministically.\n\
+     Use --script for an intentional Bash script without a shebang.\n\
      \n\
      Destructive-command deny-list: argv matching `git clean` is refused\n\
      before spawn (exit 64; nested bash/powershell/cmd payloads are scanned\n\
@@ -156,7 +140,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 // Disclose the resolved root before any command form is
                 // required: a silently wrong root is the failure mode of the
                 // anchoring chain.
-                println!("{}", bridge_root().display());
+                println!("{}", root.display());
                 return Ok(0);
             }
             "--help" | "-h" => {
@@ -246,33 +230,49 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
         warn_content_dump(&argv, &target_cwd);
     }
 
-    let status = if script_mode || login {
-        let bash = locate_bash().ok_or_else(|| {
-            fail(
-                EXIT_NO_BASH,
-                "unable to locate a Git Bash executable (set CONTEXTMINK_BASH to override)",
-            )
+    let (program, child_args) = argv.split_first().expect("argv checked non-empty");
+    let mut prepared = prepare_command(program, child_args, &target_cwd, script_mode, login)
+        .map_err(|message| {
+            let code = if message.starts_with("script not found:") {
+                EXIT_MISSING_PATH
+            } else if message.starts_with("unable to locate")
+                || message.starts_with("CONTEXTMINK_BASH")
+            {
+                EXIT_NO_BASH
+            } else {
+                EXIT_SPAWN_FAILED
+            };
+            fail(code, message)
         })?;
-        let mut command = git_bash_command(&bash, &argv);
-        if login {
-            command.arg("--login");
-        }
-        // Every user argument crosses the native-Windows -> MSYS startup
-        // boundary as hex-only data. Git Bash otherwise expands an existing
-        // `@file`, strips JSON quotes, and may reinterpret other shell-shaped
-        // values before the repository script starts. The constant relay
-        // decodes argv with Bash builtins and execs it without reparsing.
-        append_bash_argv_relay(&mut command, &argv);
-        command.current_dir(&target_cwd);
-        command.status().map_err(|error| {
-            fail(
-                EXIT_SPAWN_FAILED,
-                format!("failed to spawn {bash:?}: {error}"),
-            )
-        })?
-    } else {
-        spawn_direct(&argv, &target_cwd)?
-    };
+    prepared
+        .command
+        .env("CONTEXTMINK_BRIDGE_ACTIVE", "1")
+        .current_dir(&target_cwd);
+    if std::env::var_os("CONTEXTMINK_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
+        eprintln!(
+            "contextmink-bridge: execution_mode={} effective_argv={:?}",
+            prepared.execution_mode, prepared.effective_argv
+        );
+    }
+    let status = prepared.command.status().map_err(|error| {
+        let code = if error.kind() == std::io::ErrorKind::NotFound {
+            EXIT_NO_BASH
+        } else {
+            EXIT_SPAWN_FAILED
+        };
+        let hint = if prepared.execution_mode == "native" {
+            "; if this path names a Bash script without a shebang, use --script explicitly"
+        } else {
+            ""
+        };
+        fail(
+            code,
+            format!(
+                "failed to spawn {program:?} in {} mode: {error}{hint}",
+                prepared.execution_mode
+            ),
+        )
+    })?;
 
     Ok(exit_code(status))
 }
@@ -378,153 +378,6 @@ fn assemble_argv(
     }
 }
 
-fn spawn_direct(
-    argv: &[String],
-    target_cwd: &Path,
-) -> Result<std::process::ExitStatus, BridgeError> {
-    let (given, args) = argv.split_first().expect("argv checked non-empty");
-    let program = resolve_program(given, target_cwd);
-    let mut command = Command::new(&program);
-    command
-        .env("CONTEXTMINK_BRIDGE_ACTIVE", "1")
-        .args(args)
-        .current_dir(target_cwd);
-    match command.status() {
-        Ok(status) => Ok(status),
-        // ERROR_BAD_EXE_FORMAT: an extensionless Bash script was given as the
-        // program; retry through Git Bash as argv, not as a shell string.
-        // The retry is the designed path for repo scripts, so it stays silent
-        // by default: a stderr line on a successful run reads as a warning
-        // and PowerShell 5.1 wraps native stderr in NativeCommandError
-        // records, which can mark the whole pipeline failed despite exit 0.
-        // CONTEXTMINK_BRIDGE_DEBUG=1 discloses the interpreter choice.
-        Err(error) if cfg!(windows) && error.raw_os_error() == Some(193) => {
-            let bash = locate_bash().ok_or_else(|| {
-                fail(
-                    EXIT_NO_BASH,
-                    format!(
-                        "{program} is not a Win32 executable and no Git Bash was found for script fallback"
-                    ),
-                )
-            })?;
-            if std::env::var_os("CONTEXTMINK_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-                eprintln!(
-                    "contextmink-bridge: retrying {program} through {}",
-                    bash.display()
-                );
-            }
-            let mut fallback_argv = Vec::with_capacity(argv.len());
-            fallback_argv.push(program.clone());
-            fallback_argv.extend(args.iter().cloned());
-            let mut command = git_bash_command(&bash, &fallback_argv);
-            append_bash_argv_relay(&mut command, &fallback_argv);
-            command.current_dir(target_cwd).status().map_err(|error| {
-                fail(
-                    EXIT_SPAWN_FAILED,
-                    format!("failed to spawn {bash:?}: {error}"),
-                )
-            })
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(fail(EXIT_NO_BASH, not_found_message(given, &program)))
-        }
-        Err(error) => Err(fail(
-            EXIT_SPAWN_FAILED,
-            format!("failed to spawn {program}: {error}"),
-        )),
-    }
-}
-
-/// Build a Git Bash boundary that preserves the caller's argv while allowing
-/// repository scripts to generate ordinary POSIX paths for native children.
-///
-/// Git for Windows otherwise rewrites POSIX-looking values when a repository
-/// script launches a native Windows child (`/type/path` becomes a Git install
-/// path). Exact caller values that contain slash-bearing material are installed
-/// as exclusion prefixes. A blanket `*` exclusion would also suppress the
-/// intentional conversion of script-generated paths such as `/f/repo/tools`,
-/// breaking native tools that consume those internal paths.
-fn git_bash_command(bash: &Path, argv: &[String]) -> Command {
-    let mut command = Command::new(bash);
-    command.env("CONTEXTMINK_BRIDGE_ACTIVE", "1");
-    let exclusions = msys2_arg_conversion_exclusions(argv);
-    if exclusions.is_empty() {
-        command.env_remove(MSYS2_ARG_CONV_EXCL_ENV);
-    } else {
-        command.env(MSYS2_ARG_CONV_EXCL_ENV, exclusions);
-    }
-    command
-}
-
-fn msys2_arg_conversion_exclusions(argv: &[String]) -> String {
-    let mut exclusions = std::collections::BTreeSet::new();
-    for arg in argv {
-        if !arg.contains(['/', '\\']) {
-            continue;
-        }
-        // MSYS2 uses semicolons as exclusion separators. The prefix before the
-        // first semicolon is sufficient to match this argument and avoids
-        // accidentally adding extra exclusion entries from its payload.
-        let prefix = arg.split(';').next().unwrap_or_default();
-        if !prefix.is_empty() && prefix != "*" {
-            exclusions.insert(prefix);
-        }
-    }
-    exclusions.into_iter().collect::<Vec<_>>().join(";")
-}
-
-fn append_bash_argv_relay(command: &mut Command, argv: &[String]) {
-    command
-        .arg("-c")
-        .arg(BASH_ARGV_RELAY)
-        .arg("contextmink-bridge");
-    command.args(argv.iter().map(|arg| hex_encode_arg(arg)));
-}
-
-fn hex_encode_arg(arg: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(arg.len() * 2);
-    for byte in arg.as_bytes() {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
-}
-
-/// A program spelled as a path (containing a separator) resolves against the
-/// child's working directory, matching POSIX exec semantics; bare names keep
-/// PATH lookup. Rust's `Command` resolves relative programs against the
-/// parent's cwd instead, which would break `--cwd <dir> -- ./script` and
-/// starve the ERROR_BAD_EXE_FORMAT script fallback of a resolvable path.
-fn resolve_program(program: &str, target_cwd: &Path) -> String {
-    let path = Path::new(program);
-    let is_pathlike = program.chars().any(std::path::is_separator);
-    if !is_pathlike || path.is_absolute() || path.has_root() {
-        return program.to_owned();
-    }
-    let mut resolved = target_cwd.to_path_buf();
-    for component in path.components() {
-        if component != std::path::Component::CurDir {
-            resolved.push(component.as_os_str());
-        }
-    }
-    resolved.to_string_lossy().replace('\\', "/")
-}
-
-/// Teach the fix at the point of failure: a path-like program that does not
-/// resolve is usually a repo script the caller meant to address from the
-/// bridge root, which is what `--script` does.
-fn not_found_message(given: &str, resolved: &str) -> String {
-    let mut message = format!("command not found: {resolved}");
-    if given != resolved {
-        message.push_str(&format!(" (from {given}, resolved against --cwd)"));
-    }
-    if given.chars().any(std::path::is_separator) {
-        message.push_str("; repo scripts resolve from the bridge root via --script <path>");
-    }
-    message
-}
-
 fn exit_code(status: std::process::ExitStatus) -> i32 {
     #[cfg(unix)]
     {
@@ -536,41 +389,13 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(EXIT_SPAWN_FAILED)
 }
 
-/// Root for resolving relative `--cwd`, `--script`, and `--argfile` paths:
-/// explicit env override, else the workspace root derived from the bridge
-/// binary's location, else the current directory.
+/// Root for resolving relative `--cwd`, `--script`, and `--argfile` paths.
+/// Shared project discovery supports both project-local and global installs.
 fn bridge_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("CONTEXTMINK_BRIDGE_ROOT") {
-        return PathBuf::from(root);
-    }
-    std::env::current_exe()
-        .ok()
-        .as_deref()
-        .and_then(Path::parent)
-        .and_then(resolve_root_from_exe_dir)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-}
-
-/// The nearest ancestor carrying `.contextmink.toml` (the contextmink policy
-/// root) wins over the nearest `.git`: a vendored contextmink checkout is its
-/// own git repository nested inside the workspace it serves, so `.git` alone
-/// would anchor relative paths to the vendored tree instead of the workspace.
-fn resolve_root_from_exe_dir(exe_dir: &Path) -> Option<PathBuf> {
-    let mut cursor = Some(exe_dir);
-    while let Some(dir) = cursor {
-        if dir.join(".contextmink.toml").is_file() {
-            return Some(dir.to_path_buf());
-        }
-        cursor = dir.parent();
-    }
-    let mut cursor = Some(exe_dir);
-    while let Some(dir) = cursor {
-        if dir.join(".git").exists() {
-            return Some(dir.to_path_buf());
-        }
-        cursor = dir.parent();
-    }
-    None
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let executable = std::env::current_exe().ok();
+    let exe_dir = executable.as_deref().and_then(Path::parent).unwrap_or(&cwd);
+    resolve_project_root(exe_dir, &cwd)
 }
 
 fn resolve_from_root(root: &Path, raw: &str) -> PathBuf {
@@ -581,38 +406,8 @@ fn resolve_from_root(root: &Path, raw: &str) -> PathBuf {
     root.join(path)
 }
 
-fn locate_bash() -> Option<PathBuf> {
-    if let Some(bash) = std::env::var_os("CONTEXTMINK_BASH") {
-        let bash = PathBuf::from(bash);
-        if bash.is_file() {
-            return Some(bash);
-        }
-    }
-    if cfg!(windows) {
-        windows_bash_candidates()
-            .into_iter()
-            .find(|candidate| candidate.is_file())
-    } else {
-        // PATH resolution is safe off Windows; there is no WSL shadow.
-        Some(PathBuf::from("bash"))
-    }
-}
-
-/// Git-for-Windows installs only. Cygwin and MSYS2 bash have different path
-/// and file-locking semantics and must not silently substitute for Git Bash;
-/// exotic hosts point CONTEXTMINK_BASH at their shell explicitly.
-fn windows_bash_candidates() -> Vec<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join(r"Git\bin\bash.exe"));
-    }
-    candidates.push(PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
-    candidates.push(PathBuf::from(r"C:\Program Files (x86)\Git\bin\bash.exe"));
-    candidates
-}
-
 /// Warn (never block) when argv is a raw content dump a bounded read would
-/// serve better. Mirrors the codex-bash.sh template trip-wire.
+/// serve better.
 fn warn_content_dump(argv: &[String], target_cwd: &Path) {
     if std::env::var_os(SUPPRESS_ENV).is_some_and(|value| value == "1") {
         return;

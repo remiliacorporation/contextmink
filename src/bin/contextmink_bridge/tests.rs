@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{
-    MSYS2_ARG_CONV_EXCL_ENV, assemble_argv, decode_base64, git_bash_command, not_found_message,
-    resolve_program, resolve_root_from_exe_dir, sed_window_span, windows_bash_candidates,
+use super::process_boundary::{
+    msys2_arg_conversion_exclusions, resolve_program, resolve_project_root, windows_bash_candidates,
 };
+use super::{assemble_argv, decode_base64, sed_window_span};
 
 fn encode_base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -46,28 +46,25 @@ fn root_resolution_prefers_policy_root_over_nested_vendored_git() {
     let exe_dir = workspace.join("tools/contextmink/target/release");
     fs::create_dir_all(&exe_dir).unwrap();
     fs::create_dir_all(workspace.join("tools/contextmink/.git")).unwrap();
-    assert_eq!(resolve_root_from_exe_dir(&exe_dir), Some(workspace.clone()));
+    assert_eq!(resolve_project_root(&exe_dir, &workspace), workspace);
 
     // Standalone clone: no policy file anywhere, nearest .git wins.
     let clone = temp_tree("standalone");
     fs::create_dir_all(clone.join(".git")).unwrap();
     let exe_dir = clone.join("target/release");
     fs::create_dir_all(&exe_dir).unwrap();
-    assert_eq!(resolve_root_from_exe_dir(&exe_dir), Some(clone.clone()));
+    assert_eq!(resolve_project_root(&exe_dir, &clone), clone);
 
-    // Neither marker inside our tree: resolution must not invent a root
-    // within it (a host-level ancestor .git outside the temp tree may still
-    // resolve, so only the absence of a false positive is asserted).
-    let bare = temp_tree("bare");
-    let exe_dir = bare.join("bin");
+    // A globally installed bridge must discover policy from the caller's
+    // repository subtree before considering its own install location.
+    let global = temp_tree("global");
+    let exe_dir = global.join("bin");
     fs::create_dir_all(&exe_dir).unwrap();
-    let resolved = resolve_root_from_exe_dir(&exe_dir);
-    assert!(
-        resolved
-            .as_deref()
-            .is_none_or(|root| !root.starts_with(&bare)),
-        "resolved: {resolved:?}"
-    );
+    let project = temp_tree("global-project");
+    fs::write(project.join(".contextmink.toml"), "profile = \"g\"\n").unwrap();
+    let nested = project.join("crates/one");
+    fs::create_dir_all(&nested).unwrap();
+    assert_eq!(resolve_project_root(&exe_dir, &nested), project);
 }
 
 #[test]
@@ -131,18 +128,9 @@ fn git_bash_boundaries_exclude_only_caller_slash_arguments() {
         "{\"type\":\"/lua_5_1_1/_union_41\"}".to_owned(),
         "plain".to_owned(),
     ];
-    let command = git_bash_command(std::path::Path::new("bash"), &argv);
-    let value = command
-        .get_envs()
-        .find_map(|(name, value)| {
-            (name == MSYS2_ARG_CONV_EXCL_ENV).then(|| value.map(ToOwned::to_owned))
-        })
-        .flatten();
     assert_eq!(
-        value.as_deref(),
-        Some(std::ffi::OsStr::new(
-            "/lua_5_1_1/_union_41;@C:/requests/type-graph.json;{\"type\":\"/lua_5_1_1/_union_41\"}"
-        ))
+        msys2_arg_conversion_exclusions(&argv),
+        "/lua_5_1_1/_union_41;@C:/requests/type-graph.json;{\"type\":\"/lua_5_1_1/_union_41\"}"
     );
 }
 
@@ -167,21 +155,8 @@ fn pathlike_programs_resolve_against_cwd_and_bare_names_keep_path_lookup() {
     assert_eq!(resolve_program(r".\gradlew", cwd), "/ws/sub/gradlew");
 }
 
-#[test]
-fn not_found_messages_teach_script_mode_for_pathlike_programs() {
-    let message = not_found_message("./gradlew", "/ws/sub/gradlew");
-    assert!(message.contains("command not found: /ws/sub/gradlew"));
-    assert!(message.contains("from ./gradlew, resolved against --cwd"));
-    assert!(message.contains("--script"));
-    // Bare names get no misleading script-mode steer.
-    let message = not_found_message("gti", "gti");
-    assert_eq!(message, "command not found: gti");
-}
-
-/// End-to-end regression for the original failure: `--cwd <dir> -- ./script`
-/// must resolve the program against `--cwd` and then ride the
-/// ERROR_BAD_EXE_FORMAT fallback through Git Bash (present on Windows CI and
-/// every supported dev host; the bridge is meaningless without it).
+/// Direct mode classifies a real shebang before spawn and enters Git Bash
+/// without depending on a failed native CreateProcess call.
 #[cfg(windows)]
 #[test]
 fn direct_mode_runs_relative_extensionless_script_under_cwd() {
@@ -195,6 +170,22 @@ fn direct_mode_runs_relative_extensionless_script_under_cwd() {
     ])
     .unwrap();
     assert_eq!(code, 42);
+}
+
+#[cfg(windows)]
+#[test]
+fn direct_mode_refuses_non_native_text_without_shebang() {
+    let root = temp_tree("cwd-non-script");
+    fs::write(root.join("probe"), "exit 0\n").unwrap();
+    let error = super::run(vec![
+        "--cwd".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--".to_owned(),
+        "./probe".to_owned(),
+    ])
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_SPAWN_FAILED);
+    assert!(error.message.contains("use --script"), "{}", error.message);
 }
 
 /// The deny-list must refuse `git clean` before spawn. `--cwd` points at a
