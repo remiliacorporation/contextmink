@@ -6,6 +6,10 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows `capture` now supervises the full child process tree with a kill-on-close Job Object, so an outer timeout cannot leave a mutating descendant running after the capture wrapper exits.
+
 ## [0.7.0] - 2026-07-11
 
 ### Fixed

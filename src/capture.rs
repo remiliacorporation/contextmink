@@ -13,6 +13,29 @@ use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::output::{base_receipt, clamp_text, emit_json, write_receipt_checked};
 
+// Raw argv must not appear on the Windows command line used to start Git Bash.
+// MSYS expands `@file` response arguments before Bash starts, which corrupts
+// structured argv intended for the child. Decode hex only after Bash is live.
+const BASH_ARGV_RELAY: &str = r#"set -euo pipefail
+decode_hex() {
+    local hex=$1 out= byte
+    while [[ -n $hex ]]; do
+        printf -v byte '%b' "\\x${hex:0:2}"
+        out+=$byte
+        hex=${hex:2}
+    done
+    REPLY=$out
+}
+decode_hex "$1"
+program=$REPLY
+shift
+args=()
+for encoded in "$@"; do
+    decode_hex "$encoded"
+    args+=("$REPLY")
+done
+exec "$program" "${args[@]}""#;
+
 struct RawCapturedStream {
     /// First `max_bytes` of the stream.
     head: Vec<u8>,
@@ -89,6 +112,7 @@ pub(crate) fn command_capture(
 
     let started = Instant::now();
     let (mut child, effective_argv) = spawn_captured_child(program, args)?;
+    let _child_supervisor = supervise_captured_child(&mut child)?;
 
     let stdout_pipe = child
         .stdout
@@ -305,10 +329,13 @@ fn spawn_captured_child(
             effective_argv.push(program.to_owned());
             effective_argv.extend(args.iter().cloned());
 
+            let relay_args = bash_argv_relay_args(program, args);
             let mut fallback = ProcessCommand::new(&bash);
             fallback
-                .arg(program)
-                .args(args)
+                .arg("-c")
+                .arg(BASH_ARGV_RELAY)
+                .arg("contextmink-capture")
+                .args(relay_args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             let child = fallback.spawn().with_context(|| {
@@ -323,6 +350,85 @@ fn spawn_captured_child(
             Err(error).with_context(|| format!("failed to spawn captured command {program:?}"))
         }
     }
+}
+
+#[cfg(windows)]
+struct CapturedChildSupervisor(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for CapturedChildSupervisor {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedChildSupervisor> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        let code = unsafe { GetLastError() };
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(anyhow!(
+            "failed to create capture supervision job: win32 error {code}"
+        ));
+    }
+    let mut limits = unsafe { std::mem::zeroed::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    let assigned = configured != 0
+        && unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as _) } != 0;
+    if !assigned {
+        let code = unsafe { GetLastError() };
+        unsafe {
+            CloseHandle(job);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(anyhow!(
+            "failed to attach captured command to kill-on-close supervision job: win32 error {code}"
+        ));
+    }
+    Ok(CapturedChildSupervisor(job))
+}
+
+#[cfg(not(windows))]
+struct CapturedChildSupervisor;
+
+#[cfg(not(windows))]
+fn supervise_captured_child(_child: &mut std::process::Child) -> Result<CapturedChildSupervisor> {
+    Ok(CapturedChildSupervisor)
+}
+
+fn bash_argv_relay_args(program: &str, args: &[String]) -> Vec<String> {
+    std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(|value| {
+            let mut encoded = String::with_capacity(value.len() * 2);
+            for byte in value.as_bytes() {
+                use std::fmt::Write as _;
+                write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+            }
+            encoded
+        })
+        .collect()
 }
 
 /// Retain the first and last `max_bytes` of the stream. Tool output puts its
