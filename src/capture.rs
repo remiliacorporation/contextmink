@@ -362,8 +362,13 @@ fn configure_captured_command(command: &mut ProcessCommand) {
     command.process_group(0);
 }
 
-#[cfg(not(unix))]
-fn configure_captured_command(_command: &mut ProcessCommand) {}
+#[cfg(windows)]
+fn configure_captured_command(command: &mut ProcessCommand) {
+    use std::os::windows::process::CommandExt as _;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    command.creation_flags(CREATE_SUSPENDED);
+}
 
 #[cfg(windows)]
 struct CapturedChildSupervisor(windows_sys::Win32::Foundation::HANDLE);
@@ -419,7 +424,65 @@ fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedC
             "failed to attach captured command to kill-on-close supervision job: win32 error {code}"
         ));
     }
+    if let Err(error) = resume_captured_child(child) {
+        unsafe {
+            CloseHandle(job);
+        }
+        let _ = child.wait();
+        return Err(error);
+    }
     Ok(CapturedChildSupervisor(job))
+}
+
+#[cfg(windows)]
+fn resume_captured_child(child: &std::process::Child) -> Result<()> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        let code = unsafe { GetLastError() };
+        return Err(anyhow!(
+            "failed to enumerate suspended capture threads: win32 error {code}"
+        ));
+    }
+    let mut entry = unsafe { std::mem::zeroed::<THREADENTRY32>() };
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    let mut available = unsafe { Thread32First(snapshot, &mut entry) };
+    while available != 0 {
+        if entry.th32OwnerProcessID == child.id() {
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !thread.is_null() {
+                let resumed = unsafe { ResumeThread(thread) };
+                let code = if resumed == u32::MAX {
+                    Some(unsafe { GetLastError() })
+                } else {
+                    None
+                };
+                unsafe {
+                    CloseHandle(thread);
+                    CloseHandle(snapshot);
+                }
+                if let Some(code) = code {
+                    return Err(anyhow!(
+                        "failed to resume capture child thread: win32 error {code}"
+                    ));
+                }
+                return Ok(());
+            }
+        }
+        available = unsafe { Thread32Next(snapshot, &mut entry) };
+    }
+    unsafe {
+        CloseHandle(snapshot);
+    }
+    Err(anyhow!(
+        "suspended capture child {} has no resumable primary thread",
+        child.id()
+    ))
 }
 
 #[cfg(unix)]

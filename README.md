@@ -294,6 +294,20 @@ Configured destructive guard fragments are literal case-insensitive substrings
 matched against argv before `capture` or `contextmink-bridge` spawn a
 child process.
 
+## Development
+
+Do not launch contextmink's own replacement release build through a running
+`contextmink-bridge`. Let active bridge commands finish, then run
+`scripts/contextmink` or `cargo build --release --manifest-path tools/contextmink/Cargo.toml`
+directly. This keeps the normal workspace path simple and avoids Windows executable-lock
+contention without adding self-update machinery.
+
+Native CI remains authoritative and runs formatting, tests, Clippy, and package
+checks on Windows, Linux, and macOS. For an optional local cross-link smoke test
+from another host, install Zig plus `cargo-zigbuild` and run
+`scripts/cross_check.sh`. Zig is not a normal build dependency and the
+repository does not retain host-specific compiler wrappers.
+
 ## Scope
 
 Add to this tool only when the failure mode is generic transcript overflow or

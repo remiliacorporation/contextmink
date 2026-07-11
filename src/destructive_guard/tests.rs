@@ -118,6 +118,9 @@ fn shell_commands_preserve_boundaries_quotes_comments_and_heredocs() {
 fn shell_edge_cases_cannot_bypass_or_false_positive_the_guard() {
     denied(&["bash", "-lc", "git \\\nclean -fd"]);
     denied(&["bash", "-lc", "git {clean,-d} -f"]);
+    denied(&["bash", "-lc", "{ git clean -fdx; }"]);
+    denied(&["powershell", "-Command", "& { git clean -fdx }"]);
+    allowed(&["bash", "-lc", "printf '%s\\n' {clean,-d}"]);
     denied(&[
         "bash",
         "-lc",

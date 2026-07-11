@@ -8,7 +8,14 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- POSIX brace groups can no longer hide destructive commands while attached brace-expansion words remain supported.
+- Windows capture children are created suspended, assigned to the kill-on-close Job Object, and only then resumed, closing the descendant escape window.
+- Generated hook commands now have a true Bash execution test in addition to string-shape assertions.
 - `capture` now supervises child process trees on every supported platform, using kill-on-close Job Objects on Windows and process groups with independent parent-death watchdogs on Linux and macOS, so an outer timeout cannot leave a mutating descendant running after the wrapper exits.
+
+### Added
+
+- Optional `scripts/cross_check.sh` uses Zig and `cargo-zigbuild` for host-independent Linux/macOS cross-link smoke checks without making Zig part of the normal build.
 
 ## [0.7.0] - 2026-07-11
 

@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write as _;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
@@ -99,6 +100,59 @@ fn hook_snippet_emits_claude_command_hooks() {
     let powershell_command = powershell["hooks"][0]["command"].as_str().unwrap();
     assert!(!powershell_command.starts_with("& "));
     assert!(powershell_command.contains("--shell powershell"));
+}
+
+#[test]
+fn emitted_bash_hook_executes_end_to_end() {
+    let root = fixture_root("hook-snippet-bash-exec");
+    let config = root.join(".contextmink.toml");
+    let snippet = parse_json_output(
+        &root,
+        &[
+            "hook-snippet",
+            "--binary",
+            env!("CARGO_BIN_EXE_contextmink"),
+            "--guard-config",
+            config.to_str().unwrap(),
+        ],
+    );
+    let command = snippet["hooks"]["PreToolUse"]
+        .as_array()
+        .expect("PreToolUse entries")
+        .iter()
+        .find(|entry| entry["matcher"] == "Bash")
+        .expect("Bash matcher")["hooks"][0]["command"]
+        .as_str()
+        .expect("Bash hook command");
+    #[cfg(windows)]
+    let bash = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+    #[cfg(not(windows))]
+    let bash = PathBuf::from("bash");
+
+    let mut child = Command::new(&bash)
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|error| panic!("failed to start {}: {error}", bash.display()));
+    child
+        .stdin
+        .take()
+        .expect("hook stdin")
+        .write_all(br#"{"tool_input":{"command":"git status --short"}}"#)
+        .expect("write hook payload");
+    let output = child
+        .wait_with_output()
+        .expect("wait for emitted Bash hook");
+    assert!(
+        output.status.success(),
+        "emitted Bash hook failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

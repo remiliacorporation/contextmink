@@ -59,6 +59,58 @@ fn capture_supervision_job_terminates_child_when_dropped() {
     panic!("supervised child survived closing the capture job");
 }
 
+#[cfg(windows)]
+#[test]
+fn capture_supervision_job_contains_descendants_before_resume() {
+    use std::io::BufRead as _;
+
+    let script = "$p=Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 30' -PassThru; [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Wait-Process -Id $p.Id";
+    let (mut child, fallback) = spawn_captured_child(
+        "powershell.exe",
+        &["-NoProfile".into(), "-Command".into(), script.into()],
+    )
+    .expect("spawn suspended supervision fixture");
+    assert!(fallback.is_none());
+    let supervisor = supervise_captured_child(&mut child).expect("assign and resume fixture");
+    let mut descendant_pid = String::new();
+    std::io::BufReader::new(child.stdout.take().expect("fixture stdout"))
+        .read_line(&mut descendant_pid)
+        .expect("read descendant pid");
+    let descendant_pid = descendant_pid
+        .trim()
+        .parse::<u32>()
+        .expect("parse descendant pid");
+    assert!(windows_process_is_running(descendant_pid));
+
+    drop(supervisor);
+    for _ in 0..40 {
+        let root_exited = child.try_wait().expect("poll supervised child").is_some();
+        if root_exited && !windows_process_is_running(descendant_pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    panic!("capture descendant survived closing the assigned-before-resume job");
+}
+
+#[cfg(windows)]
+fn windows_process_is_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+
+    const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+    let process = unsafe { OpenProcess(SYNCHRONIZE_ACCESS, 0, pid) };
+    if process.is_null() {
+        return false;
+    }
+    let wait = unsafe { WaitForSingleObject(process, 0) };
+    unsafe {
+        CloseHandle(process);
+    }
+    wait == 258
+}
+
 #[cfg(unix)]
 #[test]
 fn capture_supervision_watchdog_terminates_process_group_when_dropped() {

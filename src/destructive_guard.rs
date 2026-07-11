@@ -822,6 +822,13 @@ fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload 
                         index += 1;
                     }
                 }
+                '{' | '}'
+                    if shell_group_brace_is_boundary(&chars, index, word_started, dialect) =>
+                {
+                    flush_shell_word(&mut word, &mut word_started, &mut command);
+                    flush_shell_command(&mut command, &mut parsed.commands);
+                    index += 1;
+                }
                 '#' if !word_started => {
                     flush_shell_word(&mut word, &mut word_started, &mut command);
                     while index < chars.len() && chars[index] != '\n' {
@@ -873,6 +880,26 @@ fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload 
         *command = normalized;
     }
     parsed
+}
+
+fn shell_group_brace_is_boundary(
+    chars: &[char],
+    index: usize,
+    word_started: bool,
+    dialect: ShellDialect,
+) -> bool {
+    if dialect == ShellDialect::Cmd {
+        return false;
+    }
+    if dialect == ShellDialect::Powershell {
+        return true;
+    }
+    if word_started {
+        return false;
+    }
+    chars.get(index + 1).is_none_or(|next| {
+        next.is_whitespace() || matches!(next, ';' | '&' | '|' | '(' | ')' | '{' | '}')
+    })
 }
 
 fn remove_posix_line_continuations(text: &str) -> String {
