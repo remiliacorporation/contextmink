@@ -96,11 +96,31 @@ fn hook_snippet_emits_claude_command_hooks() {
     assert!(bash_command.contains("hook-guard --config"));
     assert!(!bash_command.contains('\\'));
     assert!(bash["hooks"][0].get("args").is_none());
+    let powershell_command = powershell["hooks"][0]["command"].as_str().unwrap();
+    assert!(!powershell_command.starts_with("& "));
+    assert!(powershell_command.contains("--shell powershell"));
+}
+
+#[test]
+fn explicitly_missing_hook_policy_fails_closed() {
+    let root = fixture_root("missing-hook-policy");
+    let missing = root.join("missing.contextmink.toml");
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "hook-guard",
+            "--config",
+            missing.to_str().unwrap(),
+            "--expected-root",
+            root.to_str().unwrap(),
+            "--shell",
+            "posix",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2));
     assert!(
-        powershell["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .starts_with("& ")
+        String::from_utf8_lossy(&output.stderr)
+            .contains("explicitly configured policy could not be loaded")
     );
 }
 

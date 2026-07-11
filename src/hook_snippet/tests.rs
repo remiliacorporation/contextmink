@@ -69,8 +69,9 @@ fn paths_with_spaces_are_shell_quoted_per_matcher() {
     );
     assert_eq!(
         command_for(&settings, "PowerShell"),
-        "& 'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell powershell"
+        "'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell powershell"
     );
+    assert!(!command_for(&settings, "PowerShell").starts_with('&'));
 }
 
 #[test]

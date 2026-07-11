@@ -201,8 +201,10 @@ fn deny_shell_payload(
 ) -> Option<String> {
     let parsed = parse_shell_payload(payload, dialect);
     for command in parsed.commands {
-        if let Some(message) = deny_command(&command, config, depth) {
-            return Some(message);
+        for expanded in expand_literal_braces(&command) {
+            if let Some(message) = deny_command(&expanded, config, depth) {
+                return Some(message);
+            }
         }
     }
     for substitution in parsed.substitutions {
@@ -250,16 +252,17 @@ fn command_program_index(tokens: &[String]) -> Option<usize> {
             }
             "command" => {
                 index += 1;
-                if tokens[index..]
-                    .iter()
-                    .any(|token| matches!(token.as_str(), "-v" | "-V"))
-                {
-                    return None;
-                }
-                while tokens
-                    .get(index)
-                    .is_some_and(|token| token.starts_with('-'))
-                {
+                while let Some(token) = tokens.get(index) {
+                    if token == "--" {
+                        index += 1;
+                        break;
+                    }
+                    if !token.starts_with('-') || token == "-" {
+                        break;
+                    }
+                    if matches!(token.as_str(), "-v" | "-V") {
+                        return None;
+                    }
                     index += 1;
                 }
             }
@@ -704,6 +707,11 @@ enum ShellQuote {
 /// guard is not a shell interpreter: expansions remain opaque except for
 /// command substitutions, which are recursively inspected.
 fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload {
+    let continued = (dialect == ShellDialect::Posix).then(|| remove_posix_line_continuations(text));
+    let text = continued.as_deref().unwrap_or(text);
+    let here_strings =
+        (dialect == ShellDialect::Powershell).then(|| strip_powershell_here_strings(text));
+    let text = here_strings.as_deref().unwrap_or(text);
     let text = strip_heredoc_bodies(text);
     let chars = text.chars().collect::<Vec<_>>();
     let mut parsed = ParsedShellPayload::default();
@@ -820,7 +828,7 @@ fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload 
                         index += 1;
                     }
                 }
-                ';' | '&' | '|' | '\n' | '(' | ')' | '{' | '}' => {
+                ';' | '&' | '|' | '\n' | '(' | ')' => {
                     flush_shell_word(&mut word, &mut word_started, &mut command);
                     flush_shell_command(&mut command, &mut parsed.commands);
                     index += 1;
@@ -830,6 +838,7 @@ fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload 
                 }
                 '<' | '>' => {
                     flush_shell_word(&mut word, &mut word_started, &mut command);
+                    command.push("__contextmink_redirection__".to_owned());
                     index += 1;
                     while chars.get(index) == Some(&ch) {
                         index += 1;
@@ -849,7 +858,87 @@ fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload 
     }
     flush_shell_word(&mut word, &mut word_started, &mut command);
     flush_shell_command(&mut command, &mut parsed.commands);
+    for command in &mut parsed.commands {
+        let mut normalized = Vec::with_capacity(command.len());
+        let mut discard_target = false;
+        for token in command.drain(..) {
+            if token == "__contextmink_redirection__" {
+                discard_target = true;
+            } else if discard_target {
+                discard_target = false;
+            } else {
+                normalized.push(token);
+            }
+        }
+        *command = normalized;
+    }
     parsed
+}
+
+fn remove_posix_line_continuations(text: &str) -> String {
+    text.replace("\\\r\n", "").replace("\\\n", "")
+}
+
+fn strip_powershell_here_strings(text: &str) -> String {
+    let mut lines = text.split_inclusive('\n');
+    let mut stripped = String::with_capacity(text.len());
+    while let Some(line) = lines.next() {
+        stripped.push_str(line);
+        let trimmed = line.trim_end_matches(['\r', '\n']).trim_end();
+        let terminator = if trimmed.ends_with("@'") {
+            Some("'@")
+        } else if trimmed.ends_with("@\"") {
+            Some("\"@")
+        } else {
+            None
+        };
+        let Some(terminator) = terminator else {
+            continue;
+        };
+        for body_line in lines.by_ref() {
+            if body_line.trim_end_matches(['\r', '\n']) == terminator {
+                stripped.push_str(body_line);
+                break;
+            }
+        }
+    }
+    stripped
+}
+
+fn expand_literal_braces(tokens: &[String]) -> Vec<Vec<String>> {
+    const MAX_EXPANSIONS: usize = 32;
+    let mut variants = vec![Vec::new()];
+    for token in tokens {
+        let alternatives = literal_brace_alternatives(token).unwrap_or_else(|| vec![token.clone()]);
+        if variants.len().saturating_mul(alternatives.len()) > MAX_EXPANSIONS {
+            return vec![tokens.to_vec()];
+        }
+        variants = variants
+            .into_iter()
+            .flat_map(|prefix| {
+                alternatives.iter().map(move |alternative| {
+                    let mut variant = prefix.clone();
+                    variant.push(alternative.clone());
+                    variant
+                })
+            })
+            .collect();
+    }
+    variants
+}
+
+fn literal_brace_alternatives(token: &str) -> Option<Vec<String>> {
+    let open = token.find('{')?;
+    let close = token[open + 1..].find('}')? + open + 1;
+    let body = &token[open + 1..close];
+    if !body.contains(',') || body.contains(['{', '}']) {
+        return None;
+    }
+    Some(
+        body.split(',')
+            .map(|alternative| format!("{}{}{}", &token[..open], alternative, &token[close + 1..]))
+            .collect(),
+    )
 }
 
 fn flush_shell_word(word: &mut String, started: &mut bool, command: &mut Vec<String>) {
@@ -932,9 +1021,10 @@ fn extract_backticks(chars: &[char], mut index: usize) -> Option<(String, usize)
 fn strip_heredoc_bodies(text: &str) -> String {
     let mut lines = text.split_inclusive('\n');
     let mut stripped = String::with_capacity(text.len());
+    let mut quote = ShellQuote::Unquoted;
     while let Some(line) = lines.next() {
         stripped.push_str(line);
-        let Some((delimiter, strip_tabs)) = heredoc_delimiter(line) else {
+        let Some((delimiter, strip_tabs)) = heredoc_delimiter(line, &mut quote) else {
             continue;
         };
         for body_line in lines.by_ref() {
@@ -952,16 +1042,15 @@ fn strip_heredoc_bodies(text: &str) -> String {
     stripped
 }
 
-fn heredoc_delimiter(line: &str) -> Option<(String, bool)> {
+fn heredoc_delimiter(line: &str, quote: &mut ShellQuote) -> Option<(String, bool)> {
     let chars = line.chars().collect::<Vec<_>>();
-    let mut quote = ShellQuote::Unquoted;
     let mut index = 0usize;
     while index + 1 < chars.len() {
-        match (quote, chars[index]) {
-            (ShellQuote::Single, '\'') => quote = ShellQuote::Unquoted,
-            (ShellQuote::Double, '"') => quote = ShellQuote::Unquoted,
-            (ShellQuote::Unquoted, '\'') => quote = ShellQuote::Single,
-            (ShellQuote::Unquoted, '"') => quote = ShellQuote::Double,
+        match (*quote, chars[index]) {
+            (ShellQuote::Single, '\'') => *quote = ShellQuote::Unquoted,
+            (ShellQuote::Double, '"') => *quote = ShellQuote::Unquoted,
+            (ShellQuote::Unquoted, '\'') => *quote = ShellQuote::Single,
+            (ShellQuote::Unquoted, '"') => *quote = ShellQuote::Double,
             (ShellQuote::Unquoted, '<') if chars[index + 1] == '<' => {
                 if chars.get(index + 2) == Some(&'<') {
                     index += 3;

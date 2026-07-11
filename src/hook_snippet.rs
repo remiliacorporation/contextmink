@@ -141,18 +141,13 @@ fn hook_command(
         args.push("--command-field".to_owned());
         args.push(command_field.to_owned());
     }
-    match shell {
-        ShellDialect::Posix | ShellDialect::Cmd => std::iter::once(shell_word(&binary, quote_bash))
-            .chain(args.iter().map(|arg| shell_word(arg, quote_bash)))
-            .collect::<Vec<_>>()
-            .join(" "),
-        ShellDialect::Powershell => {
-            std::iter::once(format!("& {}", shell_word(&binary, quote_powershell)))
-                .chain(args.iter().map(|arg| shell_word(arg, quote_powershell)))
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    }
+    // Claude executes every command hook through its POSIX hook runner. `shell`
+    // describes the intercepted command dialect passed to hook-guard; it never
+    // changes the syntax used to launch the hook itself.
+    std::iter::once(shell_word(&binary, quote_bash))
+        .chain(args.iter().map(|arg| shell_word(arg, quote_bash)))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn hook_path(path: &Path) -> String {
@@ -179,10 +174,6 @@ fn shell_word(value: &str, quote: fn(&str) -> String) -> String {
 
 fn quote_bash(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn quote_powershell(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(test)]

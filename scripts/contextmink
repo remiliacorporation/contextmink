@@ -85,11 +85,12 @@ if [[ -f "$tool/Cargo.toml" ]]; then
   # contextmink-bridge builds from the same crate; a missing or stale bridge
   # binary must trigger the rebuild even when the main binary is fresh.
   bridge_bin="$tool/target/release/contextmink-bridge$exe"
-  if [[ ! -f "$bin" || ! -f "$bridge_bin" ]]; then
+  bridge_active="${CONTEXTMINK_BRIDGE_ACTIVE:-0}"
+  if [[ ! -f "$bin" || ( "$bridge_active" != "1" && ! -f "$bridge_bin" ) ]]; then
     needs_build=1
-  elif [[ -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bin" -print -quit 2>/dev/null)" || -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bridge_bin" -print -quit 2>/dev/null)" ]]; then
+  elif [[ -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bin" -print -quit 2>/dev/null)" || ( "$bridge_active" != "1" && -n "$(find "$tool/src" "$tool/Cargo.lock" -newer "$bridge_bin" -print -quit 2>/dev/null)" ) ]]; then
     needs_build=1
-  elif [[ -n "$(find "$tool/Cargo.toml" -newer "$bin" -print -quit 2>/dev/null)" || -n "$(find "$tool/Cargo.toml" -newer "$bridge_bin" -print -quit 2>/dev/null)" ]] && find_cargo >/dev/null 2>&1; then
+  elif [[ -n "$(find "$tool/Cargo.toml" -newer "$bin" -print -quit 2>/dev/null)" || ( "$bridge_active" != "1" && -n "$(find "$tool/Cargo.toml" -newer "$bridge_bin" -print -quit 2>/dev/null)" ) ]] && find_cargo >/dev/null 2>&1; then
     needs_build=1
   fi
 fi
@@ -104,7 +105,13 @@ if [[ "$needs_build" -eq 1 ]]; then
       exit 2
     fi
   else
-    "$cargo_bin" build --quiet --release --manifest-path "$tool/Cargo.toml" 1>&2
+    if [[ "$bridge_active" == "1" ]]; then
+      # The running bridge executable is locked on Windows. Rebuild only the
+      # requested main binary; a direct launcher run refreshes both binaries.
+      "$cargo_bin" build --quiet --release --bin contextmink --manifest-path "$tool/Cargo.toml" 1>&2
+    else
+      "$cargo_bin" build --quiet --release --bins --manifest-path "$tool/Cargo.toml" 1>&2
+    fi
     bin="$target_bin"
   fi
 fi

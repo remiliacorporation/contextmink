@@ -285,4 +285,9 @@ fn content_dump_trip_wire_warns_before_spawning() {
 
     let narrow = run_bridge(&["--", "sed", "-n", "1,5p", "whatever.txt"]);
     assert!(!String::from_utf8_lossy(&narrow.stderr).contains("transcript dump"));
+
+    let root = temp_root("cwd-dump-warning");
+    fs::write(root.join("large.txt"), "line\n".repeat(250)).unwrap();
+    let relative = run_bridge(&["--cwd", &forward_slashes(&root), "--", "cat", "large.txt"]);
+    assert!(String::from_utf8_lossy(&relative.stderr).contains("transcript dump"));
 }

@@ -243,7 +243,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     }
 
     if !script_mode {
-        warn_content_dump(&argv);
+        warn_content_dump(&argv, &target_cwd);
     }
 
     let status = if script_mode || login {
@@ -385,7 +385,10 @@ fn spawn_direct(
     let (given, args) = argv.split_first().expect("argv checked non-empty");
     let program = resolve_program(given, target_cwd);
     let mut command = Command::new(&program);
-    command.args(args).current_dir(target_cwd);
+    command
+        .env("CONTEXTMINK_BRIDGE_ACTIVE", "1")
+        .args(args)
+        .current_dir(target_cwd);
     match command.status() {
         Ok(status) => Ok(status),
         // ERROR_BAD_EXE_FORMAT: an extensionless Bash script was given as the
@@ -443,6 +446,7 @@ fn spawn_direct(
 /// breaking native tools that consume those internal paths.
 fn git_bash_command(bash: &Path, argv: &[String]) -> Command {
     let mut command = Command::new(bash);
+    command.env("CONTEXTMINK_BRIDGE_ACTIVE", "1");
     let exclusions = msys2_arg_conversion_exclusions(argv);
     if exclusions.is_empty() {
         command.env_remove(MSYS2_ARG_CONV_EXCL_ENV);
@@ -609,7 +613,7 @@ fn windows_bash_candidates() -> Vec<PathBuf> {
 
 /// Warn (never block) when argv is a raw content dump a bounded read would
 /// serve better. Mirrors the codex-bash.sh template trip-wire.
-fn warn_content_dump(argv: &[String]) {
+fn warn_content_dump(argv: &[String], target_cwd: &Path) {
     if std::env::var_os(SUPPRESS_ENV).is_some_and(|value| value == "1") {
         return;
     }
@@ -638,7 +642,13 @@ fn warn_content_dump(argv: &[String]) {
                 if arg.starts_with('-') {
                     continue;
                 }
-                let Ok(text) = std::fs::read_to_string(arg) else {
+                let path = Path::new(arg);
+                let path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    target_cwd.join(path)
+                };
+                let Ok(text) = std::fs::read_to_string(&path) else {
                     continue;
                 };
                 let lines = text.lines().count();

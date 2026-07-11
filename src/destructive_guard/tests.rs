@@ -115,6 +115,31 @@ fn shell_commands_preserve_boundaries_quotes_comments_and_heredocs() {
 }
 
 #[test]
+fn shell_edge_cases_cannot_bypass_or_false_positive_the_guard() {
+    denied(&["bash", "-lc", "git \\\nclean -fd"]);
+    denied(&["bash", "-lc", "git {clean,-d} -f"]);
+    denied(&[
+        "bash",
+        "-lc",
+        "printf '%s' \"quoted\n<< EOF\nstill quoted\"\ngit clean -fd",
+    ]);
+    denied_with_config(
+        &["bash", "-lc", "command rm -v -rf protected_cache"],
+        &protected_config(),
+    );
+
+    allowed_with_config(
+        &["bash", "-lc", "rm -rf < protected_cache/input"],
+        &protected_config(),
+    );
+    allowed(&[
+        "powershell",
+        "-Command",
+        "@'\nit's harmless git clean prose\n'@\nWrite-Output ok",
+    ]);
+}
+
+#[test]
 fn configured_path_rules_stay_with_the_deletion_command() {
     let config = protected_config();
     allowed_with_config(

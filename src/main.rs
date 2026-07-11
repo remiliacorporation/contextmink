@@ -41,7 +41,16 @@ use text::{TermMode, TextMatcher, collect_terms};
 fn main() -> Result<()> {
     output::mark_command_start();
     let cli = Cli::parse();
-    let config = load_context_config(cli.config.as_deref(), cli.no_config)?;
+    let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
+        Ok(config) => config,
+        Err(error) if matches!(cli.command, Command::HookGuard { .. }) && cli.config.is_some() => {
+            eprintln!(
+                "contextmink hook-guard: explicitly configured policy could not be loaded: {error:#}"
+            );
+            std::process::exit(2);
+        }
+        Err(error) => return Err(error),
+    };
     match &cli.command {
         Command::Files {
             paths,

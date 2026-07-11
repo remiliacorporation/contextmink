@@ -6,6 +6,8 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-11
+
 ### Fixed
 
 - Native bridge Bash boundaries now hex-relay startup argv and apply scoped MSYS conversion exclusions, preserving leading-slash selectors, existing `@file` paths, inline JSON, Unicode, and empty arguments byte-for-byte when `--script` or the extensionless-script fallback launches native Windows children.
