@@ -15,9 +15,9 @@ use crate::output::{base_receipt, clamp_text, emit_json, write_receipt_checked};
 use crate::process_boundary::prepare_command;
 
 struct RawCapturedStream {
-    /// First `max_bytes` of the stream.
+    /// Leading share of the stream's `max_bytes` budget.
     head: Vec<u8>,
-    /// Last `max_bytes` of the stream (empty when the head holds everything).
+    /// Trailing share of the stream's `max_bytes` budget.
     tail: Vec<u8>,
     /// Absolute byte offset where `tail` begins.
     tail_start: usize,
@@ -121,8 +121,10 @@ pub(crate) fn command_capture(
         .join()
         .map_err(|_| anyhow!("stderr capture thread panicked"))?
         .context("failed to read captured stderr")?;
-    let stdout = render_captured_stream(stdout_raw, max_lines, max_line_chars);
-    let stderr = render_captured_stream(stderr_raw, max_lines, max_line_chars);
+    let (stdout_lines, stderr_lines) =
+        capture_line_budgets(max_lines, stdout_raw.total_lines, stderr_raw.total_lines);
+    let stdout = render_captured_stream(stdout_raw, stdout_lines, max_line_chars);
+    let stderr = render_captured_stream(stderr_raw, stderr_lines, max_line_chars);
     let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let shown = stdout.shown_lines + stderr.shown_lines;
     let total = stdout.total_lines + stderr.total_lines;
@@ -522,11 +524,14 @@ fn terminate_captured_process_group(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Retain the first and last `max_bytes` of the stream. Tool output puts its
-/// verdict at the end (test summaries, compiler error totals), so keeping
-/// only the head would drop exactly the part an agent needs most.
+/// Split a total `max_bytes` budget between the beginning and end of the
+/// stream. Tool output puts its verdict at the end (test summaries, compiler
+/// error totals), so keeping only the head would drop exactly the part an
+/// agent needs most.
 fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<RawCapturedStream> {
-    let mut head = Vec::with_capacity(max_bytes.min(8192));
+    let head_budget = max_bytes.div_ceil(2);
+    let tail_budget = max_bytes / 2;
+    let mut head = Vec::with_capacity(head_budget.min(8192));
     let mut tail: Vec<u8> = Vec::new();
     let mut tail_start = 0usize;
     let mut total_bytes = 0usize;
@@ -549,7 +554,7 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
                 last_was_newline = false;
             }
         }
-        let head_remaining = max_bytes.saturating_sub(head.len());
+        let head_remaining = head_budget.saturating_sub(head.len());
         if head_remaining > 0 {
             head.extend_from_slice(&buffer[..read.min(head_remaining)]);
         }
@@ -559,11 +564,13 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
             if tail.is_empty() {
                 tail_start = overflow_start;
             }
-            tail.extend_from_slice(overflow);
-            if tail.len() > max_bytes {
-                let drop = tail.len() - max_bytes;
-                tail.drain(..drop);
-                tail_start += drop;
+            if tail_budget > 0 {
+                tail.extend_from_slice(overflow);
+                if tail.len() > tail_budget {
+                    let drop = tail.len() - tail_budget;
+                    tail.drain(..drop);
+                    tail_start += drop;
+                }
             }
         }
         total_bytes += read;
@@ -587,6 +594,22 @@ fn render_captured_stream(
     let captured_bytes = raw.head.len() + raw.tail.len();
     let byte_truncated = raw.total_bytes > captured_bytes;
     let retained_text = retained_stream_text(&raw);
+    if max_lines == 0 {
+        return CapturedStream {
+            display_text: String::new(),
+            retained_text,
+            total_bytes: raw.total_bytes,
+            captured_bytes,
+            total_lines: raw.total_lines,
+            shown_lines: 0,
+            head_lines: 0,
+            tail_lines: 0,
+            omitted_lines: raw.total_lines,
+            byte_truncated,
+            line_truncated: raw.total_lines > 0,
+            char_truncated: false,
+        };
+    }
     // Bytes between the head and the retained tail were dropped whenever the
     // tail does not start exactly where the head ended.
     let tail_contiguous = raw.tail.is_empty() || raw.tail_start == raw.head.len();
@@ -671,7 +694,7 @@ fn render_captured_stream(
         (parts.join("\n"), head_shown, tail_shown, omitted)
     };
 
-    let shown_lines = head_shown + tail_shown;
+    let shown_lines = (head_shown + tail_shown).min(raw.total_lines);
     CapturedStream {
         display_text,
         retained_text,
@@ -685,6 +708,27 @@ fn render_captured_stream(
         byte_truncated,
         line_truncated: omitted_lines > 0,
         char_truncated: clamp_state.truncated,
+    }
+}
+
+fn capture_line_budgets(
+    max_lines: usize,
+    stdout_total: usize,
+    stderr_total: usize,
+) -> (usize, usize) {
+    match (stdout_total, stderr_total) {
+        (0, _) => (0, max_lines.min(stderr_total)),
+        (_, 0) => (max_lines.min(stdout_total), 0),
+        _ if max_lines == 1 => (0, 1),
+        _ => {
+            let mut stdout = (max_lines / 2).min(stdout_total);
+            let mut stderr = (max_lines - stdout).min(stderr_total);
+            let remaining = max_lines - stdout - stderr;
+            let stdout_extra = remaining.min(stdout_total - stdout);
+            stdout += stdout_extra;
+            stderr += (remaining - stdout_extra).min(stderr_total - stderr);
+            (stdout, stderr)
+        }
     }
 }
 

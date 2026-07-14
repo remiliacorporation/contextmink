@@ -200,8 +200,8 @@ fn find_ancestor_entry(start: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// Resolve the project served by a bridge installed either inside that project
-/// or globally. Caller location wins, then executable location; policy roots
-/// win over repository markers in both cases.
+/// or globally. Every caller-side project marker wins before the bridge's
+/// installation tree is considered.
 #[allow(dead_code)] // used by the separately compiled native bridge target
 pub(crate) fn resolve_project_root(exe_dir: &Path, cwd: &Path) -> PathBuf {
     if let Some(root) = std::env::var_os("CONTEXTMINK_BRIDGE_ROOT") {
@@ -209,11 +209,11 @@ pub(crate) fn resolve_project_root(exe_dir: &Path, cwd: &Path) -> PathBuf {
     }
     find_ancestor_file(cwd, ".contextmink.toml")
         .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| find_ancestor_entry(cwd, ".git"))
         .or_else(|| {
             find_ancestor_file(exe_dir, ".contextmink.toml")
                 .and_then(|path| path.parent().map(Path::to_path_buf))
         })
-        .or_else(|| find_ancestor_entry(cwd, ".git"))
         .or_else(|| find_ancestor_entry(exe_dir, ".git"))
         .unwrap_or_else(|| cwd.to_path_buf())
 }

@@ -59,13 +59,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          re='^v?[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'
-          if [[ ! "${RAW}" =~ $re ]]; then
-            echo "Invalid artifact_version: ${RAW}" >&2
-            echo "Expected bare semver, for example 0.1.0" >&2
+          version="${RAW}"
+          crate_version="$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)"
+          if [[ "${version}" != "${crate_version}" ]]; then
+            echo "artifact_version ${version} does not match Cargo.toml ${crate_version}" >&2
             exit 1
           fi
-          version="${RAW#v}"
           bundle="contextmink-${version}-${PLATFORM}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "bundle=${bundle}" >> "$GITHUB_OUTPUT"
@@ -87,7 +86,7 @@ jobs:
           archive="dist/${{ steps.names.outputs.archive }}"
           mkdir -p "${bundle}/docs" "${bundle}/templates"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${bundle}/"
-          cp README.md SETUP.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
+          cp README.md SETUP.md CHANGELOG.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
           cp -R docs/. "${bundle}/docs/"
           cp -R templates/. "${bundle}/templates/"
           cat > "${bundle}/manifest.json" <<EOF
@@ -117,7 +116,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $bundle
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bridge_binary_name }}" $bundle
-          Copy-Item README.md,SETUP.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
+          Copy-Item README.md,SETUP.md,CHANGELOG.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
           Copy-Item -Recurse docs $bundle
           Copy-Item -Recurse templates $bundle
           $manifest = [ordered]@{
@@ -130,7 +129,7 @@ jobs:
             archive = "${{ steps.names.outputs.archive }}"
           } | ConvertTo-Json
           Set-Content -Path "$bundle/manifest.json" -Value $manifest -NoNewline
-          Compress-Archive -Path "$bundle/*" -DestinationPath $archive -Force
+          Compress-Archive -Path $bundle -DestinationPath $archive -Force
           $hash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
           # LF, no BOM: sha256sum -c on POSIX shells trips over CRLF filenames.
           [System.IO.File]::WriteAllText("${archive}.sha256", "$hash  ${{ steps.names.outputs.archive }}`n")
@@ -140,28 +139,59 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle="dist/${{ steps.names.outputs.bundle }}"
+          archive="dist/${{ steps.names.outputs.archive }}"
+          verify_root="dist/verify-${{ matrix.platform }}"
+          mkdir -p "${verify_root}"
+          tar -xzf "${archive}" -C "${verify_root}"
+          bundle="${verify_root}/${{ steps.names.outputs.bundle }}"
           test -f "${bundle}/${{ matrix.binary_name }}"
           test -f "${bundle}/README.md"
           test -f "${bundle}/SETUP.md"
+          test -f "${bundle}/CHANGELOG.md"
           test -f "${bundle}/LICENSE"
           test -f "${bundle}/LICENSE-SSL"
           test -f "${bundle}/LICENSE-VPL"
           test -f "${bundle}/manifest.json"
           test -d "${bundle}/docs"
           test -d "${bundle}/templates"
-          "${bundle}/${{ matrix.binary_name }}" --version
+          test "$("${bundle}/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
-          "${bundle}/${{ matrix.binary_name }}" files --path src --max 1 --max-scan-files 20 > /tmp/contextmink-smoke.txt
+          "${bundle}/${{ matrix.binary_name }}" files src --limit 1 --max-scan-files 20 > /tmp/contextmink-smoke.txt
           grep -q "CONTEXTMINK_RECEIPT" /tmp/contextmink-smoke.txt
-          test -f "dist/${{ steps.names.outputs.archive }}"
-          test -f "dist/${{ steps.names.outputs.archive }}.sha256"
+          test -f "${archive}"
+          test -f "${archive}.sha256"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
+          else
+            (cd dist && shasum -a 256 -c "${{ steps.names.outputs.archive }}.sha256")
+          fi
+
+          project="${verify_root}/integration-project"
+          mkdir -p "${project}/tools/contextmink/bin" "${project}/scripts" "${project}/nested/work"
+          cp "${bundle}/${{ matrix.binary_name }}" "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
+          cp "${bundle}/templates/scripts/contextmink" "${project}/scripts/contextmink"
+          cp "${bundle}/templates/.contextmink.toml" "${project}/.contextmink.toml"
+          chmod +x "${project}/tools/contextmink/bin/${{ matrix.binary_name }}" "${project}/scripts/contextmink"
+          printf 'fixture\n' > "${project}/nested/work/fixture.txt"
+          (cd "${project}" && scripts/contextmink --json files . --limit 1) > "${verify_root}/root-smoke.json"
+          (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --limit 1) > "${verify_root}/nested-smoke.json"
+          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"replace-with-workspace-name"' "${verify_root}/root-smoke.json"
+          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"replace-with-workspace-name"' "${verify_root}/nested-smoke.json"
+          (cd "${project}" && scripts/contextmink --json guard-check -- git clean) > "${verify_root}/guard-smoke.json"
+          grep -Eq '"decision"[[:space:]]*:[[:space:]]*"deny"' "${verify_root}/guard-smoke.json"
+          (cd "${project}" && scripts/contextmink --json hook-snippet --binary "tools/contextmink/bin/${{ matrix.binary_name }}" --guard-config .contextmink.toml) > "${verify_root}/hook-smoke.json"
+          grep -q '"PreToolUse"' "${verify_root}/hook-smoke.json"
+          (cd "${project}" && scripts/contextmink --json capture -- "tools/contextmink/bin/${{ matrix.binary_name }}" --version) > "${verify_root}/capture-smoke.json"
+          grep -Eq '"success"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
 
       - name: Verify packaged release (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $bundle = "dist/${{ steps.names.outputs.bundle }}"
+          $archive = "dist/${{ steps.names.outputs.archive }}"
+          $verifyRoot = "dist/verify-${{ matrix.platform }}"
+          Expand-Archive -Path $archive -DestinationPath $verifyRoot -Force
+          $bundle = "$verifyRoot/${{ steps.names.outputs.bundle }}"
           $binary = "$bundle/${{ matrix.binary_name }}"
           if (!(Test-Path $binary)) { throw "release binary missing" }
           $bridge = "$bundle/${{ matrix.bridge_binary_name }}"
@@ -171,20 +201,65 @@ jobs:
           if ($bridgeHelp -notmatch "argv-b64") { throw "bridge help missing argv-b64" }
           if (!(Test-Path "$bundle/README.md")) { throw "README.md missing" }
           if (!(Test-Path "$bundle/SETUP.md")) { throw "SETUP.md missing" }
+          if (!(Test-Path "$bundle/CHANGELOG.md")) { throw "CHANGELOG.md missing" }
           if (!(Test-Path "$bundle/LICENSE")) { throw "LICENSE missing" }
           if (!(Test-Path "$bundle/LICENSE-SSL")) { throw "LICENSE-SSL missing" }
           if (!(Test-Path "$bundle/LICENSE-VPL")) { throw "LICENSE-VPL missing" }
           if (!(Test-Path "$bundle/manifest.json")) { throw "manifest.json missing" }
           if (!(Test-Path "$bundle/docs")) { throw "docs missing" }
           if (!(Test-Path "$bundle/templates")) { throw "templates missing" }
-          & $binary --version
+          $reportedVersion = & $binary --version
+          if ($reportedVersion -ne "contextmink ${{ steps.names.outputs.version }}") {
+            throw "binary version mismatch: $reportedVersion"
+          }
           & $binary --help | Out-File -Encoding utf8 "$env:TEMP/contextmink-help.txt"
-          & $binary files --path src --max 1 --max-scan-files 20 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
+          & $binary files src --limit 1 --max-scan-files 20 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
           if (!(Select-String -Path "$env:TEMP/contextmink-smoke.txt" -Pattern "CONTEXTMINK_RECEIPT")) {
             throw "smoke output missing receipt"
           }
-          if (!(Test-Path "dist/${{ steps.names.outputs.archive }}")) { throw "archive missing" }
-          if (!(Test-Path "dist/${{ steps.names.outputs.archive }}.sha256")) { throw "checksum missing" }
+          if (!(Test-Path $archive)) { throw "archive missing" }
+          $checksumPath = "${archive}.sha256"
+          if (!(Test-Path $checksumPath)) { throw "checksum missing" }
+          $expectedHash = ((Get-Content $checksumPath -Raw).Trim() -split '\s+')[0]
+          $actualHash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) { throw "archive checksum mismatch" }
+
+          $project = "$verifyRoot/integration-project"
+          $projectBin = "$project/tools/contextmink/bin"
+          New-Item -ItemType Directory -Force -Path $projectBin,"$project/scripts","$project/nested/work" | Out-Null
+          $project = (Resolve-Path $project).Path
+          $projectBin = "$project/tools/contextmink/bin"
+          Copy-Item $binary "$projectBin/contextmink.exe"
+          Copy-Item $bridge "$projectBin/contextmink-bridge.exe"
+          Copy-Item "$bundle/templates/scripts/contextmink" "$project/scripts/contextmink"
+          Copy-Item "$bundle/templates/.contextmink.toml" "$project/.contextmink.toml"
+          Set-Content -Path "$project/nested/work/fixture.txt" -Value "fixture" -NoNewline
+          $projectBinary = "$projectBin/contextmink.exe"
+          $projectBridge = "$projectBin/contextmink-bridge.exe"
+          Push-Location $project
+          try {
+            $rootSmoke = (& $projectBinary --json files . --limit 1 | Out-String) | ConvertFrom-Json
+            $guardSmoke = (& $projectBinary --json guard-check -- git clean | Out-String) | ConvertFrom-Json
+            $hookSmoke = (& $projectBinary --json hook-snippet --binary $projectBinary --guard-config "$project/.contextmink.toml" | Out-String) | ConvertFrom-Json
+          } finally {
+            Pop-Location
+          }
+          if ($rootSmoke.profile -ne "replace-with-workspace-name") { throw "root config discovery failed" }
+          if ($guardSmoke.decision -ne "deny") { throw "guard-check integration smoke failed" }
+          if (!$hookSmoke.hooks.PreToolUse) { throw "hook-snippet integration smoke failed" }
+          Push-Location "$project/nested/work"
+          try {
+            $nestedSmoke = (& $projectBridge --script scripts/contextmink --json files . --limit 1 | Out-String) | ConvertFrom-Json
+          } finally {
+            Pop-Location
+          }
+          if ($nestedSmoke.profile -ne "replace-with-workspace-name") { throw "nested bridge config discovery failed" }
+          $probeArgs = @('native-child', '/type/path', 'he said "hi"', '')
+          $probeToken = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($probeArgs -join [char]0)))
+          $argvEcho = & $projectBridge --print-argv --argv-b64 $probeToken | Out-String
+          if ($argvEcho -notmatch 'argv\[1\]=/type/path' -or $argvEcho -notmatch 'argv\[2\]=he said "hi"') {
+            throw "bridge argv relay smoke failed"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -209,7 +284,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${RAW#v}"
+          version="${RAW}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
         env:
@@ -333,7 +408,7 @@ jobs:
           fi
           {
             echo ""
-            echo "Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64. Each archive includes the contextmink binary, setup docs, templates, licenses, a manifest, and a SHA-256 checksum; the Windows archive also carries contextmink-bridge."
+            echo "Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64. Each archive includes the contextmink binary, changelog, setup docs, templates, licenses, and a manifest; the Windows archive also carries contextmink-bridge. Every archive has an adjacent SHA-256 checksum asset."
           } >> release_body.md
           cat release_body.md
         env:
@@ -344,6 +419,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.ver.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
             --title "contextmink ${{ steps.ver.outputs.version }}" \
             --notes-file release_body.md \
             release-assets/*

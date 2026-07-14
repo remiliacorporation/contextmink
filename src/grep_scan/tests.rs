@@ -68,6 +68,29 @@ fn captures_context_lines_without_duplicates() {
 }
 
 #[test]
+fn dense_matches_do_not_extend_context_after_the_sample_cap() {
+    let dir = fixture_dir("dense-context");
+    let path = write_fixture(
+        &dir,
+        "a.txt",
+        "needle one\nneedle two\nneedle three\nneedle four\n",
+    );
+    let matcher = TextMatcher::new("needle", true, false).unwrap();
+    match scan_file(path, &matcher, &limits(1, 2)).unwrap() {
+        FileScan::Matched {
+            matching_lines,
+            samples,
+            ..
+        } => {
+            assert_eq!(matching_lines, 4);
+            assert_eq!(samples.len(), 3);
+            assert!(samples.iter().all(|sample| sample.is_match));
+        }
+        other => panic!("expected match, got {other:?}"),
+    }
+}
+
+#[test]
 fn utf16_files_are_scanned_not_skipped() {
     let dir = fixture_dir("utf16");
     let mut bytes = vec![0xFF, 0xFE];

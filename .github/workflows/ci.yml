@@ -29,7 +29,19 @@ jobs:
         run: cargo test --locked
 
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Check package contents
-        run: cargo package
+        run: cargo package --locked
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.92
+        uses: dtolnay/rust-toolchain@1.92.0
+
+      - name: Check minimum supported Rust version
+        run: cargo check --locked

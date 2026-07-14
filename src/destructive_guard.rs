@@ -109,7 +109,7 @@ pub(crate) fn destructive_override_active() -> bool {
 /// that will execute. Shell payloads are parsed into simple commands while
 /// preserving quotes and command boundaries before the same rules are applied.
 fn deny_destructive_argv(argv: &[String], config: &DestructiveGuardConfig) -> Option<String> {
-    deny_command(argv, config, 0)
+    deny_command(argv, config, 0, ShellDialect::Posix)
 }
 
 const MAX_NESTED_SHELL_DEPTH: usize = 16;
@@ -118,11 +118,12 @@ fn deny_command(
     tokens: &[String],
     config: &DestructiveGuardConfig,
     depth: usize,
+    dialect: ShellDialect,
 ) -> Option<String> {
     if depth > MAX_NESTED_SHELL_DEPTH {
         return Some("destructive-command inspection exceeded the nested shell limit".to_owned());
     }
-    let program_index = command_program_index(tokens)?;
+    let program_index = command_program_index(tokens, dialect)?;
     let stem = stem_lower(&tokens[program_index]);
     let args = &tokens[program_index + 1..];
 
@@ -201,8 +202,17 @@ fn deny_shell_payload(
 ) -> Option<String> {
     let parsed = parse_shell_payload(payload, dialect);
     for command in parsed.commands {
-        for expanded in expand_literal_braces(&command) {
-            if let Some(message) = deny_command(&expanded, config, depth) {
+        let expanded_commands = match expand_literal_braces(&command) {
+            Ok(expanded_commands) => expanded_commands,
+            Err(()) => {
+                return Some(
+                    "destructive-command inspection exceeded the literal brace expansion limit"
+                        .to_owned(),
+                );
+            }
+        };
+        for expanded in expanded_commands {
+            if let Some(message) = deny_command(&expanded, config, depth, dialect) {
                 return Some(message);
             }
         }
@@ -223,14 +233,40 @@ fn shell_dialect(stem: &str) -> ShellDialect {
     }
 }
 
-fn command_program_index(tokens: &[String]) -> Option<usize> {
+fn command_program_index(tokens: &[String], dialect: ShellDialect) -> Option<usize> {
     let mut index = 0usize;
     while index < tokens.len() && shell_assignment(&tokens[index]) {
         index += 1;
     }
-    for _ in 0..8 {
+    // Every transparent wrapper below advances `index`, so the token count is
+    // the natural bound. A fixed wrapper-depth ceiling fails open for a valid
+    // command such as `env env ... git clean` once the ceiling is exceeded.
+    while index < tokens.len() {
         let stem = stem_lower(tokens.get(index)?);
         match stem.as_str() {
+            // Shell control-flow keywords are transparent in command position:
+            // `then git clean -fdx` executes git clean, so the keyword must not
+            // become the command stem and hide the program behind it.
+            "then" | "else" | "elif" | "elseif" | "do" | "!" | "while" | "until" => index += 1,
+            "if" => {
+                index += 1;
+                if dialect == ShellDialect::Cmd {
+                    index = skip_cmd_if_condition(tokens, index);
+                }
+            }
+            "call" if dialect == ShellDialect::Cmd => index += 1,
+            // POSIX `for VAR in LIST` words are never executed (the body is a
+            // separate `do ...` command); cmd `for ... do CMD` keeps the body
+            // in the same command, so resume scanning after its `do` token.
+            "for" | "select" => {
+                match tokens[index..]
+                    .iter()
+                    .position(|token| token.eq_ignore_ascii_case("do"))
+                {
+                    Some(offset) => index += offset + 1,
+                    None => return None,
+                }
+            }
             "env" => {
                 index += 1;
                 while index < tokens.len() {
@@ -495,6 +531,36 @@ fn command_program_index(tokens: &[String]) -> Option<usize> {
     None
 }
 
+/// Skip a cmd `if` condition so the guarded command becomes the scanned stem:
+/// `if [/i] [not] (exist|defined|errorlevel|cmdextversion) X CMD` and the
+/// three-token (`%a% == %b%`) or fused (`"%a%"=="%b%"`) comparison forms.
+fn skip_cmd_if_condition(tokens: &[String], mut index: usize) -> usize {
+    while tokens
+        .get(index)
+        .is_some_and(|token| token.eq_ignore_ascii_case("/i") || token.eq_ignore_ascii_case("not"))
+    {
+        index += 1;
+    }
+    let Some(token) = tokens.get(index) else {
+        return index;
+    };
+    let unary = ["exist", "defined", "errorlevel", "cmdextversion"];
+    let comparators = ["==", "equ", "neq", "lss", "leq", "gtr", "geq"];
+    if unary.iter().any(|kind| token.eq_ignore_ascii_case(kind)) {
+        index + 2
+    } else if tokens.get(index + 1).is_some_and(|operator| {
+        comparators
+            .iter()
+            .any(|kind| operator.eq_ignore_ascii_case(kind))
+    }) {
+        index + 3
+    } else if token.contains("==") {
+        index + 1
+    } else {
+        index
+    }
+}
+
 fn shell_assignment(token: &str) -> bool {
     let Some((name, _)) = token.split_once('=') else {
         return false;
@@ -586,12 +652,7 @@ fn path_operands<'a>(stem: &str, args: &'a [String]) -> Vec<&'a str> {
             }
             if matches!(
                 token.to_ascii_lowercase().as_str(),
-                "-exclude"
-                    | "-filter"
-                    | "-include"
-                    | "-whatif"
-                    | "-confirm"
-                    | "--pathspec-from-file"
+                "-exclude" | "-filter" | "-include" | "--pathspec-from-file"
             ) {
                 skip_value = true;
             }
@@ -639,7 +700,10 @@ fn protected_delete_message(fragment: &str) -> String {
 /// Lowercased program stem: `git`, `git.exe`, `/usr/bin/git`, and
 /// `C:\...\git.EXE` all reduce to `git` on every host OS.
 fn stem_lower(token: &str) -> String {
+    // cmd.exe accepts `@` as an echo-control prefix on executable commands,
+    // including after control-flow keywords and `call`.
     let leaf = token
+        .trim_start_matches('@')
         .trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
@@ -689,438 +753,13 @@ fn powershell_recurse_flag(token: &str) -> bool {
     enabled && !name.is_empty() && "recurse".starts_with(&name.to_ascii_lowercase())
 }
 
-#[derive(Debug, Default)]
-struct ParsedShellPayload {
-    commands: Vec<Vec<String>>,
-    substitutions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShellQuote {
-    Unquoted,
-    Single,
-    Double,
-}
-
-/// Parse enough shell structure to identify executable commands without
-/// treating quoted arguments, comments, or heredoc bodies as commands. The
-/// guard is not a shell interpreter: expansions remain opaque except for
-/// command substitutions, which are recursively inspected.
-fn parse_shell_payload(text: &str, dialect: ShellDialect) -> ParsedShellPayload {
-    let continued = (dialect == ShellDialect::Posix).then(|| remove_posix_line_continuations(text));
-    let text = continued.as_deref().unwrap_or(text);
-    let here_strings =
-        (dialect == ShellDialect::Powershell).then(|| strip_powershell_here_strings(text));
-    let text = here_strings.as_deref().unwrap_or(text);
-    let text = strip_heredoc_bodies(text);
-    let chars = text.chars().collect::<Vec<_>>();
-    let mut parsed = ParsedShellPayload::default();
-    let mut command = Vec::new();
-    let mut word = String::new();
-    let mut word_started = false;
-    let mut quote = ShellQuote::Unquoted;
-    let mut index = 0usize;
-
-    while index < chars.len() {
-        let ch = chars[index];
-        match quote {
-            ShellQuote::Single => {
-                if ch == '\'' {
-                    quote = ShellQuote::Unquoted;
-                } else {
-                    word.push(ch);
-                }
-                word_started = true;
-                index += 1;
-            }
-            ShellQuote::Double => {
-                if ch == '"' {
-                    quote = ShellQuote::Unquoted;
-                    word_started = true;
-                    index += 1;
-                } else if (ch == '\\' || dialect == ShellDialect::Powershell && ch == '`')
-                    && index + 1 < chars.len()
-                {
-                    word.push(chars[index + 1]);
-                    word_started = true;
-                    index += 2;
-                } else if ch == '$' && chars.get(index + 1) == Some(&'(') {
-                    if let Some((substitution, next)) = extract_parenthesized(&chars, index + 2) {
-                        parsed.substitutions.push(substitution);
-                        word.push_str("$()");
-                        word_started = true;
-                        index = next;
-                    } else {
-                        word.push(ch);
-                        word_started = true;
-                        index += 1;
-                    }
-                } else if dialect == ShellDialect::Posix && ch == '`' {
-                    if let Some((substitution, next)) = extract_backticks(&chars, index + 1) {
-                        parsed.substitutions.push(substitution);
-                        word.push_str("``");
-                        word_started = true;
-                        index = next;
-                    } else {
-                        word.push(ch);
-                        word_started = true;
-                        index += 1;
-                    }
-                } else {
-                    word.push(ch);
-                    word_started = true;
-                    index += 1;
-                }
-            }
-            ShellQuote::Unquoted => match ch {
-                '\'' => {
-                    quote = ShellQuote::Single;
-                    word_started = true;
-                    index += 1;
-                }
-                '"' => {
-                    quote = ShellQuote::Double;
-                    word_started = true;
-                    index += 1;
-                }
-                '`' if dialect == ShellDialect::Powershell && index + 1 < chars.len() => {
-                    word.push(chars[index + 1]);
-                    word_started = true;
-                    index += 2;
-                }
-                '^' if dialect == ShellDialect::Cmd && index + 1 < chars.len() => {
-                    word.push(chars[index + 1]);
-                    word_started = true;
-                    index += 2;
-                }
-                '\\' if dialect != ShellDialect::Cmd && index + 1 < chars.len() => {
-                    word.push(chars[index + 1]);
-                    word_started = true;
-                    index += 2;
-                }
-                '$' if chars.get(index + 1) == Some(&'(') => {
-                    if let Some((substitution, next)) = extract_parenthesized(&chars, index + 2) {
-                        parsed.substitutions.push(substitution);
-                        word.push_str("$()");
-                        word_started = true;
-                        index = next;
-                    } else {
-                        word.push(ch);
-                        word_started = true;
-                        index += 1;
-                    }
-                }
-                '`' if dialect == ShellDialect::Posix => {
-                    if let Some((substitution, next)) = extract_backticks(&chars, index + 1) {
-                        parsed.substitutions.push(substitution);
-                        word.push_str("``");
-                        word_started = true;
-                        index = next;
-                    } else {
-                        word.push(ch);
-                        word_started = true;
-                        index += 1;
-                    }
-                }
-                '{' | '}'
-                    if shell_group_brace_is_boundary(&chars, index, word_started, dialect) =>
-                {
-                    flush_shell_word(&mut word, &mut word_started, &mut command);
-                    flush_shell_command(&mut command, &mut parsed.commands);
-                    index += 1;
-                }
-                '#' if !word_started => {
-                    flush_shell_word(&mut word, &mut word_started, &mut command);
-                    while index < chars.len() && chars[index] != '\n' {
-                        index += 1;
-                    }
-                }
-                ';' | '&' | '|' | '\n' | '(' | ')' => {
-                    flush_shell_word(&mut word, &mut word_started, &mut command);
-                    flush_shell_command(&mut command, &mut parsed.commands);
-                    index += 1;
-                    if matches!(ch, '&' | '|') && chars.get(index) == Some(&ch) {
-                        index += 1;
-                    }
-                }
-                '<' | '>' => {
-                    flush_shell_word(&mut word, &mut word_started, &mut command);
-                    command.push("__contextmink_redirection__".to_owned());
-                    index += 1;
-                    while chars.get(index) == Some(&ch) {
-                        index += 1;
-                    }
-                }
-                _ if ch.is_whitespace() => {
-                    flush_shell_word(&mut word, &mut word_started, &mut command);
-                    index += 1;
-                }
-                _ => {
-                    word.push(ch);
-                    word_started = true;
-                    index += 1;
-                }
-            },
-        }
-    }
-    flush_shell_word(&mut word, &mut word_started, &mut command);
-    flush_shell_command(&mut command, &mut parsed.commands);
-    for command in &mut parsed.commands {
-        let mut normalized = Vec::with_capacity(command.len());
-        let mut discard_target = false;
-        for token in command.drain(..) {
-            if token == "__contextmink_redirection__" {
-                discard_target = true;
-            } else if discard_target {
-                discard_target = false;
-            } else {
-                normalized.push(token);
-            }
-        }
-        *command = normalized;
-    }
-    parsed
-}
-
-fn shell_group_brace_is_boundary(
-    chars: &[char],
-    index: usize,
-    word_started: bool,
-    dialect: ShellDialect,
-) -> bool {
-    if dialect == ShellDialect::Cmd {
-        return false;
-    }
-    if dialect == ShellDialect::Powershell {
-        return true;
-    }
-    if word_started {
-        return false;
-    }
-    chars.get(index + 1).is_none_or(|next| {
-        next.is_whitespace() || matches!(next, ';' | '&' | '|' | '(' | ')' | '{' | '}')
-    })
-}
-
-fn remove_posix_line_continuations(text: &str) -> String {
-    text.replace("\\\r\n", "").replace("\\\n", "")
-}
-
-fn strip_powershell_here_strings(text: &str) -> String {
-    let mut lines = text.split_inclusive('\n');
-    let mut stripped = String::with_capacity(text.len());
-    while let Some(line) = lines.next() {
-        stripped.push_str(line);
-        let trimmed = line.trim_end_matches(['\r', '\n']).trim_end();
-        let terminator = if trimmed.ends_with("@'") {
-            Some("'@")
-        } else if trimmed.ends_with("@\"") {
-            Some("\"@")
-        } else {
-            None
-        };
-        let Some(terminator) = terminator else {
-            continue;
-        };
-        for body_line in lines.by_ref() {
-            if body_line.trim_end_matches(['\r', '\n']) == terminator {
-                stripped.push_str(body_line);
-                break;
-            }
-        }
-    }
-    stripped
-}
-
-fn expand_literal_braces(tokens: &[String]) -> Vec<Vec<String>> {
-    const MAX_EXPANSIONS: usize = 32;
-    let mut variants = vec![Vec::new()];
-    for token in tokens {
-        let alternatives = literal_brace_alternatives(token).unwrap_or_else(|| vec![token.clone()]);
-        if variants.len().saturating_mul(alternatives.len()) > MAX_EXPANSIONS {
-            return vec![tokens.to_vec()];
-        }
-        variants = variants
-            .into_iter()
-            .flat_map(|prefix| {
-                alternatives.iter().map(move |alternative| {
-                    let mut variant = prefix.clone();
-                    variant.push(alternative.clone());
-                    variant
-                })
-            })
-            .collect();
-    }
-    variants
-}
-
-fn literal_brace_alternatives(token: &str) -> Option<Vec<String>> {
-    let open = token.find('{')?;
-    let close = token[open + 1..].find('}')? + open + 1;
-    let body = &token[open + 1..close];
-    if !body.contains(',') || body.contains(['{', '}']) {
-        return None;
-    }
-    Some(
-        body.split(',')
-            .map(|alternative| format!("{}{}{}", &token[..open], alternative, &token[close + 1..]))
-            .collect(),
-    )
-}
-
-fn flush_shell_word(word: &mut String, started: &mut bool, command: &mut Vec<String>) {
-    if *started {
-        command.push(std::mem::take(word));
-        *started = false;
-    }
-}
-
-fn flush_shell_command(command: &mut Vec<String>, commands: &mut Vec<Vec<String>>) {
-    if !command.is_empty() {
-        commands.push(std::mem::take(command));
-    }
-}
-
-fn extract_parenthesized(chars: &[char], mut index: usize) -> Option<(String, usize)> {
-    let mut depth = 1usize;
-    let mut quote = ShellQuote::Unquoted;
-    let mut value = String::new();
-    while index < chars.len() {
-        let ch = chars[index];
-        match quote {
-            ShellQuote::Single => {
-                if ch == '\'' {
-                    quote = ShellQuote::Unquoted;
-                }
-                value.push(ch);
-            }
-            ShellQuote::Double => {
-                if ch == '"' {
-                    quote = ShellQuote::Unquoted;
-                }
-                value.push(ch);
-            }
-            ShellQuote::Unquoted => match ch {
-                '\'' => {
-                    quote = ShellQuote::Single;
-                    value.push(ch);
-                }
-                '"' => {
-                    quote = ShellQuote::Double;
-                    value.push(ch);
-                }
-                '(' => {
-                    depth += 1;
-                    value.push(ch);
-                }
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some((value, index + 1));
-                    }
-                    value.push(ch);
-                }
-                _ => value.push(ch),
-            },
-        }
-        index += 1;
-    }
-    None
-}
-
-fn extract_backticks(chars: &[char], mut index: usize) -> Option<(String, usize)> {
-    let mut value = String::new();
-    while index < chars.len() {
-        match chars[index] {
-            '`' => return Some((value, index + 1)),
-            '\\' if index + 1 < chars.len() => {
-                value.push(chars[index + 1]);
-                index += 2;
-                continue;
-            }
-            ch => value.push(ch),
-        }
-        index += 1;
-    }
-    None
-}
-
-fn strip_heredoc_bodies(text: &str) -> String {
-    let mut lines = text.split_inclusive('\n');
-    let mut stripped = String::with_capacity(text.len());
-    let mut quote = ShellQuote::Unquoted;
-    while let Some(line) = lines.next() {
-        stripped.push_str(line);
-        let Some((delimiter, strip_tabs)) = heredoc_delimiter(line, &mut quote) else {
-            continue;
-        };
-        for body_line in lines.by_ref() {
-            let candidate = body_line.trim_end_matches(['\r', '\n']);
-            let candidate = if strip_tabs {
-                candidate.trim_start_matches('\t')
-            } else {
-                candidate
-            };
-            if candidate == delimiter {
-                break;
-            }
-        }
-    }
-    stripped
-}
-
-fn heredoc_delimiter(line: &str, quote: &mut ShellQuote) -> Option<(String, bool)> {
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut index = 0usize;
-    while index + 1 < chars.len() {
-        match (*quote, chars[index]) {
-            (ShellQuote::Single, '\'') => *quote = ShellQuote::Unquoted,
-            (ShellQuote::Double, '"') => *quote = ShellQuote::Unquoted,
-            (ShellQuote::Unquoted, '\'') => *quote = ShellQuote::Single,
-            (ShellQuote::Unquoted, '"') => *quote = ShellQuote::Double,
-            (ShellQuote::Unquoted, '<') if chars[index + 1] == '<' => {
-                if chars.get(index + 2) == Some(&'<') {
-                    index += 3;
-                    continue;
-                }
-                index += 2;
-                let strip_tabs = chars.get(index) == Some(&'-');
-                if strip_tabs {
-                    index += 1;
-                }
-                while chars.get(index).is_some_and(|ch| ch.is_whitespace()) {
-                    index += 1;
-                }
-                let mut delimiter = String::new();
-                let mut delimiter_quote = ShellQuote::Unquoted;
-                while let Some(ch) = chars.get(index).copied() {
-                    match (delimiter_quote, ch) {
-                        (ShellQuote::Unquoted, '\'') => delimiter_quote = ShellQuote::Single,
-                        (ShellQuote::Unquoted, '"') => delimiter_quote = ShellQuote::Double,
-                        (ShellQuote::Single, '\'') | (ShellQuote::Double, '"') => {
-                            delimiter_quote = ShellQuote::Unquoted
-                        }
-                        (ShellQuote::Unquoted, ch)
-                            if ch.is_whitespace() || matches!(ch, ';' | '&' | '|') =>
-                        {
-                            break;
-                        }
-                        (_, ch) => delimiter.push(ch),
-                    }
-                    index += 1;
-                }
-                return (!delimiter.is_empty()).then_some((delimiter, strip_tabs));
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-// Explicit path: this module is #[path]-included by both the contextmink
+// Explicit paths: this module is #[path]-included by both the contextmink
 // and contextmink-bridge targets, which makes it mod-rs for child
-// resolution — a bare `mod tests;` would look for src/tests.rs.
+// resolution — a bare `mod shell_parse;` would look for src/shell_parse.rs.
+#[path = "destructive_guard/shell_parse.rs"]
+mod shell_parse;
+use shell_parse::{expand_literal_braces, parse_shell_payload};
+
 #[cfg(test)]
 #[path = "destructive_guard/tests.rs"]
 mod tests;

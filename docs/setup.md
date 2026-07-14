@@ -12,9 +12,9 @@ replacement for project-native tools.
 
 - For standalone use, download the release archive for your platform and put
   `contextmink` on `PATH`, or run it from the unpacked directory.
-- Rust and Cargo are needed only for source builds or vendored integrations that
-  build the local `tools/contextmink` copy. `contextmink` uses Rust edition
-  2024.
+- Rust 1.92 or newer and Cargo are needed only for source builds or vendored
+  integrations that build the local `tools/contextmink` copy. `contextmink`
+  uses Rust edition 2024.
 - A POSIX-compatible shell is needed only for the optional `scripts/contextmink`
   launcher. On Windows, Git Bash works. Without Bash, call the release binary
   directly or use `cargo run --manifest-path tools/contextmink/Cargo.toml --bin contextmink -- ...`.
@@ -23,15 +23,15 @@ replacement for project-native tools.
   | Active shell | Command form |
   | --- | --- |
   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink ...` |
-  | Windows PowerShell, direct contextmink command | `tools\contextmink\bin\contextmink.exe ...` |
-  | Windows PowerShell, Bash launcher path | `tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...` |
+  | Windows PowerShell, direct contextmink command | `& tools\contextmink\bin\contextmink.exe ...` |
+  | Windows PowerShell, Bash launcher path | `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...` |
 
   Do not rely on Windows to open the extensionless `scripts/contextmink` path
   directly from PowerShell. `contextmink-bridge.exe` is the preferred
   PowerShell-to-Git-Bash bridge when a Windows-native session needs the Bash
   launcher or another Bash-first repository script. Direct `contextmink.exe
-  capture` recognizes real shebang files; pass `--script` for a no-shebang
-  Bash script.
+  capture` recognizes files whose first line begins `#!`; pass `--script` for
+  a no-shebang Bash script.
 
 ## Release Archives
 
@@ -73,14 +73,14 @@ This installs `contextmink` on `PATH` instead of vendoring it per repository:
 3. Verify:
 
    ```bash
-   contextmink files --path . --limit 20
+   contextmink files . --limit 20
    ```
 
 The binary can use a repository-local `.contextmink.toml`; it searches upward
 from the current directory.
 
 On Windows, direct `contextmink.exe` runs built-in commands, native executables,
-real shebang scripts, and explicit `capture --script` Bash scripts. Use Project
+shebang scripts, and explicit `capture --script` Bash scripts. Use Project
 Binary Integration when the repository wants a stable local launcher and
 policy-bearing tool layout.
 
@@ -91,6 +91,33 @@ a source build.
 
 Use this layout for repositories that want a checked-in launcher while keeping
 host-specific release binaries ignored and replaceable.
+
+### Integration decisions
+
+Adapt the installation to the project before copying generic policy:
+
+1. Choose the workspace root agents will operate from. Put configuration and
+   always-loaded guidance there; nested repositories can inherit that contract
+   when they are components rather than independent entrypoints.
+2. Inspect the shells agents actually receive and select one canonical command
+   form for each host. Do not infer the shell from the agent product name.
+3. Inventory project-native compact, projection, query, and diagnostic commands.
+   Keep those authoritative and use contextmink around unknown-size generic
+   reads rather than replacing domain tooling.
+4. Identify project-specific high-output trees, ignored nested repositories,
+   generated outputs, and irrecoverable paths. Put scan exclusions and literal
+   deletion guard fragments in `.contextmink.toml`; do not copy another
+   project's policy.
+5. Decide how fresh clones receive the executable. Ignored release binaries are
+   workstation-local and require an install step; source vendoring or a reviewed
+   multi-platform package policy is the clone-ready alternative.
+6. Merge the maintained instruction snippet into the existing guidance
+   hierarchy, preserving direct-command exceptions and project shell rules.
+7. Dogfood the result on real project work from the workspace root and a nested
+   directory. Verify config/profile discovery, receipts, domain-tool precedence,
+   launcher behavior, and any hook or bridge boundary the project enables.
+
+### Install the project-local tools
 
 1. Unpack the release archive next to, or outside, the target repository.
 
@@ -122,7 +149,9 @@ host-specific release binaries ignored and replaceable.
 
    Tracking release binaries is an explicit hermetic-install choice. It is not
    the project-neutral default because one host's binary does not serve other
-   supported platforms.
+   supported platforms. Document the required release version in the consuming
+   project's dependency/setup policy so a fresh clone does not silently fetch
+   an arbitrary latest release.
 
 4. Copy the release launcher:
 
@@ -153,13 +182,12 @@ host-specific release binaries ignored and replaceable.
 7. Verify from the target repository root:
 
    ```bash
-   scripts/contextmink files --path . --limit 20
-   scripts/contextmink grep contextmink --path . --limit 5
+   scripts/contextmink files . --limit 20
+   scripts/contextmink grep contextmink . --limit 5
    ```
 
 8. Optional but recommended for repositories with destructive-command
-   trip-wires: generate a Claude hook fragment from the installed binary and
-   merge it into `.claude/settings.json`:
+   trip-wires: generate a Claude hook fragment from the installed binary:
 
    ```bash
    scripts/contextmink hook-snippet
@@ -167,26 +195,35 @@ host-specific release binaries ignored and replaceable.
 
    The generated fragment registers `hook-guard` for `Bash` and `PowerShell`
    PreToolUse hooks. It uses single `command` strings, not a separate `args`
-   field, and emits shell-safe path spelling for each matcher.
+   field, and emits shell-safe absolute paths for each matcher. Machine-specific
+   output belongs in `.claude/settings.local.json`; commit it to shared
+   `.claude/settings.json` only when the generated command paths are stable for
+   every supported clone.
 
 Delegated setup prompt:
 
 ```text
-Set up contextmink in <target-repo> from the unpacked release at <path>. Use
-the release binary, not a source build. Install
+Set up contextmink in <target-repo> from the unpacked release at <path>. First
+inspect the intended workspace root, existing agent-guidance hierarchy, active
+shells, project-native bounded/query commands, nested repositories,
+project-specific high-output trees, and irrecoverable paths. Use the release
+binary, not a source build. Install
 tools/contextmink/bin/contextmink(.exe), the Windows
 tools/contextmink/bin/contextmink-bridge.exe when applicable,
 scripts/contextmink, and
 .contextmink.toml with repo-appropriate high-output excludes. Merge the
 AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with the
 active-shell invocation from this guide, for example:
-- Bash-hosted: scripts/contextmink files --path . --limit 20
-- Windows PowerShell direct: tools\contextmink\bin\contextmink.exe files --path . --limit 20
-- Windows PowerShell bridge: tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --limit 20
-If Claude PreToolUse protection is wanted, generate the .claude/settings.json
-hook fragment with contextmink hook-snippet instead of hand-writing command
-paths. Keep host-specific binaries ignored unless a reviewed hermetic install
-is explicitly required.
+- Bash-hosted: scripts/contextmink files . --limit 20
+- Windows PowerShell direct: & tools\contextmink\bin\contextmink.exe files . --limit 20
+- Windows PowerShell bridge: & tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files . --limit 20
+If Claude PreToolUse protection is wanted, generate the hook fragment with
+contextmink hook-snippet instead of hand-writing command
+paths. Put machine-specific absolute hook commands in
+.claude/settings.local.json. Keep host-specific binaries ignored unless a
+reviewed hermetic install is explicitly required, and document the version a
+fresh clone must install. Dogfood config discovery and receipts from both the
+workspace root and a nested directory before calling the integration complete.
 ```
 
 ## Optional: Claude PreToolUse Hook Guard
@@ -210,6 +247,11 @@ checkout or the repository moves, a hook payload whose `cwd` is outside that
 root is allowed with a diagnostic note instead of applying the foreign
 repository's policy. Regenerate the snippet in the target repository to restore
 protection.
+
+Because the generated fragment contains canonical absolute paths, store it in
+`.claude/settings.local.json` for workstation-local release installations.
+Shared `.claude/settings.json` is appropriate only when the selected binary and
+config paths are stable across every supported checkout.
 
 For source-vendored or custom layouts, pass explicit paths:
 
@@ -258,8 +300,8 @@ resolve from `CONTEXTMINK_BRIDGE_ROOT`; otherwise caller-side
 This supports both globally installed and project-local bridges while keeping
 a vendored contextmink checkout anchored to the project it serves. In direct
 mode a path-like program (`./gradlew`, `bin/tool`) resolves against `--cwd`,
-matching POSIX exec semantics. A real shebang is classified before spawn and
-enters Git Bash deterministically; a Bash script without a shebang requires
+  matching POSIX exec semantics. A file whose first line begins `#!` enters Git
+  Bash deterministically; a Bash script without a shebang requires
 explicit `--script`, whose path resolves from the bridge root instead of
 `--cwd`. Bare names (`git`) use PATH. Destructive argv matching the safety
 deny-list is refused before spawn; `contextmink-bridge --help` prints the
@@ -318,8 +360,8 @@ copy of the Rust crate:
 5. Verify the integration from the target repository root:
 
    ```bash
-   scripts/contextmink files --path . --limit 20
-   scripts/contextmink grep contextmink --path . --limit 5
+   scripts/contextmink files . --limit 20
+   scripts/contextmink grep contextmink . --limit 5
    ```
 
    The first source-backed run may build the release binary. Build output is
@@ -334,7 +376,7 @@ the host:
 
 ```bash
 cargo install --path .
-contextmink files --path . --limit 20
+contextmink files . --limit 20
 ```
 
 ## Config Template
@@ -399,8 +441,8 @@ host mechanics the templates do not:
   selectors and slash-bearing `--pattern` / `--prefix` / `--contains` /
   `--term` values from MSYS path rewriting on Git Bash, while leaving normal
   file paths to the shell.
-- Bridge and `capture` share deterministic script classification. Real
-  shebang files enter the Bash boundary before spawn; use
+- Bridge and `capture` share deterministic script classification. Files whose
+  first line begins `#!` enter the Bash boundary before spawn; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Receipts
   disclose `execution_mode` and the always-present `effective_argv`.
 - Keep ordinary repository-specific scan policy and protected deletion
@@ -427,6 +469,7 @@ tools/contextmink/.gitignore
 tools/contextmink/LICENSE
 tools/contextmink/LICENSE-SSL
 tools/contextmink/LICENSE-VPL
+scripts/contextmink
 ```
 
 Do not sync a target repository's `.contextmink.toml`; that file is local

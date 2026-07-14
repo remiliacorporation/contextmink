@@ -118,8 +118,27 @@ fn shell_commands_preserve_boundaries_quotes_comments_and_heredocs() {
 fn shell_edge_cases_cannot_bypass_or_false_positive_the_guard() {
     denied(&["bash", "-lc", "git \\\nclean -fd"]);
     denied(&["bash", "-lc", "git {clean,-d} -f"]);
+    denied(&["bash", "-lc", "git {cl,x}{ean,y} -fd"]);
+    denied(&["bash", "-lc", "git {status,{clean,reset}} -fd"]);
+    denied(&["bash", "-lc", "git {c..c}{l..l}{e..e}{a..a}{n..n} -fd"]);
+    denied(&["bash", "-lc", "git {c,x}{l,x}{e,x}{a,x}{n,x}{,-d}"]);
     denied(&["bash", "-lc", "{ git clean -fdx; }"]);
     denied(&["powershell", "-Command", "& { git clean -fdx }"]);
+    denied(&["bash", "-lc", "# <<EOF\ngit clean -fdx\n"]);
+    denied(&["powershell", "-Command", "# @'\ngit clean -fdx\n"]);
+    denied(&["bash", "-lc", "2>/dev/null git clean -fdx"]);
+    denied(&["bash", "-lc", "2>&1 git clean -fdx"]);
+    denied(&["bash", "-lc", "&>/dev/null git clean -fdx"]);
+    denied(&[
+        "bash",
+        "-lc",
+        "cat <<A <<B\nA\necho <<X\nB\ngit clean -fdx\n",
+    ]);
+    denied(&[
+        "powershell",
+        "-Command",
+        "Write-Output \"@'\"\ngit clean -fdx",
+    ]);
     allowed(&["bash", "-lc", "printf '%s\\n' {clean,-d}"]);
     denied(&[
         "bash",
@@ -129,6 +148,13 @@ fn shell_edge_cases_cannot_bypass_or_false_positive_the_guard() {
     denied_with_config(
         &["bash", "-lc", "command rm -v -rf protected_cache"],
         &protected_config(),
+    );
+    denied_with_config(
+        &["bash", "-lc", "rm -rf protected_{001..003}"],
+        &DestructiveGuardConfig {
+            recursive_delete_fragments: vec!["protected_002".to_owned()],
+            delete_fragments: Vec::new(),
+        },
     );
 
     allowed_with_config(
@@ -140,6 +166,47 @@ fn shell_edge_cases_cannot_bypass_or_false_positive_the_guard() {
         "-Command",
         "@'\nit's harmless git clean prose\n'@\nWrite-Output ok",
     ]);
+}
+
+#[test]
+fn control_flow_keywords_cannot_hide_destructive_commands() {
+    denied(&["bash", "-lc", "if true; then git clean -fdx; fi"]);
+    denied(&["bash", "-lc", "if true\nthen git clean -fdx\nfi"]);
+    denied(&["bash", "-lc", "if git clean -fdx; then echo ok; fi"]);
+    denied(&[
+        "bash",
+        "-lc",
+        "if false; then echo ok; else git clean -fdx; fi",
+    ]);
+    denied(&[
+        "bash",
+        "-lc",
+        "if false; then :; elif git clean -fdx; then :; fi",
+    ]);
+    denied(&["bash", "-lc", "while true; do git clean -fdx; done"]);
+    denied(&["bash", "-lc", "until false; do git clean -fdx; done"]);
+    denied(&["bash", "-lc", "for f in a b; do git clean -fdx; done"]);
+    denied(&["bash", "-lc", "! git clean -fdx"]);
+    denied(&["cmd", "/c", "if exist marker git clean -fdx"]);
+    denied(&["cmd", "/c", "if not exist marker git clean -fdx"]);
+    denied(&["cmd", "/c", "if /i not errorlevel 1 git clean -fdx"]);
+    denied(&["cmd", "/c", "if %a% == %b% git clean -fdx"]);
+    denied(&["cmd", "/c", "if \"%a%\"==\"%b%\" git clean -fdx"]);
+    denied(&["cmd", "/c", "for %f in (x) do git clean -fdx"]);
+    denied(&["cmd", "/c", "@git clean -fdx"]);
+    denied(&["cmd", "/c", "call git clean -fdx"]);
+    denied(&["cmd", "/c", "if exist marker @git clean -fdx"]);
+
+    denied(&[
+        "env", "env", "env", "env", "env", "env", "env", "env", "env", "env", "git", "clean",
+        "-fdx",
+    ]);
+
+    allowed(&["bash", "-lc", "if true; then echo ok; fi"]);
+    allowed(&["bash", "-lc", "for x in git clean; do echo $x; done"]);
+    allowed(&["bash", "-lc", "echo if then do done fi"]);
+    allowed(&["git", "commit", "-m", "if then do git clean"]);
+    allowed(&["cmd", "/c", "if exist marker echo present"]);
 }
 
 #[test]
@@ -186,6 +253,8 @@ fn configured_direct_deletion_of_protected_paths_is_denied() {
     denied_with_config(&["rm", "project.gpr"], &config);
     denied_with_config(&["del", "F:\\repo\\project.gpr"], &config);
     denied_with_config(&["Remove-Item", "critical.sqlite"], &config);
+    denied_with_config(&["Remove-Item", "-Confirm", "critical.sqlite"], &config);
+    denied_with_config(&["Remove-Item", "-WhatIf", "critical.sqlite"], &config);
     denied_with_config(&["Remove-Item", "-LiteralPath:db/critical.sqlite"], &config);
 }
 

@@ -76,7 +76,9 @@ elif [[ ! -f "$bin" && -f "$tool/target/release/contextmink" ]]; then
 fi
 
 if [[ ! -f "$tool/Cargo.toml" && ! -f "$bin" ]]; then
-  echo "contextmink binary or Cargo.toml not found at $tool" >&2
+  echo "contextmink is not installed at $tool" >&2
+  echo "Install the release binary under $tool/bin (and contextmink-bridge.exe on Windows), or vendor the source crate." >&2
+  echo "Releases and setup: https://github.com/remiliacorporation/contextmink/releases" >&2
   exit 2
 fi
 

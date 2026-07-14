@@ -96,21 +96,18 @@ pub(crate) fn scan_file(
             });
             last_sampled_line = number;
             after_context_remaining = limits.context;
-        } else if matched && after_context_remaining > 0 {
-            // A match inside another match's after-context window still
-            // counts and renders as a match line.
-            samples.push(SampleLine {
-                line: number,
-                text: clamp_text(line.trim(), limits.max_line_chars),
-                is_match: true,
-            });
-            last_sampled_line = number;
-            after_context_remaining = limits.context;
         } else if after_context_remaining > 0 {
             samples.push(SampleLine {
                 line: number,
-                text: clamp_text(line.trim_end(), limits.max_line_chars),
-                is_match: false,
+                text: clamp_text(
+                    if matched {
+                        line.trim()
+                    } else {
+                        line.trim_end()
+                    },
+                    limits.max_line_chars,
+                ),
+                is_match: matched,
             });
             last_sampled_line = number;
             after_context_remaining -= 1;

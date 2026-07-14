@@ -2,10 +2,10 @@ use super::*;
 use clap::Parser;
 
 #[test]
-fn merged_paths_defaults_to_workspace_root() {
-    assert_eq!(merged_paths(&[], &[]), vec![PathBuf::from(".")]);
+fn paths_default_to_workspace_root() {
+    assert_eq!(paths_or_current_dir(&[]), vec![PathBuf::from(".")]);
     assert_eq!(
-        merged_paths(&[PathBuf::from("src")], &[PathBuf::from("tests")]),
+        paths_or_current_dir(&[PathBuf::from("src"), PathBuf::from("tests")]),
         vec![PathBuf::from("src"), PathBuf::from("tests")]
     );
 }
@@ -97,13 +97,6 @@ fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
         vec![
             "contextmink",
             "sqlite",
-            "sample.sqlite",
-            "--sql",
-            "SELECT 1",
-        ],
-        vec![
-            "contextmink",
-            "sqlite",
             "--db",
             "sample.sqlite",
             "--sql",
@@ -116,11 +109,22 @@ fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
             "sample.sqlite",
             "--sql",
             "SELECT 1",
+        ],
+        vec![
+            "contextmink",
+            "sqlite",
+            "sample.sqlite",
+            "--sql",
+            "SELECT 1",
             "--max-rows",
             "1",
         ],
-        vec!["contextmink", "sqlite-schema", "sample.sqlite"],
         vec!["contextmink", "sqlite-schema", "--db", "sample.sqlite"],
+        vec!["contextmink", "sqlite-schema", "--path", "sample.sqlite"],
+        vec!["contextmink", "files", "--path", "src"],
+        vec!["contextmink", "dirs", "--path", "src"],
+        vec!["contextmink", "grep", "needle", "--path", "src"],
+        vec!["contextmink", "grep-terms", "--term", "x", "--path", "src"],
         vec!["contextmink", "run", "--", "echo", "ok"],
     ];
 
@@ -133,7 +137,7 @@ fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
 }
 
 #[test]
-fn cli_v2_accepts_canonical_forms() {
+fn cli_accepts_current_forms() {
     Cli::try_parse_from([
         "contextmink",
         "grep-terms",
@@ -150,7 +154,7 @@ fn cli_v2_accepts_canonical_forms() {
         "4",
         ".",
     ])
-    .expect("parse canonical grep-terms form");
+    .expect("parse current grep-terms form");
     Cli::try_parse_from([
         "contextmink",
         "json-select",
@@ -160,16 +164,17 @@ fn cli_v2_accepts_canonical_forms() {
         "--limit",
         "2",
     ])
-    .expect("parse canonical json-select form");
+    .expect("parse current json-select form");
     Cli::try_parse_from([
         "contextmink",
         "sqlite",
-        "--path",
         "sample.sqlite",
         "--sql",
         "SELECT 1",
         "--limit",
         "1",
     ])
-    .expect("parse canonical sqlite form");
+    .expect("parse positional sqlite form");
+    Cli::try_parse_from(["contextmink", "sqlite-schema", "sample.sqlite"])
+        .expect("parse positional sqlite-schema form");
 }

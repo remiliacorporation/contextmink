@@ -18,7 +18,7 @@ fn contextmink_exe() -> &'static str {
 fn run_bridge(args: &[&str]) -> Output {
     Command::new(bridge_exe())
         .args(args)
-        .env_remove("CODEX_BASH_SUPPRESS_DUMP_WARNING")
+        .env_remove("CONTEXTMINK_BRIDGE_SUPPRESS_DUMP_WARNING")
         .env_remove("CONTEXTMINK_BRIDGE_ROOT")
         // Prove that the bridge owns the Git Bash boundary instead of
         // inheriting a caller-provided conversion exclusion.

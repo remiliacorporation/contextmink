@@ -55,7 +55,6 @@ fn main() -> Result<()> {
     match &cli.command {
         Command::Files {
             paths,
-            path,
             globs,
             path_terms,
             extensions,
@@ -69,7 +68,7 @@ fn main() -> Result<()> {
         } => command_files(
             &cli,
             &config,
-            &merged_paths(paths, path),
+            &paths_or_current_dir(paths),
             globs,
             path_terms,
             extensions,
@@ -83,7 +82,6 @@ fn main() -> Result<()> {
         ),
         Command::Dirs {
             paths,
-            path,
             depth,
             with_excluded,
             with_git_ignored,
@@ -94,7 +92,7 @@ fn main() -> Result<()> {
         } => command_dirs(
             &cli,
             &config,
-            &merged_paths(paths, path),
+            &paths_or_current_dir(paths),
             *depth,
             *with_excluded,
             *with_git_ignored,
@@ -105,7 +103,6 @@ fn main() -> Result<()> {
         ),
         Command::Grep {
             args,
-            path,
             pattern,
             pattern_file,
             literal,
@@ -128,7 +125,6 @@ fn main() -> Result<()> {
             &cli,
             &config,
             args,
-            path,
             pattern.as_deref(),
             pattern_file.as_deref(),
             *literal,
@@ -158,7 +154,6 @@ fn main() -> Result<()> {
             globs,
             extensions,
             paths,
-            path,
             with_excluded,
             with_git_ignored,
             skip_nested_repos,
@@ -179,7 +174,7 @@ fn main() -> Result<()> {
                 &config,
                 "grep-terms",
                 TextMatcher::terms(terms, mode, *ignore_case),
-                &merged_paths(paths, path),
+                &paths_or_current_dir(paths),
                 globs,
                 extensions,
                 *with_excluded,
@@ -418,10 +413,8 @@ fn main() -> Result<()> {
     }
 }
 
-pub(crate) fn merged_paths(positional: &[PathBuf], named: &[PathBuf]) -> Vec<PathBuf> {
-    let mut paths = Vec::with_capacity(positional.len() + named.len());
-    paths.extend(positional.iter().cloned());
-    paths.extend(named.iter().cloned());
+pub(crate) fn paths_or_current_dir(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut paths = paths.to_vec();
     if paths.is_empty() {
         paths.push(PathBuf::from("."));
     }

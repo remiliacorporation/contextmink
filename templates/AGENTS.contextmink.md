@@ -3,11 +3,15 @@
 Use contextmink when a file/text/JSON/SQLite/command-output read may produce
 more output than the transcript should carry.
 
+- Establish the repository's intended workspace root before using repo-local
+  entrypoints. The relative command forms below assume that root; from a nested
+  working directory, use an absolute/root-resolved launcher path or return to
+  the workspace root first.
 - Choose invocation by the active shell and target: use `scripts/contextmink ...`
-  from Bash-hosted sessions such as macOS, Linux, Git Bash, WSL, or Claude Code;
-  use `tools/contextmink/bin/contextmink(.exe) ...` directly from Windows
+  from Bash-hosted sessions such as macOS, Linux, Git Bash, or WSL;
+  use `& tools\contextmink\bin\contextmink.exe ...` directly from Windows
   PowerShell for contextmink commands; use
-  `tools/contextmink/bin/contextmink-bridge.exe --script scripts/contextmink ...`
+  `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...`
   when a PowerShell-hosted Windows session needs the Bash launcher.
 - Start with `dirs` to orient in an unfamiliar tree, then `files` or `grep`
   for candidate discovery. Prefer `files --ext json` (or `--ext jsonl`)
@@ -40,7 +44,7 @@ more output than the transcript should carry.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no
   native bound exists; read the child `exit_code`/`success` fields in the
-  receipt. Direct capture recognizes real shebang files; use
+  receipt. Direct capture recognizes files whose first line begins `#!`; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Truncated
   captures keep both the head and the tail of the output.
 - Configured excludes keep broad scans quiet. Pass an explicit file or

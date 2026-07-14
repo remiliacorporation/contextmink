@@ -77,3 +77,15 @@ fn caller_project_policy_wins_for_a_global_binary() {
     fs::create_dir_all(&nested).unwrap();
     assert_eq!(resolve_project_root(&install, &nested), project);
 }
+
+#[test]
+fn caller_repository_wins_over_install_tree_policy() {
+    let install = temp_tree("configured-install");
+    fs::write(install.join(".contextmink.toml"), "profile = \"install\"\n").unwrap();
+    let project = temp_tree("unconfigured-project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let nested = project.join("nested/work");
+    fs::create_dir_all(&nested).unwrap();
+
+    assert_eq!(resolve_project_root(&install, &nested), project);
+}

@@ -43,6 +43,14 @@ const NESTED_REPO_PROBE_DEPTH: usize = 1;
 /// Bound on nested-repo recursion (a repo inside a repo inside a repo...).
 const NESTED_REPO_MAX_RECURSION: usize = 4;
 
+/// Avoid thread startup for small trees, while moving the directory-heavy
+/// supplement off one serial filesystem lane for large workspaces.
+const NESTED_REPO_PARALLEL_MIN_DIRS: usize = 64;
+
+/// Bound concurrent directory probes so local SSDs benefit without turning a
+/// network-backed workspace into an unbounded metadata storm.
+const NESTED_REPO_MAX_PROBE_THREADS: usize = 8;
+
 pub(crate) fn collect_files(
     paths: &[PathBuf],
     config: &ContextConfig,
@@ -167,13 +175,18 @@ impl PolicyMapper {
 
 struct CollectState {
     files: Vec<PathBuf>,
-    seen: HashSet<PathBuf>,
+    seen: HashSet<String>,
     nested_repos_entered: Vec<String>,
 }
 
 impl CollectState {
     fn push_file(&mut self, candidate: PathBuf) {
-        if self.seen.insert(candidate.clone()) {
+        let absolute = std::path::absolute(&candidate).unwrap_or_else(|_| candidate.clone());
+        let mut identity = normalize_path(&absolute);
+        if cfg!(windows) {
+            identity.make_ascii_lowercase();
+        }
+        if self.seen.insert(identity) {
             self.files.push(candidate);
         }
     }
@@ -192,6 +205,9 @@ fn walk_root(
     nesting: usize,
 ) -> Result<()> {
     let mapper = PolicyMapper::for_root(root, config);
+    let probe_nested_repos = !options.with_git_ignored
+        && !options.skip_nested_repos
+        && nesting < NESTED_REPO_MAX_RECURSION;
     let mut walk = WalkBuilder::new(root);
     walk.hidden(false)
         .ignore(!options.with_git_ignored)
@@ -223,12 +239,12 @@ fn walk_root(
     // The walk always completes, so candidate totals are exact.
     struct WalkSink {
         files: Vec<PathBuf>,
-        visited_dirs: HashSet<PathBuf>,
+        visited_dirs: Option<HashSet<PathBuf>>,
         error: Option<ignore::Error>,
     }
     let sink = std::sync::Mutex::new(WalkSink {
         files: Vec::new(),
-        visited_dirs: HashSet::new(),
+        visited_dirs: probe_nested_repos.then(HashSet::new),
         error: None,
     });
     walk.build_parallel().run(|| {
@@ -245,10 +261,14 @@ fn walk_root(
             };
             match entry.file_type() {
                 Some(kind) if kind.is_dir() => {
-                    sink.lock()
-                        .expect("walk sink poisoned")
-                        .visited_dirs
-                        .insert(entry.into_path());
+                    if probe_nested_repos {
+                        sink.lock()
+                            .expect("walk sink poisoned")
+                            .visited_dirs
+                            .as_mut()
+                            .expect("nested-repo probing must retain visited directories")
+                            .insert(entry.into_path());
+                    }
                 }
                 Some(kind)
                     if kind.is_file()
@@ -289,22 +309,17 @@ fn walk_root(
     // workspaces routinely git-ignore sibling repos for repo separation), not
     // a generated artifact. Enter it with its own ignore rules and disclose
     // the entry in the receipt.
-    if options.with_git_ignored || options.skip_nested_repos || nesting >= NESTED_REPO_MAX_RECURSION
-    {
+    if !probe_nested_repos {
         return Ok(());
     }
-    let mut nested_roots = Vec::new();
-    for dir in &visited_dirs {
-        collect_pruned_repo_roots(
-            dir,
-            &mapper,
-            &visited_dirs,
-            config,
-            options.with_excluded,
-            explicit_excluded_roots,
-            &mut nested_roots,
-        );
-    }
+    let visited_dirs = visited_dirs.expect("nested-repo probing must retain visited directories");
+    let mut nested_roots = collect_pruned_repo_roots_for_visited_dirs(
+        &mapper,
+        &visited_dirs,
+        config,
+        options.with_excluded,
+        explicit_excluded_roots,
+    );
     nested_roots.sort();
     for nested_root in nested_roots {
         state.nested_repos_entered.push(display_path(&nested_root));
@@ -321,6 +336,66 @@ fn walk_root(
         )?;
     }
     Ok(())
+}
+
+fn collect_pruned_repo_roots_for_visited_dirs(
+    mapper: &PolicyMapper,
+    visited_dirs: &HashSet<PathBuf>,
+    config: &ContextConfig,
+    with_excluded: bool,
+    explicit_excluded_roots: &[String],
+) -> Vec<PathBuf> {
+    let dirs = visited_dirs
+        .iter()
+        .map(PathBuf::as_path)
+        .collect::<Vec<_>>();
+    let available_threads = std::thread::available_parallelism().map_or(1, |threads| threads.get());
+    let worker_count = available_threads
+        .min(NESTED_REPO_MAX_PROBE_THREADS)
+        .min(dirs.len());
+    if dirs.len() < NESTED_REPO_PARALLEL_MIN_DIRS || worker_count <= 1 {
+        let mut output = Vec::new();
+        for dir in dirs {
+            collect_pruned_repo_roots(
+                dir,
+                mapper,
+                visited_dirs,
+                config,
+                with_excluded,
+                explicit_excluded_roots,
+                &mut output,
+            );
+        }
+        return output;
+    }
+
+    let chunk_size = dirs.len().div_ceil(worker_count);
+    std::thread::scope(|scope| {
+        let workers = dirs
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    let mut output = Vec::new();
+                    for dir in chunk {
+                        collect_pruned_repo_roots(
+                            dir,
+                            mapper,
+                            visited_dirs,
+                            config,
+                            with_excluded,
+                            explicit_excluded_roots,
+                            &mut output,
+                        );
+                    }
+                    output
+                })
+            })
+            .collect::<Vec<_>>();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("nested-repo probe worker panicked"))
+            .collect()
+    })
 }
 
 /// Find git-repo roots among the unvisited (walker-pruned) children of a

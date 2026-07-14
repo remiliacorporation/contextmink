@@ -22,6 +22,77 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 }
 
 #[test]
+fn public_guidance_uses_current_cli_forms() {
+    let surfaces = [
+        ("README.md", include_str!("../README.md")),
+        ("SETUP.md", include_str!("../SETUP.md")),
+        ("docs/setup.md", include_str!("../docs/setup.md")),
+        (
+            "templates/AGENTS.contextmink.md",
+            include_str!("../templates/AGENTS.contextmink.md"),
+        ),
+        (
+            "templates/CLAUDE.contextmink.md",
+            include_str!("../templates/CLAUDE.contextmink.md"),
+        ),
+        (
+            ".github/workflows/release-artifacts.yml",
+            include_str!("../.github/workflows/release-artifacts.yml"),
+        ),
+    ];
+    let retired_examples = [
+        "files --path",
+        "dirs --path",
+        "grep contextmink --path",
+        "sqlite --path",
+        "sqlite-schema --path",
+        "files --max ",
+    ];
+
+    for (name, contents) in surfaces {
+        for retired in retired_examples {
+            assert!(
+                !contents.contains(retired),
+                "{name} still documents retired CLI form {retired:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn project_template_requires_explicit_policy_adaptation() {
+    let config = include_str!("../templates/.contextmink.toml");
+    let guidance = include_str!("../templates/AGENTS.contextmink.md");
+
+    assert!(config.contains("profile = \"replace-with-workspace-name\""));
+    assert!(config.contains("Add only project-specific high-output paths"));
+    assert!(guidance.contains("intended workspace root"));
+    assert!(guidance.contains("& tools\\contextmink\\bin\\contextmink.exe"));
+}
+
+#[test]
+fn release_workflow_verifies_extracted_project_integration() {
+    let workflow = include_str!("../.github/workflows/release-artifacts.yml");
+
+    for required in [
+        "tar -xzf",
+        "Expand-Archive",
+        "integration-project",
+        "scripts/contextmink --json guard-check",
+        "scripts/contextmink --json hook-snippet",
+        "\"decision\"[[:space:]]*:[[:space:]]*\"deny\"",
+        "guardSmoke.decision",
+        "--print-argv --argv-b64",
+        "--target \"$GITHUB_SHA\"",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "release workflow is missing integration proof {required:?}"
+        );
+    }
+}
+
+#[test]
 fn launcher_template_matches_repo_launcher() {
     let repo_launcher = include_str!("../scripts/contextmink");
     let template_launcher = include_str!("../templates/scripts/contextmink");

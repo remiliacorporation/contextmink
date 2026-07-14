@@ -6,46 +6,35 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-14
+
+### Added
+
+- Added `guard-check` for inspecting destructive-command decisions without executing the input.
+- Added an optional source-checkout Zig cross-link check for Linux and macOS release targets.
+
 ### Changed
 
-- Native bridge and `capture` execution now share one Rust process boundary for Bash discovery, root resolution, shebang classification, hex-safe argv relay, and scoped MSYS exclusions. Direct mode classifies real shebang files before spawn instead of treating Windows `ERROR_BAD_EXE_FORMAT` as a script detector; `capture --script` is the explicit no-shebang Bash path, and receipts replace `spawn_fallback` with `execution_mode` plus an always-present effective argv.
-- Bridge project-root discovery now considers the caller's current repository before the executable's install tree, so a globally installed bridge resolves project scripts and destructive-guard policy correctly from nested working directories.
+- Consolidated the public CLI around positional paths and one flag name per operation. Retired aliases and duplicate `--path` forms now fail with normal command help instead of creating competing invocation styles.
+- Unified `contextmink-bridge` and `capture` on one process boundary for project-root discovery, Git Bash selection, shebang handling, argument relay, and MSYS exclusions. Receipts now report the selected `execution_mode` and effective argv.
+- Made caller-side repository policy take precedence over the bridge installation directory, so global and vendored bridges resolve the active project consistently.
+- Updated project-local installation guidance to keep host binaries replaceable and to install both Windows executables when PowerShell-to-Git-Bash bridging is needed.
+
+### Fixed
+
+- Preserved leading-slash selectors, `@file` arguments, inline JSON, Unicode, and empty values across PowerShell, Git Bash, and native Windows command boundaries.
+- Hardened destructive-command parsing across POSIX shells, PowerShell, and cmd, including quoted commands, shell control flow, redirections, wrapper executables, command substitutions, nested and range brace expansion, and protected deletion operands. Static expansion now denies instead of bypassing the guard when its inspection bound is exceeded.
+- Bound generated hook policy to the target repository and added executable Bash-hook coverage, preventing stale settings from applying another checkout's rules.
+- Supervised captured process trees on Windows, Linux, and macOS so cancellation or an outer timeout cannot leave ordinary descendants running.
+- Improved Cargo discovery for project launchers used from Windows and WSL shell environments.
+- Deduplicated overlapping file roots and made `files --quiet` report exact counts without display-limit truncation.
+- Kept grep context and capture line and byte budgets within their advertised caps across dense matches and split stdout/stderr.
+- Made bridge transcript-dump warnings count lines with bounded memory instead of loading whole files before launching the requested command.
+- Parallelized nested-repository discovery on large trees, reducing broad-scan latency without changing completeness or receipt ordering.
 
 ### Removed
 
-- Removed the independently implemented `codex-bash.sh` bridge template and its duplicate test surface. Windows uses the guarded native bridge; POSIX hosts execute project scripts directly.
-
-### Fixed
-
-- POSIX brace groups can no longer hide destructive commands while attached brace-expansion words remain supported.
-- Windows capture children are created suspended, assigned to the kill-on-close Job Object, and only then resumed, closing the descendant escape window.
-- Generated hook commands now have a true Bash execution test in addition to string-shape assertions.
-- `capture` now supervises child process trees on every supported platform, using kill-on-close Job Objects on Windows and process groups with independent parent-death watchdogs on Linux and macOS, so an outer timeout cannot leave a mutating descendant running after the wrapper exits.
-
-### Added
-
-- Optional `scripts/cross_check.sh` uses Zig and `cargo-zigbuild` for host-independent Linux/macOS cross-link smoke checks without making Zig part of the normal build.
-
-## [0.7.0] - 2026-07-11
-
-### Fixed
-
-- Native bridge Bash boundaries now hex-relay startup argv and apply scoped MSYS conversion exclusions, preserving leading-slash selectors, existing `@file` paths, inline JSON, Unicode, and empty arguments byte-for-byte when `--script` or the extensionless-script fallback launches native Windows children.
-
-- The destructive guard now parses simple commands with quoting and operator boundaries, resolves Git's actual subcommand, and binds protected-path checks to deletion operands. Commit messages, probe data, and unrelated `make clean` commands no longer look like `git clean`; real recursive protected-tree deletion is blocked even without a force flag.
-- Hook and diagnostic command parsing now carries an explicit POSIX, PowerShell, or cmd dialect; PowerShell backtick escapes remain data, attached `-Path:<value>` deletion operands are protected, and transparent wrappers such as `exec`, `time`, `timeout`, `stdbuf`, `setsid`, and `doas` cannot conceal `git clean`.
-- Generated hook snippets bind policy to the target repository root. A copied or moved hook whose payload `cwd` belongs to another checkout fails open with a diagnostic instead of applying stale foreign configuration.
-- Project-binary setup now installs both Windows executables when the bridge is used and defaults host-specific binaries to ignored rather than silently encouraging platform-specific binary commits.
-
-- The Bash launcher now finds Cargo in common Windows/WSL layouts (`$HOME/.cargo/bin` and a login-Bash lookup) instead of relying only on non-login `PATH`, and the installed launcher template is tested against the repo launcher so the two cannot drift.
-
-### Added
-
-- `guard-check` evaluates shell text or direct argv without spawning it and returns a structured allow/deny explanation, making guard diagnostics safe to automate.
-
-### Changed
-
-- CLI v2 now exposes one canonical spelling per operation: `--fail-if-truncated`, `--term`, `--ext`, `--limit`, grep `--max-matches`/`--max-count-files`, `grep-terms --any`, positional single-file inputs, SQLite `--path`, `json-select --fields`, and `capture`. Superseded aliases and duplicate input forms are rejected.
+- Removed the parallel `codex-bash.sh` bridge and the retired `run` command. Windows uses the guarded native bridge; POSIX hosts execute project scripts directly.
 
 ## [0.6.0] - 2026-07-06
 

@@ -10,10 +10,10 @@ use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::files::{CollectOptions, collect_files, display_path};
 use crate::grep_scan::{FileScan, SampleLine, ScanLimits, scan_files_ordered};
-use crate::merged_paths;
 use crate::output::{
     base_receipt, clamp_text, emit_json_checked, no_match_scope, write_receipt_checked,
 };
+use crate::paths_or_current_dir;
 use crate::text::{TextMatcher, collect_single_text_source, parse_line_range};
 
 const SKIPPED_FILES_SAMPLE_LIMIT: usize = 5;
@@ -96,9 +96,11 @@ pub(crate) fn command_files(
         },
     )?;
     let files = collected.files;
-    let shown = min(files.len(), max);
-    let truncated = collected.truncated || shown < files.len();
-    let cap_reason = if collected.truncated {
+    let shown = if quiet { 0 } else { min(files.len(), max) };
+    let truncated = !quiet && (collected.truncated || shown < files.len());
+    let cap_reason = if quiet {
+        None
+    } else if collected.truncated {
         Some("scan")
     } else if shown < files.len() {
         Some("max")
@@ -114,7 +116,14 @@ pub(crate) fn command_files(
         truncated,
         cap_reason,
     );
-    map.insert("candidate_files_scanned".to_string(), json!(files.len()));
+    map.insert(
+        "candidate_files_scanned".to_string(),
+        json!(if quiet {
+            collected.total_seen
+        } else {
+            files.len()
+        }),
+    );
     // Enumeration always completes; the scan cap bounds the candidate list,
     // not the count, so the total is exact.
     map.insert(
@@ -122,8 +131,9 @@ pub(crate) fn command_files(
         json!(false),
     );
     nested_repos_receipt_fields(&mut map, &collected.nested_repos_entered);
-    // --quiet suppresses only the file list; every receipt field (totals,
-    // caps, truncation, nested-repo disclosure) stays intact.
+    // --quiet suppresses the file list while retaining the exact total and
+    // nested-repo disclosure. With no list to cap, display truncation does not
+    // apply and the completed enumeration remains complete.
     if quiet {
         map.insert("quiet".to_string(), json!(true));
     }
@@ -153,7 +163,7 @@ pub(crate) fn command_files(
             }
         }
         write_nested_repos_note(&mut stdout, &collected.nested_repos_entered)?;
-        if collected.truncated {
+        if collected.truncated && !quiet {
             writeln!(
                 stdout,
                 "[contextmink] capped file scan at {max_scan_files} files; narrow the path or glob before treating this as complete."
@@ -330,7 +340,6 @@ pub(crate) fn command_grep(
     cli: &Cli,
     config: &ContextConfig,
     args: &[String],
-    named_paths: &[PathBuf],
     pattern_arg: Option<&str>,
     pattern_file: Option<&Path>,
     literal: bool,
@@ -344,7 +353,7 @@ pub(crate) fn command_grep(
     caps: &GrepCaps,
 ) -> Result<()> {
     let (pattern, effective_paths) = if pattern_arg.is_some() || pattern_file.is_some() {
-        (None, merged_paths(&string_args_to_paths(args), named_paths))
+        (None, paths_or_current_dir(&string_args_to_paths(args)))
     } else {
         let Some((pattern, paths)) = args.split_first() else {
             return Err(anyhow!(
@@ -353,7 +362,7 @@ pub(crate) fn command_grep(
         };
         (
             Some(pattern.as_str()),
-            merged_paths(&string_args_to_paths(paths), named_paths),
+            paths_or_current_dir(&string_args_to_paths(paths)),
         )
     };
     let pattern =

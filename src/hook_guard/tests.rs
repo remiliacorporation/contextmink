@@ -92,7 +92,7 @@ fn benign_commands_are_allowed() {
     assert_allowed("cargo test --workspace");
     assert_allowed("rm -f scratch_probe.rs");
     // Reads and backups of protected artifacts must never be blocked.
-    assert_allowed("contextmink sqlite --path .state-cache/index.sqlite --sql-file q.sql");
+    assert_allowed("contextmink sqlite .state-cache/index.sqlite --sql-file q.sql");
     assert_allowed("cp .state-cache/index.sqlite /e/backups/index.sqlite");
 }
 

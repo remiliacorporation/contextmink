@@ -32,12 +32,6 @@ pub(crate) enum Command {
         #[arg(value_name = "PATH", help = "Files or directories to enumerate")]
         paths: Vec<PathBuf>,
         #[arg(
-            long = "path",
-            value_name = "PATH",
-            help = "Additional file or directory to enumerate"
-        )]
-        path: Vec<PathBuf>,
-        #[arg(
             long = "glob",
             help = "Only include paths matching this glob or basename"
         )]
@@ -94,12 +88,6 @@ pub(crate) enum Command {
         #[arg(value_name = "PATH", help = "Directories to summarize")]
         paths: Vec<PathBuf>,
         #[arg(
-            long = "path",
-            value_name = "PATH",
-            help = "Additional directory to summarize"
-        )]
-        path: Vec<PathBuf>,
-        #[arg(
             long,
             default_value_t = 2,
             help = "Directory levels below each root to report"
@@ -145,12 +133,6 @@ pub(crate) enum Command {
             help = "PATTERN followed by optional PATHs, or only PATHs with --pattern-file"
         )]
         args: Vec<String>,
-        #[arg(
-            long = "path",
-            value_name = "PATH",
-            help = "Additional file or directory to search"
-        )]
-        path: Vec<PathBuf>,
         #[arg(
             long = "pattern",
             value_name = "PATTERN",
@@ -287,12 +269,6 @@ pub(crate) enum Command {
         context: usize,
         #[arg(value_name = "PATH", help = "Files or directories to search")]
         paths: Vec<PathBuf>,
-        #[arg(
-            long = "path",
-            value_name = "PATH",
-            help = "Additional file or directory to search"
-        )]
-        path: Vec<PathBuf>,
         #[arg(
             long = "with-excluded",
             help = "Include files matched by contextmink exclude globs. Does not disable Git ignore rules; explicit paths inside excluded trees do not need this."
@@ -512,7 +488,7 @@ pub(crate) enum Command {
     },
     /// Run a read-only SQLite query with bounded row output.
     Sqlite {
-        #[arg(long = "path", value_name = "DB", help = "SQLite database file")]
+        #[arg(value_name = "DB", help = "SQLite database file")]
         path: PathBuf,
         #[arg(long, help = "Read-only SQL query to run")]
         sql: Option<String>,
@@ -564,7 +540,7 @@ pub(crate) enum Command {
     /// Summarize SQLite tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
     SqliteSchema {
-        #[arg(long = "path", value_name = "DB", help = "SQLite database file")]
+        #[arg(value_name = "DB", help = "SQLite database file")]
         path: PathBuf,
         #[arg(
             long = "table",
@@ -625,7 +601,7 @@ pub(crate) enum Command {
         max_line_chars: usize,
         #[arg(
             long,
-            help = "Execute the first argv item as an explicit Bash script; direct mode also recognizes real shebang files deterministically"
+            help = "Execute the first argv item as an explicit Bash script; direct mode also recognizes shebang files by their leading #! line"
         )]
         script: bool,
         #[arg(

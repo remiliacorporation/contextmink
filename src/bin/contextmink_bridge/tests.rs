@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use super::process_boundary::{
     msys2_arg_conversion_exclusions, resolve_program, resolve_project_root, windows_bash_candidates,
 };
-use super::{assemble_argv, decode_base64, sed_window_span};
+use super::{
+    DUMP_WARN_LINES, assemble_argv, decode_base64, reader_exceeds_line_limit, sed_window_span,
+};
 
 fn encode_base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -155,7 +157,28 @@ fn pathlike_programs_resolve_against_cwd_and_bare_names_keep_path_lookup() {
     assert_eq!(resolve_program(r".\gradlew", cwd), "/ws/sub/gradlew");
 }
 
-/// Direct mode classifies a real shebang before spawn and enters Git Bash
+#[test]
+fn dump_warning_line_probe_is_bounded_and_handles_trailing_newlines() {
+    let exactly_at_limit = "line\n".repeat(DUMP_WARN_LINES);
+    assert!(!reader_exceeds_line_limit(
+        std::io::Cursor::new(exactly_at_limit),
+        DUMP_WARN_LINES
+    ));
+
+    let unterminated_line_after_limit = format!("{}tail", "line\n".repeat(DUMP_WARN_LINES));
+    assert!(reader_exceeds_line_limit(
+        std::io::Cursor::new(unterminated_line_after_limit),
+        DUMP_WARN_LINES
+    ));
+
+    let over_limit = "line\n".repeat(DUMP_WARN_LINES + 1);
+    assert!(reader_exceeds_line_limit(
+        std::io::Cursor::new(over_limit),
+        DUMP_WARN_LINES
+    ));
+}
+
+/// Direct mode classifies a shebang file before spawn and enters Git Bash
 /// without depending on a failed native CreateProcess call.
 #[cfg(windows)]
 #[test]

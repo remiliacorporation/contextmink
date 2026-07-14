@@ -856,6 +856,20 @@ fn files_scan_cap_sets_complete_false() {
 }
 
 #[test]
+fn files_deduplicates_overlapping_root_spellings() {
+    let root = fixture_root("files-overlapping-roots");
+    let absolute = root.to_string_lossy().into_owned();
+    let files = parse_json_output(
+        &root,
+        &["--json", "files", ".", absolute.as_str(), "--limit", "10"],
+    );
+
+    assert_eq!(files["total"], 3);
+    assert_eq!(files["shown"], 3);
+    assert_eq!(files["truncated"], false);
+}
+
+#[test]
 fn files_glob_matches_basename_inside_explicit_roots() {
     let root = fixture_root("files-basename-glob");
     fs::create_dir_all(root.join("queue")).unwrap();
@@ -968,12 +982,12 @@ fn files_ext_filters_without_shell_glob_patterns() {
 }
 
 #[test]
-fn files_accepts_named_path_without_default_root() {
-    let root = fixture_root("files-named-path");
+fn files_positional_path_overrides_default_root() {
+    let root = fixture_root("files-positional-path");
     fs::create_dir_all(root.join("queue")).unwrap();
     fs::write(root.join("queue").join("work.jsonl"), "{}\n").unwrap();
 
-    let files = parse_json_output(&root, &["--json", "files", "--path", "queue"]);
+    let files = parse_json_output(&root, &["--json", "files", "queue"]);
 
     assert_envelope(&files, "files", "files");
     assert_eq!(files["total"], 1);
@@ -1169,6 +1183,45 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             .iter()
             .all(|path| !path.as_str().unwrap().contains("/.git/"))
     );
+}
+
+#[test]
+fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
+    let root = fixture_root("parallel-nested-repo-probe");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join(".gitignore"), "group/\nignored/*\n").unwrap();
+    for index in 0..96 {
+        let dir = root.join("src").join(format!("dir-{index:03}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("item.txt"), "candidate\n").unwrap();
+    }
+    for repo in [root.join("group/a-repo"), root.join("ignored/z-repo")] {
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::write(repo.join("README.md"), "nested repository\n").unwrap();
+    }
+
+    let expected = ["group/a-repo", "ignored/z-repo"];
+    for _ in 0..4 {
+        let receipt = parse_json_output(
+            &root,
+            &[
+                "--json",
+                "files",
+                ".",
+                "--limit",
+                "200",
+                "--max-scan-files",
+                "200",
+            ],
+        );
+        let nested = receipt["nested_repos_entered"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|path| path.as_str().unwrap().trim_start_matches("./"))
+            .collect::<Vec<_>>();
+        assert_eq!(nested, expected);
+    }
 }
 
 #[test]
@@ -1466,10 +1519,10 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
 }
 
 #[test]
-fn grep_accepts_named_search_paths() {
-    let root = fixture_root("grep-named-path");
+fn grep_accepts_positional_search_paths() {
+    let root = fixture_root("grep-positional-path");
 
-    let json = parse_json_output(&root, &["--json", "grep", "alpha", "--path", "sample.txt"]);
+    let json = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
     assert_envelope(&json, "grep", "files");
     assert_eq!(json["shown"], 1);
     assert_eq!(json["total_matches"], 2);
@@ -1651,7 +1704,6 @@ fn canonical_limits_cap_outputs() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
@@ -1670,7 +1722,6 @@ fn canonical_limits_cap_outputs() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
@@ -1689,7 +1740,6 @@ fn canonical_limits_cap_outputs() {
         &[
             "--require-complete-scan",
             "sqlite",
-            "--path",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
@@ -1729,7 +1779,6 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql-file",
             "query.sql",
@@ -1797,7 +1846,6 @@ fn sqlite_binds_json_and_jsonl_file_params() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql-file",
             "query.sql",
@@ -1831,7 +1879,6 @@ fn sqlite_file_params_fail_fast_on_unbound_sql_parameters() {
         &root,
         &[
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql",
             "SELECT :queue, :missing",
@@ -1866,7 +1913,6 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         &[
             "--json",
             "sqlite-schema",
-            "--path",
             "schema.sqlite",
             "--table",
             "child",
@@ -1899,7 +1945,6 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         &[
             "--json",
             "sqlite-schema",
-            "--path",
             "schema.sqlite",
             "--max-tables",
             "1",
@@ -2274,7 +2319,6 @@ fn sqlite_timeout_interrupts_runaway_queries() {
         &root,
         &[
             "sqlite",
-            "--path",
             "tiny.sqlite",
             "--timeout-secs",
             "1",
@@ -2295,7 +2339,6 @@ fn sqlite_timeout_interrupts_runaway_queries() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "tiny.sqlite",
             "--timeout-secs",
             "1",
@@ -2462,7 +2505,6 @@ fn sqlite_hexint_joins_hex_address_strings_against_integer_columns() {
         &[
             "--json",
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql",
             "SELECT t.name FROM json_each(:w) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr') ORDER BY t.addr",
@@ -2489,7 +2531,6 @@ fn sqlite_hexint_fails_fast_on_unparseable_text() {
         &root,
         &[
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql",
             "SELECT hexint('bad_004f71a0')",
@@ -2516,7 +2557,6 @@ fn sqlite_jsonl_param_rejects_single_top_level_array() {
         &root,
         &[
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql",
             "SELECT count(*) FROM json_each(:w)",
@@ -2543,7 +2583,6 @@ fn sqlite_json_param_teaches_jsonl_misuse() {
         &root,
         &[
             "sqlite",
-            "--path",
             "sample.sqlite",
             "--sql",
             "SELECT count(*) FROM json_each(:w)",
@@ -2564,7 +2603,7 @@ fn files_ext_accepts_comma_separated_lists() {
     fs::write(root.join("b.toml"), "[package]\n").unwrap();
     fs::write(root.join("c.md"), "# doc\n").unwrap();
 
-    let json = parse_json_output(&root, &["--json", "files", "--path", ".", "--ext", "rs,md"]);
+    let json = parse_json_output(&root, &["--json", "files", ".", "--ext", "rs,md"]);
     assert_envelope(&json, "files", "files");
     assert_eq!(json["total"], 2);
     assert_eq!(json["truncated"], false);
@@ -2578,14 +2617,30 @@ fn files_quiet_suppresses_list_but_keeps_receipt() {
 
     let json = parse_json_output(
         &root,
-        &["--json", "files", "--path", ".", "--ext", "rs", "--quiet"],
+        &[
+            "--json",
+            "files",
+            ".",
+            "--ext",
+            "rs",
+            "--quiet",
+            "--limit",
+            "1",
+            "--max-scan-files",
+            "1",
+        ],
     );
     assert_envelope(&json, "files", "files");
     assert_eq!(json["quiet"], true);
     assert_eq!(json["total"], 2);
+    assert_eq!(json["shown"], 0);
+    assert_eq!(json["truncated"], false);
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["cap_reason"], Value::Null);
+    assert_eq!(json["candidate_files_scanned"], 2);
     assert!(json.get("files").is_none());
 
-    let text = run_contextmink(&root, &["files", "--path", ".", "--ext", "rs", "--quiet"]);
+    let text = run_contextmink(&root, &["files", ".", "--ext", "rs", "--quiet"]);
     assert!(!text.contains("a.rs"));
     assert!(text.contains("CONTEXTMINK_RECEIPT"));
 }
@@ -2701,7 +2756,6 @@ fn sqlite_schema_elides_table_detail_atomically() {
         &[
             "--json",
             "sqlite-schema",
-            "--path",
             "sample.sqlite",
             "--max-columns",
             "3",
@@ -2727,10 +2781,7 @@ fn grep_receipts_split_skipped_large_and_binary() {
     fs::write(root.join("binary.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
     fs::write(root.join("plain.txt"), "needle\n").unwrap();
 
-    let json = parse_json_output(
-        &root,
-        &["--json", "grep", "needle", "--path", ".", "--quiet"],
-    );
+    let json = parse_json_output(&root, &["--json", "grep", "needle", ".", "--quiet"]);
     assert_eq!(json["skipped_binary"], 1);
     assert_eq!(json["skipped_large"], 0);
     assert_eq!(json["skipped_large_or_binary"], 1);

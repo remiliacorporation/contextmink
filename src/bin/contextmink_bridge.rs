@@ -16,10 +16,11 @@
 //! spelled as a path (`./gradlew`) resolves against `--cwd` like a POSIX
 //! exec; bare names use PATH. `--script` and `--login` locate Git Bash
 //! themselves (no hardcoded path needed on the agent side). Direct mode
-//! recognizes real shebang files before spawn; non-native files without a
-//! shebang require explicit `--script`.
+//! recognizes shebang files by their leading `#!` line before spawn; a file
+//! that is neither an executable nor a shebang script requires explicit
+//! `--script`.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -40,7 +41,7 @@ const EXIT_NO_BASH: i32 = 127;
 /// Threshold tracks the contextmink slice window guidance in repository
 /// bounded-output instructions.
 const DUMP_WARN_LINES: usize = 150;
-const SUPPRESS_ENV: &str = "CODEX_BASH_SUPPRESS_DUMP_WARNING";
+const SUPPRESS_ENV: &str = "CONTEXTMINK_BRIDGE_SUPPRESS_DUMP_WARNING";
 
 fn usage() -> String {
     "Usage:\n\
@@ -71,7 +72,7 @@ fn usage() -> String {
      \n\
      Direct argv modes spawn natively (no MSYS argument rewriting). A program\n\
      spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
-     names use PATH; real shebang scripts enter Git Bash deterministically.\n\
+     names use PATH; shebang scripts enter Git Bash deterministically.\n\
      Use --script for an intentional Bash script without a shebang.\n\
      \n\
      Destructive-command deny-list: argv matching `git clean` is refused\n\
@@ -443,13 +444,15 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
                 } else {
                     target_cwd.join(path)
                 };
-                let Ok(text) = std::fs::read_to_string(&path) else {
+                if !path.metadata().is_ok_and(|metadata| metadata.is_file()) {
+                    continue;
+                }
+                let Ok(file) = std::fs::File::open(&path) else {
                     continue;
                 };
-                let lines = text.lines().count();
-                if lines > DUMP_WARN_LINES {
+                if reader_exceeds_line_limit(std::io::BufReader::new(file), DUMP_WARN_LINES) {
                     eprintln!(
-                        "contextmink-bridge: {program} on {arg} ({lines} lines) is a transcript dump; prefer contextmink outline/slice ({SUPPRESS_ENV}=1 silences)"
+                        "contextmink-bridge: {program} on {arg} (more than {DUMP_WARN_LINES} lines) is a transcript dump; prefer contextmink outline/slice ({SUPPRESS_ENV}=1 silences)"
                     );
                 }
             }
@@ -479,6 +482,30 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
             }
         }
         _ => {}
+    }
+}
+
+fn reader_exceeds_line_limit(mut reader: impl BufRead, max_lines: usize) -> bool {
+    let mut newline_count = 0usize;
+    loop {
+        let Ok(buffer) = reader.fill_buf() else {
+            return false;
+        };
+        if buffer.is_empty() {
+            return false;
+        }
+        let consumed = buffer.len();
+        for byte in buffer {
+            if *byte == b'\n' {
+                newline_count += 1;
+                if newline_count > max_lines {
+                    return true;
+                }
+            } else if newline_count == max_lines {
+                return true;
+            }
+        }
+        reader.consume(consumed);
     }
 }
 

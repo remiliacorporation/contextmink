@@ -16,15 +16,15 @@ Download the archive for your platform from
 unpack it, and put `contextmink` on `PATH` or run it in place:
 
 ```bash
-contextmink files --path . --limit 20
+contextmink files . --limit 20
 ```
 
 Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
 SQLite bundled. The binary runs directly from PowerShell, cmd, WSL, or any
 POSIX shell.
 
-To build from source instead: `cargo build --release` (stable Rust, edition
-2024).
+To build from source instead: `cargo build --release` (Rust 1.92 or newer,
+edition 2024).
 
 ## Add to a project
 
@@ -45,13 +45,16 @@ Copy from the unpacked archive into the target repository:
    `/tools/contextmink/bin/contextmink*` to the target repository's
    `.gitignore`. Tracking binaries is an explicit hermetic-install choice, not
    the portable default.
+   An ignored binary is a per-workstation dependency: fresh clones must repeat
+   the release install. Vendor the source checkout or use a reviewed
+   multi-platform package policy when clone-ready installation is required.
 6. Verify with the invocation for the active shell:
 
    | Active shell | Command |
    | --- | --- |
-   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink files --path . --limit 20` |
-   | Windows PowerShell, direct contextmink command | `tools\contextmink\bin\contextmink.exe files --path . --limit 20` |
-   | Windows PowerShell, Bash launcher path | `tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files --path . --limit 20` |
+   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink files . --limit 20` |
+   | Windows PowerShell, direct contextmink command | `& tools\contextmink\bin\contextmink.exe files . --limit 20` |
+   | Windows PowerShell, Bash launcher path | `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files . --limit 20` |
 
 Variants (standalone binary, vendored source, delegated setup) and the
 Windows bridge are covered in [docs/setup.md](docs/setup.md).
@@ -65,6 +68,8 @@ below is the short map.
   deep. Orientation before `files` or `grep`.
 - `files` — list candidate files. `--glob`, `--term`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
+  `--quiet` suppresses the list and reports the exact candidate count without
+  treating display limits as truncation.
 - `grep` — bounded match summary for a regex or `--literal` pattern. Use
   `--pattern PATTERN` when every positional argument should be a path, and
   `--pattern-file` for shell-fragile regex. `--glob`/`--ext` narrow, `-i`,
@@ -95,19 +100,20 @@ below is the short map.
   row keys with presence counts and value types for one-call shape
   discovery; `*.jsonl` streams without loading; fields null in every
   scanned row are flagged in `all_null_fields`.
-- `sqlite` — read-only query against required `--path DB` from `--sql` or `--sql-file` with row caps,
+- `sqlite` — read-only query against the positional DB file from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
   strings to INTEGER for indexed joins against integer address columns),
   and a `--timeout-secs` watchdog (default 60).
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
-  required `--path DB`.
-- `capture` — execute argv and print capped stdout/stderr with
-  the exit status. Truncation keeps both head and tail, since verdicts sit at
+  positional DB argument.
+- `capture` — execute argv and print stdout/stderr within one combined line
+  budget and a per-stream byte budget, with the exit status. Truncation keeps
+  both head and tail, since verdicts sit at
   the end of tool output. Terminating `capture` also reaps the command and its
   ordinary descendants: Windows uses a kill-on-close Job Object, while Linux
   and macOS use a dedicated process group plus an independent parent-death
-  watchdog. Direct mode recognizes real shebang files before spawn; use
+  watchdog. Direct mode recognizes files whose first line begins `#!`; use
   `capture --script -- <path> ...` for an intentional Bash script without a
   shebang. Receipts disclose the deterministic `execution_mode` and effective
   argv. Captured commands must not deliberately escape containment by
@@ -132,9 +138,9 @@ bounds.
 
 ```bash
 scripts/contextmink dirs crates --depth 2 --limit 40
-scripts/contextmink files --path specs --ext json --limit 20
-scripts/contextmink files --path crates --term render --term tests --limit 20
-scripts/contextmink files --path vendor --with-git-ignored --limit 20
+scripts/contextmink files specs --ext json --limit 20
+scripts/contextmink files crates --term render --term tests --limit 20
+scripts/contextmink files vendor --with-git-ignored --limit 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
@@ -146,10 +152,10 @@ scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-select queue.jsonl --fields addr --where-contains name=Cache --limit 10
 scripts/contextmink json-select capture_sidecar.json --array entries --keys
-scripts/contextmink sqlite --path state.sqlite --sql-file query.sql --limit 20
-scripts/contextmink sqlite --path state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
+scripts/contextmink sqlite state.sqlite --sql-file query.sql --limit 20
+scripts/contextmink sqlite state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
-scripts/contextmink sqlite-schema --path state.sqlite --name-contains user --max-tables 8
+scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
 scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
 scripts/contextmink hook-snippet
 ```
@@ -229,8 +235,9 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   roots, apply that repository's own ignore rules, and disclose each entry in
   `nested_repos_entered`. Multi-repo workspaces would otherwise report
   complete scans that silently skipped sibling repos. `--skip-nested-repos`
-  restores strict Git scope; repos nested below an ignored plain directory
-  are not auto-detected and need explicit roots.
+  restores strict Git scope and avoids the supplementary probe; repos nested
+  below an ignored plain directory are not auto-detected and need explicit
+  roots.
 - Outline is navigational, not a compiler-grade parser. Most languages use
   line-shape heuristics; XML uses a lightweight element-stack parse. False
   positives are possible and indentation conveys nesting.
@@ -246,8 +253,8 @@ repositories whose scripts are Bash-first while the agent runs in PowerShell:
   exotic shell explicitly), spawns direct commands without MSYS argument
   rewriting, and takes argv as `--argv-b64` or `--argfile` so PowerShell 5.1
   quoting cannot corrupt arguments. In direct mode a program spelled as a
-  path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Real shebang
-  scripts are classified before spawn and enter Git Bash deterministically;
+  path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Files whose
+  first line begins `#!` enter Git Bash deterministically;
   `--script <path>` explicitly selects a Bash script and resolves it from the
   bridge root. Every bridge-owned Git
   Bash boundary hex-relays startup argv before decoding it and installs scoped
@@ -295,20 +302,21 @@ Excludes quiet broad scans only: pass an explicit file or subdirectory when an
 excluded tree is the target, or `--with-excluded` to lift the globs for one
 command. Git ignore rules are separate; `--with-git-ignored` lifts those.
 Configured destructive guard fragments are literal case-insensitive substrings
-matched against argv before `capture` or `contextmink-bridge` spawn a
-child process.
+matched by `contextmink-bridge`, `capture`, and `hook-guard` before a child
+process or agent shell command is allowed to run.
 
 ## Development
 
 Do not launch contextmink's own replacement release build through a running
 `contextmink-bridge`. Let active bridge commands finish, then run
-`scripts/contextmink` or `cargo build --release --manifest-path tools/contextmink/Cargo.toml`
-directly. This keeps the normal workspace path simple and avoids Windows executable-lock
-contention without adding self-update machinery.
+`cargo build --release` from a standalone checkout, `scripts/contextmink` from
+a parent repository, or `cargo build --release --manifest-path
+tools/contextmink/Cargo.toml` from that parent repository. This avoids Windows
+executable-lock contention without adding self-update machinery.
 
 Native CI remains authoritative and runs formatting, tests, Clippy, and package
-checks on Windows, Linux, and macOS. For an optional local cross-link smoke test
-from another host, install Zig plus `cargo-zigbuild` and run
+checks on Windows, Linux, and macOS. Source checkouts also provide an optional
+cross-link smoke test: install Zig plus `cargo-zigbuild` and run
 `scripts/cross_check.sh`. Zig is not a normal build dependency and the
 repository does not retain host-specific compiler wrappers.
 

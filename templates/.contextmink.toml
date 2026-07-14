@@ -1,13 +1,9 @@
-profile = "repo-name"
+profile = "replace-with-workspace-name"
 
-exclude_globs = [
-  "target/**",
-  "**/target/**",
-  "node_modules/**",
-  "**/node_modules/**",
-  ".venv/**",
-  "**/.venv/**",
-]
+# Built-in policy already excludes .git, target, node_modules, and .venv trees.
+# Add only project-specific high-output paths such as generated assets, exports,
+# caches, large data trees, or vendored reference corpora.
+exclude_globs = []
 
 # Optional spawn safety for repository-owned critical paths:
 # destructive_guard_recursive_delete_fragments = ["protected_cache"]

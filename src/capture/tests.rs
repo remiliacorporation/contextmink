@@ -17,6 +17,28 @@ fn byte_truncated_single_line_keeps_head_and_tail_fragments_visible() {
     assert!(rendered.display_text.contains(r#"{"rows":["#));
     assert!(rendered.display_text.contains("[contextmink] ... omitted"));
     assert!(rendered.display_text.contains(r#""tail"]}"#));
+    assert_eq!(rendered.shown_lines, 1);
+    assert_eq!(rendered.total_lines, 1);
+}
+
+#[test]
+fn byte_budget_is_the_total_retained_per_stream() {
+    let raw = read_captured_stream(std::io::Cursor::new(vec![b'x'; 100]), 10).unwrap();
+
+    assert_eq!(raw.total_bytes, 100);
+    assert!(raw.head.len() + raw.tail.len() <= 10);
+    let rendered = render_captured_stream(raw, 8, 120);
+    assert_eq!(rendered.captured_bytes, 10);
+    assert_eq!(rendered.shown_lines, 1);
+    assert_eq!(rendered.total_lines, 1);
+}
+
+#[test]
+fn line_budget_is_shared_across_stdout_and_stderr() {
+    assert_eq!(capture_line_budgets(5, 10, 10), (2, 3));
+    assert_eq!(capture_line_budgets(5, 1, 10), (1, 4));
+    assert_eq!(capture_line_budgets(5, 10, 0), (5, 0));
+    assert_eq!(capture_line_budgets(1, 10, 10), (0, 1));
 }
 
 #[cfg(windows)]
