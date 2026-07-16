@@ -20,6 +20,7 @@ mod process_boundary;
 mod sqlite;
 mod text;
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
@@ -31,7 +32,9 @@ use commands::{
     GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
 };
 use config::load_context_config;
+use config::project_setup::{SetupActionKind, SetupProjectRequest, setup_project};
 use destructive_guard::{DenyDecision, ShellDialect, evaluate_argv};
+use files::display_path;
 use hook_guard::command_hook_guard;
 use hook_snippet::command_hook_snippet;
 use json_tools::{command_json_find, command_json_select};
@@ -42,6 +45,66 @@ use text::{TermMode, TextMatcher, collect_terms};
 fn main() -> Result<()> {
     output::mark_command_start();
     let cli = Cli::parse();
+    if let Command::SetupProject {
+        project_root,
+        dry_run,
+        replace_managed,
+    } = &cli.command
+    {
+        if cli.config.is_some()
+            || cli.no_config
+            || cli.fail_if_truncated
+            || cli.require_complete_scope
+        {
+            return Err(anyhow!(
+                "setup-project accepts only its own flags plus --json; receipt strictness and configuration-selection flags do not apply to installation"
+            ));
+        }
+        let result = setup_project(SetupProjectRequest {
+            project_root,
+            source_binary: None,
+            dry_run: *dry_run,
+            replace_managed: *replace_managed,
+        })?;
+        let mut stdout = io::stdout();
+        if cli.json {
+            serde_json::to_writer(&mut stdout, &result)?;
+            writeln!(stdout)?;
+        } else {
+            writeln!(
+                stdout,
+                "[contextmink] setup-project root={} profile={} dry_run={}",
+                result.project_root, result.profile, result.dry_run
+            )?;
+            for action in &result.actions {
+                let verb = match action.action {
+                    SetupActionKind::Create => "create",
+                    SetupActionKind::Replace => "replace",
+                    SetupActionKind::Unchanged => "unchanged",
+                    SetupActionKind::MakeExecutable => "make_executable",
+                    SetupActionKind::UpdateGitignore => "update_gitignore",
+                };
+                writeln!(stdout, "{verb}\t{}", display_path(&action.path))?;
+            }
+            if !result.agent_guidance_files_found.is_empty() {
+                writeln!(
+                    stdout,
+                    "agent_guidance_files_found={}",
+                    result
+                        .agent_guidance_files_found
+                        .iter()
+                        .map(|path| display_path(path))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )?;
+            }
+            writeln!(stdout, "next_actions:")?;
+            for action in &result.next_actions {
+                writeln!(stdout, "- {action}")?;
+            }
+        }
+        return Ok(());
+    }
     let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
         Ok(config) => config,
         Err(error) if matches!(cli.command, Command::HookGuard { .. }) && cli.config.is_some() => {
@@ -53,6 +116,7 @@ fn main() -> Result<()> {
         Err(error) => return Err(error),
     };
     match &cli.command {
+        Command::SetupProject { .. } => unreachable!("setup-project returns before config loading"),
         Command::Files {
             paths,
             globs,
@@ -64,7 +128,6 @@ fn main() -> Result<()> {
             quiet,
             limit,
             max_line_chars,
-            max_scan_files,
         } => command_files(
             &cli,
             &config,
@@ -78,7 +141,7 @@ fn main() -> Result<()> {
             *quiet,
             *limit,
             *max_line_chars,
-            *max_scan_files,
+            (*limit).max(1),
         ),
         Command::Dirs {
             paths,
@@ -88,7 +151,7 @@ fn main() -> Result<()> {
             skip_nested_repos,
             limit,
             max_line_chars,
-            max_scan_files,
+            max_files_counted,
         } => command_dirs(
             &cli,
             &config,
@@ -99,7 +162,7 @@ fn main() -> Result<()> {
             *skip_nested_repos,
             *limit,
             *max_line_chars,
-            *max_scan_files,
+            *max_files_counted,
         ),
         Command::Grep {
             args,
@@ -113,14 +176,15 @@ fn main() -> Result<()> {
             with_git_ignored,
             skip_nested_repos,
             quiet,
-            max_count_files,
+            max_matching_files,
             limit,
             lines_per_file,
             context,
-            max_matches,
+            max_sample_lines,
             max_line_chars,
-            max_scan_files,
+            max_content_files,
             max_file_bytes,
+            max_content_bytes,
         } => command_grep(
             &cli,
             &config,
@@ -136,14 +200,15 @@ fn main() -> Result<()> {
             *skip_nested_repos,
             *quiet,
             &GrepCaps {
-                max_count_files: *max_count_files,
+                max_matching_files: *max_matching_files,
                 max_files: *limit,
                 lines_per_file: *lines_per_file,
                 context: *context,
-                max_sample_lines: *max_matches,
+                max_sample_lines: *max_sample_lines,
                 max_line_chars: *max_line_chars,
-                max_scan_files: *max_scan_files,
+                max_content_files: *max_content_files,
                 max_file_bytes: *max_file_bytes,
+                max_content_bytes: *max_content_bytes,
             },
         ),
         Command::GrepTerms {
@@ -158,14 +223,15 @@ fn main() -> Result<()> {
             with_git_ignored,
             skip_nested_repos,
             quiet,
-            max_count_files,
+            max_matching_files,
             limit,
             lines_per_file,
             context,
-            max_matches,
+            max_sample_lines,
             max_line_chars,
-            max_scan_files,
+            max_content_files,
             max_file_bytes,
+            max_content_bytes,
         } => {
             let terms = collect_terms(terms, term_files)?;
             let mode = if *any { TermMode::Any } else { TermMode::All };
@@ -182,14 +248,15 @@ fn main() -> Result<()> {
                 *skip_nested_repos,
                 *quiet,
                 &GrepCaps {
-                    max_count_files: *max_count_files,
+                    max_matching_files: *max_matching_files,
                     max_files: *limit,
                     lines_per_file: *lines_per_file,
                     context: *context,
-                    max_sample_lines: *max_matches,
+                    max_sample_lines: *max_sample_lines,
                     max_line_chars: *max_line_chars,
-                    max_scan_files: *max_scan_files,
+                    max_content_files: *max_content_files,
                     max_file_bytes: *max_file_bytes,
+                    max_content_bytes: *max_content_bytes,
                 },
             )
         }
@@ -289,7 +356,7 @@ fn main() -> Result<()> {
             jsonl_params,
             max_param_bytes,
             limit,
-            max_scan_rows,
+            max_rows_scanned,
             timeout_secs,
             max_value_chars,
         } => command_sqlite(
@@ -302,7 +369,7 @@ fn main() -> Result<()> {
             jsonl_params,
             *max_param_bytes,
             *limit,
-            *max_scan_rows,
+            *max_rows_scanned,
             *timeout_secs,
             *max_value_chars,
         ),
@@ -334,7 +401,6 @@ fn main() -> Result<()> {
             max_bytes,
             max_line_chars,
             script,
-            fail_with_child,
             expect_exit,
             receipt_out,
             argv,
@@ -345,7 +411,6 @@ fn main() -> Result<()> {
             *max_bytes,
             *max_line_chars,
             *script,
-            *fail_with_child,
             expect_exit,
             receipt_out.as_ref(),
             argv,

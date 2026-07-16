@@ -47,6 +47,11 @@ fn public_guidance_uses_current_cli_forms() {
         "sqlite --path",
         "sqlite-schema --path",
         "files --max ",
+        "--require-complete-scan",
+        "--max-scan-files",
+        "--max-count-files",
+        "--max-matches",
+        "--max-scan-rows",
     ];
 
     for (name, contents) in surfaces {
@@ -77,9 +82,23 @@ fn release_workflow_verifies_extracted_project_integration() {
     for required in [
         "tar -xzf",
         "Expand-Archive",
+        "verify-source",
+        "refs/heads/master",
+        "cargo test --locked --all-targets --all-features",
+        "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+        "CARGO_TARGET_DIR: target/package-check",
+        "cargo +1.92.0 check --locked",
+        "needs: [verify-source, build]",
         "integration-project",
+        "--json setup-project",
+        "contextmink.project_setup.v1",
+        "contextmink.receipt.v2",
+        "agent_integration.md",
         "scripts/contextmink --json guard-check",
         "scripts/contextmink --json hook-snippet",
+        "child_exit_code",
+        "child_exit_zero",
+        "exit_expected",
         "\"decision\"[[:space:]]*:[[:space:]]*\"deny\"",
         "guardSmoke.decision",
         "--print-argv --argv-b64",
@@ -90,6 +109,9 @@ fn release_workflow_verifies_extracted_project_integration() {
             "release workflow is missing integration proof {required:?}"
         );
     }
+    assert!(!workflow.contains("\"success\"[[:space:]]*:[[:space:]]*true"));
+    assert!(!workflow.contains("$captureSmoke.exit_code"));
+    assert!(!workflow.contains("$captureSmoke.success"));
 }
 
 #[test]
@@ -119,10 +141,9 @@ fn launcher_finds_cargo_outside_non_login_path() {
 fn launcher_declares_json_pointer_filter_exclusions() {
     let launcher = include_str!("../templates/scripts/contextmink");
 
-    assert!(launcher.contains("--array | --fields | --where | --where-contains | --path-contains"));
-    assert!(launcher.contains(
-        "--array=/* | --fields=/* | --where=/* | --where-contains=/* | --path-contains=/*"
-    ));
+    assert!(launcher.contains("--array | --fields)"));
+    assert!(launcher.contains("--where | --where-contains | --key-contains"));
+    assert!(launcher.contains("--where=*/* | --where-contains=*/* | --key-contains=*/*"));
 }
 
 #[cfg(windows)]
@@ -190,9 +211,12 @@ fn launcher_preserves_json_pointer_filter_values() {
         vec!["--where-contains=/mode=x"],
     ] {
         let mut args = vec!["--json", "json-select", rows.as_str(), "--fields", "/mode"];
-        args.extend(predicate);
+        args.extend(predicate.iter().copied());
         let json = parse_success(run(&launcher, &root, &args));
-        assert_eq!(json["total"], 1, "JSON-pointer predicate was rewritten");
+        assert_eq!(
+            json["result"]["total"], 1,
+            "JSON-pointer predicate was rewritten: {predicate:?}"
+        );
         assert_eq!(json["rows"][0]["fields"]["/mode"], "\"x\"");
     }
 

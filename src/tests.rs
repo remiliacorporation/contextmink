@@ -31,11 +31,12 @@ fn grep_accepts_named_pattern_and_positional_paths() {
 }
 
 #[test]
-fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
+fn cli_rejects_removed_forms_and_duplicate_inputs() {
     let rejected = vec![
         vec!["contextmink", "--fail-on-truncated", "files"],
         vec!["contextmink", "--fail-on-truncate", "files"],
         vec!["contextmink", "--strict-complete", "files"],
+        vec!["contextmink", "--require-complete-scan", "files"],
         vec!["contextmink", "files", "--name-contains", "src"],
         vec!["contextmink", "files", "--extension", "rs"],
         vec!["contextmink", "files", "--max", "1"],
@@ -50,10 +51,21 @@ fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
             ".",
         ],
         vec!["contextmink", "grep", "--max-files", "1", "needle", "."],
+        vec!["contextmink", "files", "--max-scan-files", "1"],
+        vec!["contextmink", "dirs", "--max-scan-files", "1"],
+        vec!["contextmink", "grep", "--max-matches", "1", "needle", "."],
         vec![
             "contextmink",
             "grep",
-            "--max-sample-lines",
+            "--max-count-files",
+            "1",
+            "needle",
+            ".",
+        ],
+        vec![
+            "contextmink",
+            "grep",
+            "--max-scan-files",
             "1",
             "needle",
             ".",
@@ -125,6 +137,15 @@ fn cli_v2_rejects_removed_aliases_and_duplicate_input_forms() {
         vec!["contextmink", "dirs", "--path", "src"],
         vec!["contextmink", "grep", "needle", "--path", "src"],
         vec!["contextmink", "grep-terms", "--term", "x", "--path", "src"],
+        vec![
+            "contextmink",
+            "sqlite",
+            "sample.sqlite",
+            "--sql",
+            "SELECT 1",
+            "--max-scan-rows",
+            "1",
+        ],
         vec!["contextmink", "run", "--", "echo", "ok"],
     ];
 
@@ -148,9 +169,9 @@ fn cli_accepts_current_forms() {
         "rs",
         "--limit",
         "2",
-        "--max-matches",
+        "--max-sample-lines",
         "3",
-        "--max-count-files",
+        "--max-matching-files",
         "4",
         ".",
     ])

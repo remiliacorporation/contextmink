@@ -41,7 +41,8 @@ fn parses_single_line_array() {
 #[test]
 fn unknown_keys_fail_fast() {
     let error = parse_config("exclude_glob = [\"typo/**\"]\n").unwrap_err();
-    assert!(error.to_string().contains("unknown key `exclude_glob`"));
+    assert!(error.to_string().contains("unknown field `exclude_glob`"));
+    assert!(error.to_string().contains("accepted top-level keys"));
 }
 
 #[test]
@@ -63,11 +64,34 @@ fn duplicate_keys_fail_fast() {
 #[test]
 fn unterminated_array_fails_fast() {
     let error = parse_config("exclude_globs = [\n  \"a/**\",\nprofile = \"x\"\n").unwrap_err();
-    assert!(error.to_string().contains("never closed"));
+    assert!(error.to_string().contains("invalid array"));
 }
 
 #[test]
 fn comments_inside_strings_are_preserved() {
     let config = parse_config("profile = \"has#hash\"\n").unwrap();
     assert_eq!(config.profile.as_deref(), Some("has#hash"));
+}
+
+#[test]
+fn real_toml_escaping_is_supported() {
+    let config =
+        parse_config("profile = \"demo\\tworkspace\"\nexclude_globs = ['literal\\\\path/**']\n")
+            .unwrap();
+    assert_eq!(config.profile.as_deref(), Some("demo\tworkspace"));
+    assert_eq!(
+        config.exclude_globs.unwrap(),
+        vec!["literal\\\\path/**".to_owned()]
+    );
+}
+
+#[test]
+fn placeholder_and_empty_profiles_fail_fast() {
+    for text in [
+        "profile = \"replace-with-workspace-name\"\n",
+        "profile = \"   \"\n",
+    ] {
+        let error = parse_config(text).unwrap_err();
+        assert!(error.to_string().contains("profile"), "error: {error}");
+    }
 }

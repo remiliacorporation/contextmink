@@ -4,12 +4,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::files::display_path;
-use crate::output::{base_receipt, clamp_text, emit_json_checked, write_receipt_checked};
+use crate::output::{
+    Receipt, ReceiptCap, ReceiptResult, TextClamp, emit_json_checked, write_receipt_checked,
+};
 
 /// An outline maps declaration-shaped lines, not parsed syntax: each built-in
 /// language rule is a hand-written token classifier over one line (no regex
@@ -102,9 +104,19 @@ const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
         classify: LanguageRule::Line(ruby_declaration),
     },
     OutlineLanguage {
+        name: "php",
+        extensions: &["php", "phtml"],
+        classify: LanguageRule::Line(php_declaration),
+    },
+    OutlineLanguage {
+        name: "wgsl",
+        extensions: &["wgsl"],
+        classify: LanguageRule::Line(wgsl_declaration),
+    },
+    OutlineLanguage {
         name: "markdown",
         extensions: &["md", "markdown"],
-        classify: LanguageRule::Line(markdown_declaration),
+        classify: LanguageRule::Document(markdown_document_outline),
     },
     OutlineLanguage {
         name: "toml",
@@ -795,9 +807,233 @@ fn ruby_declaration(line: &str) -> bool {
     starts_any_keyword(line.trim_start(), &["def", "class", "module"])
 }
 
+const PHP_MODIFIERS: &[&str] = &[
+    "public",
+    "private",
+    "protected",
+    "static",
+    "final",
+    "abstract",
+    "readonly",
+];
+
+fn strip_php_keyword<'a>(rest: &'a str, keyword: &str) -> Option<&'a str> {
+    let prefix = rest.get(..keyword.len())?;
+    if !prefix.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let after = rest.get(keyword.len()..)?;
+    match after.chars().next() {
+        None => Some(after),
+        Some(ch) if !ident_char(ch) => Some(after),
+        Some(_) => None,
+    }
+}
+
+fn strip_php_keyword_ws<'a>(rest: &'a str, keyword: &str) -> Option<&'a str> {
+    let after = strip_php_keyword(rest, keyword)?;
+    let trimmed = after.trim_start();
+    (trimmed.len() < after.len()).then_some(trimmed)
+}
+
+fn strip_any_php_keyword_ws<'a>(rest: &'a str, keywords: &[&str]) -> Option<&'a str> {
+    keywords
+        .iter()
+        .find_map(|keyword| strip_php_keyword_ws(rest, keyword))
+}
+
+/// Strip one or more PHP 8 attribute groups (`#[Name(...)]`) while respecting
+/// nested array arguments and quoted brackets. An unterminated attribute is
+/// not a declaration prefix.
+fn strip_php_attributes(mut rest: &str) -> Option<&str> {
+    rest = rest.trim_start();
+    while let Some(after_open) = rest.strip_prefix("#[") {
+        let mut depth = 1usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = None;
+        for (index, ch) in after_open.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index + ch.len_utf8());
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = after_open.get(end?..)?.trim_start();
+    }
+    Some(rest)
+}
+
+fn php_named_declaration(rest: &str, keyword: &str) -> bool {
+    strip_php_keyword_ws(rest, keyword).is_some_and(|after| after.starts_with(ident_start))
+}
+
+fn php_declaration(line: &str) -> bool {
+    let Some(mut rest) = strip_php_attributes(line) else {
+        return false;
+    };
+    while let Some(after) = strip_any_php_keyword_ws(rest, PHP_MODIFIERS) {
+        rest = after;
+    }
+    if ["class", "interface", "trait"]
+        .iter()
+        .any(|keyword| php_named_declaration(rest, keyword))
+    {
+        return true;
+    }
+    if let Some(after) = strip_php_keyword_ws(rest, "namespace") {
+        return after.starts_with(ident_start) || after.starts_with('{');
+    }
+    // `enum` is contextual in PHP; require the case name so expression uses
+    // of the word stay out.
+    if let Some(after) = strip_php_keyword_ws(rest, "enum") {
+        return after.starts_with(ident_start);
+    }
+    // Named functions/methods only: anonymous closures (`function (` /
+    // `fn (`) are expression values, not structure. `&` marks by-reference
+    // returns (`function &next(`).
+    if let Some(after) = strip_php_keyword_ws(rest, "function") {
+        let after = after.strip_prefix('&').map_or(after, str::trim_start);
+        let name_len = ident_span(after, ident_start, ident_char);
+        return name_len > 0 && after[name_len..].trim_start().starts_with('(');
+    }
+    false
+}
+
+/// Remove WGSL attributes that share a line with the declaration they govern.
+/// Attribute arguments may nest parentheses; an unterminated attribute does
+/// not expose the following text as structure.
+fn strip_wgsl_attributes(mut rest: &str) -> Option<&str> {
+    rest = rest.trim_start();
+    while let Some(after_at) = rest.strip_prefix('@') {
+        let name_len = ident_span(after_at, ident_start, ident_char);
+        if name_len == 0 {
+            return None;
+        }
+        rest = after_at[name_len..].trim_start();
+        if let Some(after_open) = rest.strip_prefix('(') {
+            let mut depth = 1usize;
+            let mut end = None;
+            for (index, ch) in after_open.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(index + ch.len_utf8());
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = after_open.get(end?..)?;
+        }
+        rest = rest.trim_start();
+    }
+    Some(rest)
+}
+
+/// WGSL has no nested functions or types, so `fn`/`struct`/`alias` classify
+/// at any indentation; `const`/`override`/`var` also exist at function scope
+/// and only count at module scope (column 0), where `var` declares resource
+/// bindings (`var<uniform> blur:` / `var source_texture:`).
+fn wgsl_declaration(line: &str) -> bool {
+    let Some(rest) = strip_wgsl_attributes(line) else {
+        return false;
+    };
+    if ["fn", "struct", "alias"].iter().any(|keyword| {
+        strip_keyword_ws(rest, keyword).is_some_and(|after| after.starts_with(ident_start))
+    }) {
+        return true;
+    }
+    if line.starts_with(char::is_whitespace) {
+        return false;
+    }
+    if starts_any_keyword(rest, &["const", "override"]) {
+        return true;
+    }
+    let Some(after) = strip_keyword(rest, "var") else {
+        return false;
+    };
+    let after = after.trim_start();
+    after.starts_with('<') || after.starts_with(ident_start)
+}
+
 fn markdown_declaration(line: &str) -> bool {
-    let hashes = line.chars().take_while(|ch| *ch == '#').count();
-    (1..=6).contains(&hashes) && line[hashes..].starts_with(char::is_whitespace)
+    let Some(content) = markdown_indented_content(line) else {
+        return false;
+    };
+    let hashes = content.chars().take_while(|ch| *ch == '#').count();
+    (1..=6).contains(&hashes)
+        && (content.len() == hashes || content[hashes..].starts_with(char::is_whitespace))
+}
+
+fn markdown_indented_content(line: &str) -> Option<&str> {
+    let spaces = line
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == b' ')
+        .count();
+    (spaces <= 3).then(|| &line[spaces..])
+}
+
+fn markdown_fence(line: &str) -> Option<(char, usize, &str)> {
+    let content = markdown_indented_content(line)?;
+    let marker = content
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '`' | '~'))?;
+    let run = content.chars().take_while(|ch| *ch == marker).count();
+    (run >= 3).then(|| (marker, run, &content[run..]))
+}
+
+/// Heading outline with fence tracking: `#` lines inside ``` / ~~~ code
+/// fences are code comments, not document headings, and need cross-line
+/// context to exclude. A closing fence reuses the opening character with at
+/// least the opening run length.
+fn markdown_document_outline(text: &str) -> Vec<usize> {
+    let mut hits = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for (index, line) in text.lines().enumerate() {
+        if let Some((open, open_run)) = fence {
+            if let Some((marker, run, tail)) = markdown_fence(line)
+                && marker == open
+                && run >= open_run
+                && tail.trim_matches([' ', '\t']).is_empty()
+            {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some((marker, run, tail)) = markdown_fence(line)
+            && (marker == '~' || !tail.contains('`'))
+        {
+            fence = Some((marker, run));
+            continue;
+        }
+        if markdown_declaration(line) {
+            hits.push(index);
+        }
+    }
+    hits
 }
 
 fn toml_declaration(line: &str) -> bool {
@@ -1094,6 +1330,7 @@ fn shebang_language(first_line: &str) -> Option<&'static str> {
         "python" => Some("python"),
         "lua" | "luajit" => Some("lua"),
         "ruby" => Some("ruby"),
+        "php" => Some("php"),
         "node" | "nodejs" | "deno" | "bun" => Some("javascript"),
         _ => None,
     }
@@ -1229,47 +1466,49 @@ pub(crate) fn command_outline(
     let total = rows.len();
     let shown = min(total, max_items);
     let truncated = shown < total;
-    let cap_reason = if truncated { Some("max_items") } else { None };
-    let mut map = base_receipt(
+    let mut text_clamp = TextClamp::new(max_line_chars);
+    let rendered_rows = rows
+        .iter()
+        .take(shown)
+        .map(|(line, text)| (*line, text_clamp.clamp(text)))
+        .collect::<Vec<_>>();
+    let mut receipt = Receipt::new(
         "outline",
         config.profile.as_deref(),
-        "items",
-        shown,
-        total,
-        truncated,
-        cap_reason,
+        ReceiptResult::new("items", total, false, shown),
     );
-    map.insert("path".to_string(), json!(display_path(file)));
-    map.insert("language".to_string(), json!(language));
-    map.insert("encoding".to_string(), json!(encoding));
-    map.insert("total_lines".to_string(), json!(total_lines));
-    map.insert(
-        "declaration_lines_total".to_string(),
-        json!(declaration_lines_total),
-    );
+    if truncated {
+        receipt.add_cap(ReceiptCap::output("items", Some(max_items)));
+    }
+    text_clamp.add_receipt_cap(&mut receipt);
+    receipt.insert("path", json!(display_path(file)));
+    receipt.insert("language", json!(language));
+    receipt.insert("encoding", json!(encoding));
+    receipt.insert("total_lines", json!(total_lines));
+    receipt.insert("declaration_lines_total", json!(declaration_lines_total));
     if !contains.is_empty() {
-        map.insert("contains".to_string(), json!(contains));
+        receipt.insert("contains", json!(contains));
     }
     // Whole-file scan (the read already happened); the field only exists
     // when something was found, so clean files cost nothing.
     let suspects = crate::encoding::scan_encoding_suspects(&text, false);
     if !suspects.is_empty() {
-        map.insert("encoding_suspects".to_string(), suspects.receipt_value());
+        receipt.insert("encoding_suspects", suspects.receipt_value());
     }
     if cli.json {
-        map.insert(
-            "items".to_string(),
+        receipt.insert(
+            "items",
             json!(
-                rows.iter()
-                    .take(shown)
+                rendered_rows
+                    .iter()
                     .map(|(line, text)| json!({
                         "line": line,
-                        "text": clamp_text(text, max_line_chars),
+                        "text": text,
                     }))
                     .collect::<Vec<_>>()
             ),
         );
-        emit_json_checked(cli, Value::Object(map))
+        emit_json_checked(cli, receipt)
     } else {
         let mut stdout = io::stdout();
         writeln!(
@@ -1280,8 +1519,8 @@ pub(crate) fn command_outline(
         if rows.is_empty() {
             writeln!(stdout, "no_outline_rows")?;
         }
-        for (line, text) in rows.iter().take(shown) {
-            writeln!(stdout, "{line}: {}", clamp_text(text, max_line_chars))?;
+        for (line, text) in rendered_rows {
+            writeln!(stdout, "{line}: {text}")?;
         }
         if truncated {
             writeln!(
@@ -1292,7 +1531,7 @@ pub(crate) fn command_outline(
         if !suspects.is_empty() {
             writeln!(stdout, "{}", suspects.human_note())?;
         }
-        write_receipt_checked(cli, map)
+        write_receipt_checked(cli, receipt)
     }
 }
 

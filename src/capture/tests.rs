@@ -56,7 +56,7 @@ fn capture_supervision_job_terminates_child_when_dropped() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    let _ = child.kill();
+    let _ = child.kill(); // guardrail: allow-ignore-result test child cleanup is best-effort
     panic!("supervised child survived closing the capture job");
 }
 
@@ -96,7 +96,7 @@ fn capture_supervision_job_contains_descendants_before_resume() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    let _ = child.kill();
+    let _ = child.kill(); // guardrail: allow-ignore-result test child cleanup is best-effort
     panic!("capture descendant survived closing the assigned-before-resume job");
 }
 
@@ -145,7 +145,7 @@ fn capture_supervision_watchdog_terminates_process_group_when_dropped() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    let _ = child.kill();
+    let _ = child.kill(); // guardrail: allow-ignore-result test child cleanup is best-effort
     unsafe {
         libc::kill(descendant_pid, libc::SIGKILL);
     }

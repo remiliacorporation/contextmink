@@ -12,9 +12,9 @@ pub(crate) struct Cli {
     /// Exit nonzero after emitting a receipt if the command output was capped.
     #[arg(long, global = true)]
     pub(crate) fail_if_truncated: bool,
-    /// Exit nonzero after emitting a receipt if scan-capped totals are lower bounds.
+    /// Exit nonzero after emitting a receipt if the inspected evidence scope is incomplete.
     #[arg(long, global = true)]
-    pub(crate) require_complete_scan: bool,
+    pub(crate) require_complete_scope: bool,
     /// Read configuration from this TOML file instead of searching upward.
     #[arg(long, global = true)]
     pub(crate) config: Option<PathBuf>,
@@ -76,12 +76,6 @@ pub(crate) enum Command {
             help = "Maximum characters per printed path"
         )]
         max_line_chars: usize,
-        #[arg(
-            long,
-            default_value_t = 50_000,
-            help = "Maximum candidate files to scan"
-        )]
-        max_scan_files: usize,
     },
     /// Summarize directories with bounded recursive file counts.
     Dirs {
@@ -113,15 +107,15 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 220,
-            help = "Maximum characters per printed line"
+            help = "Maximum characters per complete printed directory row"
         )]
         max_line_chars: usize,
         #[arg(
             long,
             default_value_t = 50_000,
-            help = "Maximum candidate files to scan"
+            help = "Maximum candidate files to count into directory summaries"
         )]
-        max_scan_files: usize,
+        max_files_counted: usize,
     },
     /// Search text and report bounded file counts plus sample lines.
     ///
@@ -190,9 +184,9 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 80,
-            help = "Maximum matching files to count before stopping content scan"
+            help = "Maximum matching files to count before stopping content inspection"
         )]
-        max_count_files: usize,
+        max_matching_files: usize,
         #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
         limit: usize,
         #[arg(
@@ -202,11 +196,11 @@ pub(crate) enum Command {
         )]
         lines_per_file: usize,
         #[arg(
-            long = "max-matches",
+            long = "max-sample-lines",
             default_value_t = 36,
-            help = "Maximum sample match lines to print across all files"
+            help = "Maximum matching and context sample lines to print across all files"
         )]
-        max_matches: usize,
+        max_sample_lines: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -216,15 +210,21 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 20_000,
-            help = "Maximum candidate files to scan"
+            help = "Maximum candidate files whose content may be inspected"
         )]
-        max_scan_files: usize,
+        max_content_files: usize,
         #[arg(
             long,
             default_value_t = 2_000_000,
             help = "Skip files larger than this byte count"
         )]
         max_file_bytes: u64,
+        #[arg(
+            long,
+            value_name = "BYTES",
+            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection"
+        )]
+        max_content_bytes: Option<u64>,
     },
     /// Search for literal terms without regex or shell-fragile pattern syntax.
     #[command(name = "grep-terms")]
@@ -292,9 +292,9 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 80,
-            help = "Maximum matching files to count before stopping content scan"
+            help = "Maximum matching files to count before stopping content inspection"
         )]
-        max_count_files: usize,
+        max_matching_files: usize,
         #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
         limit: usize,
         #[arg(
@@ -304,11 +304,11 @@ pub(crate) enum Command {
         )]
         lines_per_file: usize,
         #[arg(
-            long = "max-matches",
+            long = "max-sample-lines",
             default_value_t = 36,
-            help = "Maximum sample match lines to print across all files"
+            help = "Maximum matching and context sample lines to print across all files"
         )]
-        max_matches: usize,
+        max_sample_lines: usize,
         #[arg(
             long,
             default_value_t = 220,
@@ -318,15 +318,21 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 20_000,
-            help = "Maximum candidate files to scan"
+            help = "Maximum candidate files whose content may be inspected"
         )]
-        max_scan_files: usize,
+        max_content_files: usize,
         #[arg(
             long,
             default_value_t = 2_000_000,
             help = "Skip files larger than this byte count"
         )]
         max_file_bytes: u64,
+        #[arg(
+            long,
+            value_name = "BYTES",
+            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection"
+        )]
+        max_content_bytes: Option<u64>,
     },
     /// Print a bounded line or character window from one text file.
     Slice {
@@ -359,7 +365,7 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 240,
-            help = "Maximum characters per printed line"
+            help = "Maximum characters per source-line text field"
         )]
         max_line_chars: usize,
         #[arg(long, help = "Zero-based character offset for character-window mode")]
@@ -416,7 +422,7 @@ pub(crate) enum Command {
         #[arg(
             long,
             default_value_t = 220,
-            help = "Maximum characters per printed row"
+            help = "Maximum characters per declaration text field"
         )]
         max_line_chars: usize,
     },
@@ -523,7 +529,7 @@ pub(crate) enum Command {
             default_value_t = 5000,
             help = "Maximum rows to scan before treating totals as lower bounds"
         )]
-        max_scan_rows: usize,
+        max_rows_scanned: usize,
         #[arg(
             long = "timeout-secs",
             default_value_t = 60,
@@ -579,6 +585,28 @@ pub(crate) enum Command {
         )]
         max_line_chars: usize,
     },
+    /// Install a project-local release and report the agent-owned integration work.
+    #[command(
+        after_help = "Only --json applies to setup-project. Receipt strictness and configuration-selection flags apply to inspection commands, not installation."
+    )]
+    SetupProject {
+        #[arg(
+            value_name = "PROJECT_ROOT",
+            default_value = ".",
+            help = "Existing repository root to equip with project-local contextmink entrypoints"
+        )]
+        project_root: PathBuf,
+        #[arg(
+            long,
+            help = "Preflight and report every action without writing any file"
+        )]
+        dry_run: bool,
+        #[arg(
+            long,
+            help = "Replace divergent release-managed binaries, launchers, and integration reference; never replaces .contextmink.toml"
+        )]
+        replace_managed: bool,
+    },
     /// Execute argv directly and print bounded stdout/stderr summaries.
     Capture {
         #[arg(
@@ -605,14 +633,9 @@ pub(crate) enum Command {
         )]
         script: bool,
         #[arg(
-            long,
-            help = "Exit with the child's exit code when it fails (receipt is still emitted); default keeps exit 0 with the child status only in the receipt"
-        )]
-        fail_with_child: bool,
-        #[arg(
             long = "expect-exit",
             value_name = "CODE[,CODE...]",
-            help = "Treat these child exit code(s) as expected for --fail-with-child; repeatable and comma-separated values are accepted"
+            help = "Treat these child exit code(s) as expected; every other child status is propagated after the receipt is emitted. Repeatable and comma-separated values are accepted"
         )]
         expect_exit: Vec<String>,
         #[arg(

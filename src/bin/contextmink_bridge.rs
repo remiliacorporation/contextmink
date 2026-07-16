@@ -117,7 +117,7 @@ fn fail(code: i32, message: impl Into<String>) -> BridgeError {
 }
 
 fn run(args: Vec<String>) -> Result<i32, BridgeError> {
-    run_with_root(args, bridge_root())
+    run_with_root(args, bridge_root()?)
 }
 
 fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
@@ -392,11 +392,17 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 /// Root for resolving relative `--cwd`, `--script`, and `--argfile` paths.
 /// Shared project discovery supports both project-local and global installs.
-fn bridge_root() -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let executable = std::env::current_exe().ok();
-    let exe_dir = executable.as_deref().and_then(Path::parent).unwrap_or(&cwd);
-    resolve_project_root(exe_dir, &cwd)
+fn bridge_root() -> Result<PathBuf, BridgeError> {
+    let cwd = std::env::current_dir()
+        .map_err(|error| fail(EXIT_SPAWN_FAILED, format!("resolve bridge cwd: {error}")))?;
+    let executable = std::env::current_exe().map_err(|error| {
+        fail(
+            EXIT_SPAWN_FAILED,
+            format!("resolve bridge executable: {error}"),
+        )
+    })?;
+    let exe_dir = executable.parent().unwrap_or(&cwd);
+    Ok(resolve_project_root(exe_dir, &cwd))
 }
 
 fn resolve_from_root(root: &Path, raw: &str) -> PathBuf {
@@ -462,7 +468,7 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
             for arg in args {
                 let count = if expect_count {
                     expect_count = false;
-                    arg.parse::<usize>().ok()
+                    arg.parse::<usize>().ok() // guardrail: allow-ignore-result malformed warning-only count means no warning
                 } else if arg == "-n" || arg == "--lines" {
                     expect_count = true;
                     continue;
@@ -470,7 +476,7 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
                     arg.strip_prefix("--lines=")
                         .or_else(|| arg.strip_prefix("-n"))
                         .or_else(|| arg.strip_prefix('-'))
-                        .and_then(|digits| digits.parse::<usize>().ok())
+                        .and_then(|digits| digits.parse::<usize>().ok()) // guardrail: allow-ignore-result malformed warning-only count means no warning
                 };
                 if let Some(count) = count
                     && count > DUMP_WARN_LINES
@@ -514,8 +520,12 @@ fn sed_window_span(arg: &str) -> Option<usize> {
     let arg = arg.strip_prefix("-n").unwrap_or(arg);
     let body = arg.strip_suffix('p')?;
     let (start, end) = body.split_once(',')?;
-    let start: usize = start.parse().ok()?;
-    let end: usize = end.parse().ok()?;
+    let Ok(start) = start.parse::<usize>() else {
+        return None;
+    };
+    let Ok(end) = end.parse::<usize>() else {
+        return None;
+    };
     Some(end.saturating_sub(start) + 1)
 }
 

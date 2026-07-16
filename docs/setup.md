@@ -87,10 +87,8 @@ policy-bearing tool layout.
 ## Project Binary Integration
 
 This gives a target repository a local `scripts/contextmink` entrypoint without
-a source build.
-
-Use this layout for repositories that want a checked-in launcher while keeping
-host-specific release binaries ignored and replaceable.
+a source build. The maintaining agent runs the setup command; setup does not
+presume the repository already has contextmink-aware guidance.
 
 ### Integration decisions
 
@@ -121,73 +119,55 @@ Adapt the installation to the project before copying generic policy:
 
 1. Unpack the release archive next to, or outside, the target repository.
 
-2. In the target repository, create the local binary directory:
+2. Preflight, then apply, from the unpacked directory:
 
    ```bash
-   mkdir -p tools/contextmink/bin scripts
+   ./contextmink setup-project /path/to/repository --dry-run
+   ./contextmink setup-project /path/to/repository
    ```
 
-3. Copy the release binary into the target repository:
+   Windows PowerShell:
+
+   ```powershell
+   & .\contextmink.exe setup-project C:\path\to\repository --dry-run
+   & .\contextmink.exe setup-project C:\path\to\repository
+   ```
+
+   The command preflights every managed destination before the first write. It
+   installs the current platform binary, the Windows bridge and diagnostic
+   `.cmd` shim when applicable, the Bash launcher, a real-profile
+   `.contextmink.toml`, `.gitignore` coverage for
+   `/tools/contextmink/bin/`, and
+   `tools/contextmink/agent_integration.md`.
+
+3. Read every printed `next_actions` entry. Inspect and edit
+   `.contextmink.toml` for this repository's generated/high-output trees and
+   literal deletion tripwires. The config becomes repository-owned at creation:
+   setup never overwrites a divergent copy.
+
+4. Read `tools/contextmink/agent_integration.md`, inspect the existing guidance
+   hierarchy, and adapt the operational contract into `AGENTS.md`, `CLAUDE.md`,
+   or the repository's actual equivalent. Setup intentionally never edits agent
+   guidance because only the maintaining agent can reconcile shell rules,
+   project-native compact tools, and existing context policy correctly.
+
+5. Verify from the target repository root and a representative nested working
+   directory:
 
    ```bash
-   cp /path/to/unpacked/contextmink tools/contextmink/bin/contextmink
-   # Windows binary name:
-   # cp /path/to/unpacked/contextmink.exe tools/contextmink/bin/contextmink.exe
-   # The PowerShell launcher path also needs the Windows bridge binary:
-   # cp /path/to/unpacked/contextmink-bridge.exe tools/contextmink/bin/contextmink-bridge.exe
+   scripts/contextmink --json files . --limit 1
+   scripts/contextmink --json guard-check -- git clean
    ```
 
-   Host-specific binaries should be ignored by default. Add this to the target
-   repository's `.gitignore`:
+   The first command must report `schema: "contextmink.receipt.v2"` and the
+   intended profile. The second must report `decision: "deny"`.
 
-   ```gitignore
-   /tools/contextmink/bin/contextmink
-   /tools/contextmink/bin/contextmink.exe
-   /tools/contextmink/bin/contextmink-bridge
-   /tools/contextmink/bin/contextmink-bridge.exe
-   ```
+6. To upgrade, rerun the newer release with `--dry-run`. If release-managed
+   artifacts differ, apply with `--replace-managed`; this can replace binaries,
+   launchers, and the integration reference, but never `.contextmink.toml`.
+   Review and reintegrate guidance changes after every such replacement.
 
-   Tracking release binaries is an explicit hermetic-install choice. It is not
-   the project-neutral default because one host's binary does not serve other
-   supported platforms. Document the required release version in the consuming
-   project's dependency/setup policy so a fresh clone does not silently fetch
-   an arbitrary latest release.
-
-4. Copy the release launcher:
-
-   ```bash
-   cp /path/to/unpacked/templates/scripts/contextmink scripts/contextmink
-   chmod +x scripts/contextmink
-   ```
-
-5. Copy and edit the config:
-
-   ```bash
-   cp /path/to/unpacked/templates/.contextmink.toml .contextmink.toml
-   ```
-
-   Keep only repo-local high-output paths. Good candidates include generated
-   build directories, vendored dependencies, caches, exported reports, large
-   binary asset trees, and tool output directories. These excludes keep broad
-   scans quiet; callers can still pass an explicit file or subdirectory inside
-   an excluded tree when that tree is the target.
-
-6. Merge repository guidance:
-
-   - Codex: merge `templates/AGENTS.contextmink.md` into the target
-     repository's `AGENTS.md` or equivalent Codex guidance file.
-   - Claude: merge `templates/CLAUDE.contextmink.md` into the target
-     repository's `CLAUDE.md` or equivalent Claude guidance file.
-
-7. Verify from the target repository root:
-
-   ```bash
-   scripts/contextmink files . --limit 20
-   scripts/contextmink grep contextmink . --limit 5
-   ```
-
-8. Optional but recommended for repositories with destructive-command
-   trip-wires: generate a Claude hook fragment from the installed binary:
+7. Optional: generate a Claude hook fragment from the installed binary:
 
    ```bash
    scripts/contextmink hook-snippet
@@ -200,30 +180,20 @@ Adapt the installation to the project before copying generic policy:
    `.claude/settings.json` only when the generated command paths are stable for
    every supported clone.
 
-Delegated setup prompt:
+Maintaining-agent prompt:
 
 ```text
-Set up contextmink in <target-repo> from the unpacked release at <path>. First
-inspect the intended workspace root, existing agent-guidance hierarchy, active
-shells, project-native bounded/query commands, nested repositories,
-project-specific high-output trees, and irrecoverable paths. Use the release
-binary, not a source build. Install
-tools/contextmink/bin/contextmink(.exe), the Windows
-tools/contextmink/bin/contextmink-bridge.exe when applicable,
-scripts/contextmink, and
-.contextmink.toml with repo-appropriate high-output excludes. Merge the
-AGENTS/CLAUDE contextmink snippet into the project guidance. Verify with the
-active-shell invocation from this guide, for example:
-- Bash-hosted: scripts/contextmink files . --limit 20
-- Windows PowerShell direct: & tools\contextmink\bin\contextmink.exe files . --limit 20
-- Windows PowerShell bridge: & tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files . --limit 20
-If Claude PreToolUse protection is wanted, generate the hook fragment with
-contextmink hook-snippet instead of hand-writing command
-paths. Put machine-specific absolute hook commands in
-.claude/settings.local.json. Keep host-specific binaries ignored unless a
-reviewed hermetic install is explicitly required, and document the version a
-fresh clone must install. Dogfood config discovery and receipts from both the
-workspace root and a nested directory before calling the integration complete.
+Set up contextmink in <target-repo> from the unpacked release at <path>. Inspect
+the intended workspace root, existing agent-guidance hierarchy, active shells,
+project-native bounded/query commands, nested repositories, high-output trees,
+and irrecoverable paths. Run `contextmink setup-project <target-repo>
+--dry-run`, review its complete action plan, then apply it. Adapt
+`tools/contextmink/agent_integration.md` into the existing guidance rather than
+blindly appending it. Configure repository-specific excludes and guard
+fragments. Verify the v2 receipt and unconditional git-clean denial from the
+workspace root and a nested directory. Do not call the integration complete
+until the installed launcher, profile, guidance, and active-shell invocation
+all work end to end.
 ```
 
 ## Optional: Claude PreToolUse Hook Guard
@@ -346,16 +316,18 @@ copy of the Rust crate:
    quiet; callers can still pass an explicit file or subdirectory inside an
    excluded tree when that tree is the target.
 
-4. Add the instruction snippet for the tool surface the target repository uses:
+4. Treat the instruction templates as integration references for the tool
+   surfaces the target repository uses:
 
-   - Codex: copy `templates/AGENTS.contextmink.md` into the repository's
-     `AGENTS.md` or equivalent Codex guidance file.
-   - Claude: copy `templates/CLAUDE.contextmink.md` into the repository's
-     `CLAUDE.md` or equivalent Claude guidance file.
+   - Codex-facing policy starts from `templates/AGENTS.contextmink.md`.
+   - Claude-facing policy starts from `templates/CLAUDE.contextmink.md`.
 
-   The two snippets are intentionally equivalent in policy. Keep any
-   repository-specific shell or path guidance in the target repository, not in
-   these templates.
+   The maintaining agent must inspect the existing guidance hierarchy and
+   adapt the relevant contract into the repository's actual `AGENTS.md`,
+   `CLAUDE.md`, or equivalent files. Never copy a template wholesale or assume
+   the target guidance is already conducive to contextmink. The two templates
+   are intentionally equivalent in generic policy; preserve repository-owned
+   shell, path, domain-tool, and output rules during the merge.
 
 5. Verify the integration from the target repository root:
 
@@ -381,18 +353,14 @@ contextmink files . --limit 20
 
 ## Config Template
 
-Start from:
+`setup-project` creates this file with a real profile. Add only
+repository-specific policy, for example:
 
 ```toml
 profile = "repo-name"
 
 exclude_globs = [
-  "target/**",
-  "**/target/**",
-  "node_modules/**",
-  "**/node_modules/**",
-  ".venv/**",
-  "**/.venv/**",
+  "generated/reports/**",
 ]
 
 # Optional spawn safety for repository-owned critical paths:
@@ -401,13 +369,13 @@ exclude_globs = [
 ```
 
 The binary already excludes common high-output paths such as `.git`, `target`,
-`node_modules`, and `.venv`. Include them in repo configs only if doing so makes
-the local policy clearer for future maintainers.
+`node_modules`, and `.venv`. Empty profiles and the shipped placeholder are
+hard errors.
 
 ## Instruction Rule
 
-Use the maintained snippets rather than copying setup prose into project
-guidance:
+Use the installed `tools/contextmink/agent_integration.md` as the integration
+reference. Release maintainers source it from the equivalent templates:
 
 - `templates/AGENTS.contextmink.md` for Codex-facing guidance.
 - `templates/CLAUDE.contextmink.md` for Claude-facing guidance.

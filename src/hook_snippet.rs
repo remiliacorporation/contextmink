@@ -56,7 +56,7 @@ fn resolve_guard_config(
     if no_config {
         return Ok(None);
     }
-    find_config_path().as_deref().map(absolutize).transpose()
+    find_config_path()?.as_deref().map(absolutize).transpose()
 }
 
 fn absolutize(path: &Path) -> Result<PathBuf> {

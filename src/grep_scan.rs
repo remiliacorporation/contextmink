@@ -6,14 +6,15 @@
 //! sequential run; parallelism only changes wall-clock time and how much
 //! wasted work happens past an early-stop boundary.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use anyhow::Result;
 
-use crate::encoding::{FileText, read_file_text};
-use crate::output::clamp_text;
+use crate::encoding::{VisitedFileText, visit_file_lines};
+use crate::output::clamp_text_with_status;
 use crate::text::TextMatcher;
 
 const CHUNK_SIZE: usize = 32;
@@ -24,6 +25,7 @@ pub(crate) struct SampleLine {
     pub(crate) line: usize,
     pub(crate) text: String,
     pub(crate) is_match: bool,
+    pub(crate) text_truncated: bool,
 }
 
 #[derive(Debug)]
@@ -35,6 +37,9 @@ pub(crate) enum FileScan {
         /// Sample matching lines with optional surrounding context lines,
         /// in file order.
         samples: Vec<SampleLine>,
+        /// Matching lines absent from `samples` after applying the per-file
+        /// sample policy (context lines that are matches count as retained).
+        sample_matching_lines_omitted: usize,
     },
     NoMatch,
     SkippedLarge {
@@ -58,11 +63,6 @@ pub(crate) fn scan_file(
     matcher: &TextMatcher,
     limits: &ScanLimits,
 ) -> Result<FileScan> {
-    let text = match read_file_text(&path, limits.max_file_bytes)? {
-        FileText::Text { text, .. } => text,
-        FileText::SkippedLarge { bytes } => return Ok(FileScan::SkippedLarge { path, bytes }),
-        FileText::SkippedBinary => return Ok(FileScan::SkippedBinary { path }),
-    };
     let mut matching_lines = 0usize;
     let mut samples: Vec<SampleLine> = Vec::new();
     let mut sampled_matches = 0usize;
@@ -70,62 +70,76 @@ pub(crate) fn scan_file(
     // used to avoid duplicating overlapping context windows.
     let mut last_sampled_line = 0usize;
     let mut after_context_remaining = 0usize;
-    let mut recent: Vec<(usize, &str)> = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let number = index + 1;
+    let mut recent: VecDeque<(usize, String, bool)> = VecDeque::new();
+    let visited = visit_file_lines(&path, limits.max_file_bytes, |number, line| {
         let matched = matcher.is_match(line);
         if matched {
             matching_lines += 1;
         }
         if matched && sampled_matches < limits.lines_per_file {
             sampled_matches += 1;
-            for (context_number, context_line) in &recent {
+            for (context_number, context_line, text_truncated) in &recent {
                 if *context_number > last_sampled_line {
                     samples.push(SampleLine {
                         line: *context_number,
-                        text: clamp_text(context_line.trim_end(), limits.max_line_chars),
+                        text: context_line.clone(),
                         is_match: false,
+                        text_truncated: *text_truncated,
                     });
                     last_sampled_line = *context_number;
                 }
             }
+            let clamped = clamp_text_with_status(line.trim(), limits.max_line_chars);
             samples.push(SampleLine {
                 line: number,
-                text: clamp_text(line.trim(), limits.max_line_chars),
+                text: clamped.text,
                 is_match: true,
+                text_truncated: clamped.truncated,
             });
             last_sampled_line = number;
             after_context_remaining = limits.context;
         } else if after_context_remaining > 0 {
+            let clamped = clamp_text_with_status(
+                if matched {
+                    line.trim()
+                } else {
+                    line.trim_end()
+                },
+                limits.max_line_chars,
+            );
             samples.push(SampleLine {
                 line: number,
-                text: clamp_text(
-                    if matched {
-                        line.trim()
-                    } else {
-                        line.trim_end()
-                    },
-                    limits.max_line_chars,
-                ),
+                text: clamped.text,
                 is_match: matched,
+                text_truncated: clamped.truncated,
             });
             last_sampled_line = number;
             after_context_remaining -= 1;
         }
         if limits.context > 0 {
-            recent.push((number, line));
+            let clamped = clamp_text_with_status(line.trim_end(), limits.max_line_chars);
+            recent.push_back((number, clamped.text, clamped.truncated));
             if recent.len() > limits.context {
-                recent.remove(0);
+                recent.pop_front();
             }
         }
+    })?;
+    match visited {
+        VisitedFileText::Text { .. } => {}
+        VisitedFileText::SkippedLarge { bytes } => {
+            return Ok(FileScan::SkippedLarge { path, bytes });
+        }
+        VisitedFileText::SkippedBinary => return Ok(FileScan::SkippedBinary { path }),
     }
     if matching_lines == 0 {
         return Ok(FileScan::NoMatch);
     }
+    let sample_matching_lines = samples.iter().filter(|sample| sample.is_match).count();
     Ok(FileScan::Matched {
         path,
         matching_lines,
         samples,
+        sample_matching_lines_omitted: matching_lines.saturating_sub(sample_matching_lines),
     })
 }
 

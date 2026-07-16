@@ -133,7 +133,7 @@ case "${OS:-}:$(uname -s 2>/dev/null || true)" in
     # native contextmink.exe sees them.
     conv_excl=()
     next_selector=0
-    next_slash_value=0
+    next_opaque_value=0
     for arg in "$@"; do
       if [[ "$next_selector" -eq 1 ]]; then
         case "$arg" in
@@ -142,24 +142,24 @@ case "${OS:-}:$(uname -s 2>/dev/null || true)" in
         next_selector=0
         continue
       fi
-      if [[ "$next_slash_value" -eq 1 ]]; then
+      if [[ "$next_opaque_value" -eq 1 ]]; then
         case "$arg" in
           */*) conv_excl+=("$arg") ;;
         esac
-        next_slash_value=0
+        next_opaque_value=0
         continue
       fi
       case "$arg" in
-        --array | --fields | --where | --where-contains | --path-contains)
+        --array | --fields)
           next_selector=1
           ;;
-        --array=/* | --fields=/* | --where=/* | --where-contains=/* | --path-contains=/*)
+        --array=/* | --fields=/*)
           conv_excl+=("$arg")
           ;;
-        --pattern | --prefix | --contains | --term)
-          next_slash_value=1
+        --where | --where-contains | --key-contains | --key-regex | --path-contains | --path-regex | --value-contains | --pattern | --prefix | --contains | --term | --name-contains | --sql | --command)
+          next_opaque_value=1
           ;;
-        --pattern=*/* | --prefix=*/* | --contains=*/* | --term=*/*)
+        --where=*/* | --where-contains=*/* | --key-contains=*/* | --key-regex=*/* | --path-contains=*/* | --path-regex=*/* | --value-contains=*/* | --pattern=*/* | --prefix=*/* | --contains=*/* | --term=*/* | --name-contains=*/* | --sql=*/* | --command=*/*)
           conv_excl+=("$arg")
           ;;
       esac

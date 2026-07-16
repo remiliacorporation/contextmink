@@ -501,6 +501,128 @@ fn c_outline_maps_section_banners() {
 }
 
 #[test]
+fn php_classifier_matches_declaration_shapes() {
+    assert_matches(
+        "php",
+        &[
+            "class SampleHooks implements ParserFirstCallInitHook {",
+            "final class Router extends BaseRouter {",
+            "abstract class Task {",
+            "interface Renderable {",
+            "trait LoggerAware {",
+            "enum Suit: string {",
+            "namespace MediaWiki\\Extension\\Sample;",
+            "function top_level_helper( &$ref, ...$rest ) {",
+            "function &next_row() {",
+            "\tpublic static function onParserFirstCallInit( Parser $parser ) {",
+            "    final protected function render( $input, array $args ) {",
+            "    abstract public function setLogger( LoggerInterface $logger ): void;",
+            "CLASS UppercaseKeywords {",
+            "PUBLIC STATIC FUNCTION Build(): void {",
+            "#[Route('/items')] final class AttributedController {",
+            "#[One([1, 2])] #[Two] PROTECTED FUNCTION attributed(): void {",
+            "NAMESPACE MediaWiki\\Extension\\Uppercase;",
+            "namespace {",
+        ],
+    );
+    assert_skips(
+        "php",
+        &[
+            "$closure = static function () {",
+            "        return function ( $x ) {",
+            "$fn = fn ( $x ) => $x + 1;",
+            "use MediaWiki\\MediaWikiServices;",
+            "    if ( render( $input ) ) {",
+            "$enum = resolve();",
+            "// function docs mention function here",
+            "public const PREFIX = 'mw';",
+            "FUNCTION missing_parenthesis = 1;",
+            "CLASS = 'not a declaration';",
+            "namespace\\relative_call();",
+            "#[Unterminated class Hidden {",
+        ],
+    );
+}
+
+#[test]
+fn wgsl_classifier_matches_module_scope_shapes() {
+    assert_matches(
+        "wgsl",
+        &[
+            "fn sample_clamped(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {",
+            "fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FsInput {",
+            "struct BlurUniforms {",
+            "alias Rgba = vec4<f32>;",
+            "const TAP_COUNT: u32 = 4u;",
+            "override workgroup_size: u32;",
+            "var<uniform> blur: BlurUniforms;",
+            "var source_texture: texture_2d<f32>;",
+            "@vertex fn attributed_vertex() -> @builtin(position) vec4<f32> {",
+            "@group(0) @binding(0) var<uniform> camera: CameraUniforms;",
+        ],
+    );
+    assert_skips(
+        "wgsl",
+        &[
+            "    let positions = array<vec2<f32>, 6>(",
+            "    var accum = vec4<f32>(0.0);",
+            "    const half_texel = 0.5;",
+            "@group(0) @binding(0)",
+            "    return textureSample(tex, tex_sampler, uv);",
+            "variance = accum;",
+            "@group(0) @binding(0 var<uniform> broken: CameraUniforms;",
+        ],
+    );
+}
+
+#[test]
+fn markdown_outline_skips_fenced_code_blocks() {
+    let doc = concat!(
+        "# Real Heading
+", // 1: heading
+        "```sh
+", // 2: fence open
+        "# shell comment, not a heading
+", // 3
+        "```
+", // 4: fence close
+        "~~~~python
+", // 5: longer tilde fence open
+        "# another comment
+", // 6
+        "~~~
+", // 7: too short to close
+        "# still inside the fence
+", // 8
+        "~~~~
+", // 9: fence close
+        "## Second Real Heading
+", // 10: heading
+    );
+    assert_eq!(document_hits("markdown", doc), vec![1, 10]);
+}
+
+#[test]
+fn markdown_outline_obeys_fence_closing_and_indentation_rules() {
+    let doc = concat!(
+        "# Top\n",                     // 1: heading
+        "```text\n",                   // 2: fence open
+        "# hidden\n",                  // 3
+        "```not-a-close\n",            // 4: trailing content cannot close
+        "# still hidden\n",            // 5
+        "```\n",                       // 6: close
+        "   ## Three-space heading\n", // 7: heading
+        "    ```\n",                   // 8: indented code, not a fence
+        "### After indented code\n",   // 9: heading
+        "~~~ info\n",                  // 10: tilde fence open
+        "# tilde hidden\n",            // 11
+        "   ~~~   \n",                 // 12: indented close with whitespace tail
+        "#\n",                         // 13: empty ATX heading
+    );
+    assert_eq!(document_hits("markdown", doc), vec![1, 7, 9, 13]);
+}
+
+#[test]
 fn json_classifier_maps_container_keys_only() {
     assert_matches(
         "json",
@@ -572,6 +694,21 @@ fn resolve_matcher_detects_shebang_for_extensionless_scripts() {
     let (name, _) =
         resolve_matcher(Path::new("hook"), "#!/usr/bin/env node", None, None, None).unwrap();
     assert_eq!(name, "javascript");
+
+    let (name, matcher) = resolve_matcher(
+        Path::new("bin/tool"),
+        "#!/usr/bin/env php",
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(name, "php");
+    assert!(matcher.is_match(0, "FINAL CLASS Command {}"));
+
+    let (name, _) =
+        resolve_matcher(Path::new("view/template.PHTML"), "", None, None, None).unwrap();
+    assert_eq!(name, "php");
 
     // A known extension wins over the shebang; an unknown interpreter fails.
     let (name, _) = resolve_matcher(

@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 
 use crate::cli::Cli;
 use crate::config::ContextConfig;
-use crate::output::{base_receipt, clamp_text, emit_json, write_receipt_checked};
+use crate::output::{
+    Receipt, ReceiptCap, ReceiptResult, clamp_text, emit_json_checked, write_receipt_checked,
+};
 use crate::process_boundary::prepare_command;
 
 struct RawCapturedStream {
@@ -48,7 +50,6 @@ pub(crate) fn command_capture(
     max_bytes: usize,
     max_line_chars: usize,
     script: bool,
-    fail_with_child: bool,
     expect_exit: &[String],
     receipt_out: Option<&PathBuf>,
     argv: &[String],
@@ -129,34 +130,37 @@ pub(crate) fn command_capture(
     let shown = stdout.shown_lines + stderr.shown_lines;
     let total = stdout.total_lines + stderr.total_lines;
     let truncated = captured_stream_truncated(&stdout) || captured_stream_truncated(&stderr);
-    let cap_reason = capture_cap_reason(&stdout, &stderr);
-
-    let mut map = base_receipt(
+    let mut receipt = Receipt::new(
         "capture",
         config.profile.as_deref(),
-        "lines",
-        shown,
-        total,
-        truncated,
-        cap_reason,
+        ReceiptResult::new("lines", total, false, shown),
     );
-    map.insert("argv".to_string(), json!(argv));
-    map.insert("effective_argv".to_string(), json!(effective_argv));
-    map.insert("execution_mode".to_string(), json!(execution_mode));
-    map.insert("exit_code".to_string(), json!(status.code()));
-    map.insert("success".to_string(), json!(status.success()));
+    if stdout.line_truncated || stderr.line_truncated {
+        receipt.add_cap(ReceiptCap::output("lines", Some(max_lines)));
+    }
+    if stdout.byte_truncated || stderr.byte_truncated {
+        receipt.add_cap(ReceiptCap::output("bytes_per_stream", Some(max_bytes)));
+    }
+    if stdout.char_truncated || stderr.char_truncated {
+        receipt.add_cap(ReceiptCap::output("line_characters", Some(max_line_chars)));
+    }
+    receipt.insert("argv", json!(argv));
+    receipt.insert("effective_argv", json!(effective_argv));
+    receipt.insert("execution_mode", json!(execution_mode));
+    receipt.insert("child_exit_code", json!(status.code()));
+    receipt.insert("child_exit_zero", json!(status.success()));
     let exit_expected = status
         .code()
         .map(|code| expected_exit_codes.contains(&code))
         .unwrap_or(false);
-    map.insert(
-        "expected_exit_codes".to_string(),
+    receipt.insert(
+        "expected_exit_codes",
         json!(expected_exit_codes.iter().copied().collect::<Vec<_>>()),
     );
-    map.insert("exit_expected".to_string(), json!(exit_expected));
-    map.insert("duration_ms".to_string(), json!(duration_ms));
-    map.insert("stdout".to_string(), captured_stream_json(&stdout));
-    map.insert("stderr".to_string(), captured_stream_json(&stderr));
+    receipt.insert("exit_expected", json!(exit_expected));
+    receipt.insert("child_duration_ms", json!(duration_ms));
+    receipt.insert("stdout", captured_stream_json(&stdout));
+    receipt.insert("stderr", captured_stream_json(&stderr));
     // Double-encode proof only: child output may legitimately carry lossy or
     // control bytes, but a CP1252 round-trip that re-decodes as UTF-8 means
     // the child wrote UTF-8 through a CP1252 boundary (the classic
@@ -168,26 +172,26 @@ pub(crate) fn command_capture(
         suspects.sample = stderr_suspects.sample;
     }
     if !suspects.is_empty() {
-        map.insert("encoding_suspects".to_string(), suspects.receipt_value());
+        receipt.insert("encoding_suspects", suspects.receipt_value());
     }
 
-    let mut full_receipt = map.clone();
-    full_receipt.insert("stdout_text".to_string(), json!(stdout.retained_text));
-    full_receipt.insert("stderr_text".to_string(), json!(stderr.retained_text));
+    let mut full_receipt = receipt.clone();
+    full_receipt.insert("stdout_text", json!(stdout.display_text));
+    full_receipt.insert("stderr_text", json!(stderr.display_text));
     if let Some(path) = receipt_out {
-        write_capture_receipt(path, &Value::Object(full_receipt.clone()))?;
+        write_capture_receipt(path, &full_receipt.clone().into_value())?;
     }
 
     if cli.json {
-        emit_json(Value::Object(full_receipt))?;
-        exit_with_child(fail_with_child, exit_expected, &status)?;
+        emit_json_checked(cli, full_receipt)?;
+        propagate_unexpected_child_exit(exit_expected, &status)?;
         return Ok(());
     }
 
     let mut out = io::stdout();
     writeln!(
         out,
-        "[contextmink] capture command={} exit_code={} success={} duration_ms={}",
+        "[contextmink] capture command={} child_exit_code={} child_exit_zero={} duration_ms={}",
         clamp_text(&format!("{argv:?}"), 500),
         status
             .code()
@@ -226,20 +230,18 @@ pub(crate) fn command_capture(
     if !suspects.is_empty() {
         writeln!(out, "{}", suspects.human_note())?;
     }
-    write_receipt_checked(cli, map)?;
-    exit_with_child(fail_with_child, exit_expected, &status)
+    write_receipt_checked(cli, receipt)?;
+    propagate_unexpected_child_exit(exit_expected, &status)
 }
 
-/// Opt-in child-status propagation for shell chaining. The receipt (carrying
-/// `exit_code`/`success`) has already been emitted; a failed child then
-/// becomes contextmink's own exit so `capture --fail-with-child -- cmd &&
-/// next` gates on the child instead of always proceeding.
-fn exit_with_child(
-    fail_with_child: bool,
+/// The receipt carrying the child status has already been emitted. Every
+/// status outside `--expect-exit` then becomes contextmink's own exit so a
+/// capture cannot silently turn a failed child into a successful workflow.
+fn propagate_unexpected_child_exit(
     exit_expected: bool,
     status: &std::process::ExitStatus,
 ) -> Result<()> {
-    if !fail_with_child || exit_expected {
+    if exit_expected {
         return Ok(());
     }
     #[cfg(unix)]
@@ -345,8 +347,8 @@ fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedC
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if job.is_null() {
         let code = unsafe { GetLastError() };
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); // guardrail: allow-ignore-result cleanup after supervision setup failure is best-effort
+        let _ = child.wait(); // guardrail: allow-ignore-result cleanup after supervision setup failure is best-effort
         return Err(anyhow!(
             "failed to create capture supervision job: win32 error {code}"
         ));
@@ -368,8 +370,8 @@ fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedC
         unsafe {
             CloseHandle(job);
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); // guardrail: allow-ignore-result cleanup after job attachment failure is best-effort
+        let _ = child.wait(); // guardrail: allow-ignore-result cleanup after job attachment failure is best-effort
         return Err(anyhow!(
             "failed to attach captured command to kill-on-close supervision job: win32 error {code}"
         ));
@@ -378,7 +380,7 @@ fn supervise_captured_child(child: &mut std::process::Child) -> Result<CapturedC
         unsafe {
             CloseHandle(job);
         }
-        let _ = child.wait();
+        let _ = child.wait(); // guardrail: allow-ignore-result resume failure is already the authoritative error
         return Err(error);
     }
     Ok(CapturedChildSupervisor(job))
@@ -521,7 +523,7 @@ fn terminate_captured_process_group(child: &mut std::process::Child) {
     unsafe {
         libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
     }
-    let _ = child.wait();
+    let _ = child.wait(); // guardrail: allow-ignore-result process-group termination is best-effort cleanup
 }
 
 /// Split a total `max_bytes` budget between the beginning and end of the
@@ -626,6 +628,14 @@ fn render_captured_stream(
         }
         tail_lines = lines;
     }
+    // A byte-retention gap can omit source lines without the line budget
+    // binding; only retained display candidates participate in this cap.
+    let retained_line_count = if tail_contiguous {
+        decode_lines(retained_text.as_bytes()).0.len()
+    } else {
+        head_lines.len() + tail_lines.len()
+    };
+    let line_truncated = retained_line_count > max_lines;
 
     let (display_text, head_shown, tail_shown, omitted_lines) = if tail_lines.is_empty() {
         if head_lines.len() <= max_lines {
@@ -651,7 +661,8 @@ fn render_captured_stream(
                     .map(|line| clamp_state.clamp(line, max_line_chars)),
             );
             if omitted > 0 {
-                parts.push(format!("[contextmink] ... omitted {omitted} line(s) ..."));
+                let marker = format!("[contextmink] ... omitted {omitted} line(s) ...");
+                parts.push(clamp_state.clamp(&marker, max_line_chars));
             }
             parts.extend(
                 head_lines
@@ -679,11 +690,11 @@ fn render_captured_stream(
                 .map(|line| clamp_state.clamp(line, max_line_chars)),
         );
         if omitted > 0 {
-            parts.push(format!("[contextmink] ... omitted {omitted} line(s) ..."));
+            let marker = format!("[contextmink] ... omitted {omitted} line(s) ...");
+            parts.push(clamp_state.clamp(&marker, max_line_chars));
         } else if !tail_contiguous && omitted_bytes > 0 {
-            parts.push(format!(
-                "[contextmink] ... omitted {omitted_bytes} byte(s) ..."
-            ));
+            let marker = format!("[contextmink] ... omitted {omitted_bytes} byte(s) ...");
+            parts.push(clamp_state.clamp(&marker, max_line_chars));
         }
         parts.extend(
             tail_lines
@@ -706,7 +717,7 @@ fn render_captured_stream(
         tail_lines: tail_shown,
         omitted_lines,
         byte_truncated,
-        line_truncated: omitted_lines > 0,
+        line_truncated,
         char_truncated: clamp_state.truncated,
     }
 }
@@ -778,18 +789,6 @@ fn captured_stream_truncated(stream: &CapturedStream) -> bool {
     stream.byte_truncated || stream.line_truncated || stream.char_truncated
 }
 
-fn capture_cap_reason(stdout: &CapturedStream, stderr: &CapturedStream) -> Option<&'static str> {
-    if stdout.byte_truncated || stderr.byte_truncated {
-        Some("bytes")
-    } else if stdout.line_truncated || stderr.line_truncated {
-        Some("lines")
-    } else if stdout.char_truncated || stderr.char_truncated {
-        Some("chars")
-    } else {
-        None
-    }
-}
-
 fn captured_stream_json(stream: &CapturedStream) -> Value {
     json!({
         "shown_lines": stream.shown_lines,
@@ -799,7 +798,7 @@ fn captured_stream_json(stream: &CapturedStream) -> Value {
         "total_lines": stream.total_lines,
         "captured_bytes": stream.captured_bytes,
         "total_bytes": stream.total_bytes,
-        "truncated": captured_stream_truncated(stream),
+        "output_truncated": captured_stream_truncated(stream),
         "byte_truncated": stream.byte_truncated,
         "line_truncated": stream.line_truncated,
         "char_truncated": stream.char_truncated,

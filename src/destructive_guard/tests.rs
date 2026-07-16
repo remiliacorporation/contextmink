@@ -1,6 +1,6 @@
 use super::{
     ALLOW_DESTRUCTIVE_ENV, DenyDecision, deny_destructive_argv, destructive_override_active,
-    evaluate_argv,
+    evaluate_argv, evaluate_argv_with_config_scope,
 };
 use crate::config::DestructiveGuardConfig;
 
@@ -330,6 +330,8 @@ fn execution_wrappers_do_not_hide_git_clean() {
     denied(&["stdbuf", "-oL", "git", "clean", "-fdX"]);
     denied(&["setsid", "-f", "git", "clean", "-fdX"]);
     denied(&["doas", "-u", "builder", "git", "clean", "-fdX"]);
+    denied(&["env", "-S", "git clean -fdX"]);
+    denied(&["env", "--split-string=git clean -fdX"]);
 
     allowed(&["exec", "printf", "%s", "git", "clean"]);
     allowed(&["time", "printf", "%s", "git", "clean"]);
@@ -337,6 +339,92 @@ fn execution_wrappers_do_not_hide_git_clean() {
     allowed(&["time", "--help", "git", "clean"]);
     allowed(&["timeout", "--help", "git", "clean"]);
     allowed(&["setsid", "--help", "git", "clean"]);
+}
+
+#[test]
+fn opaque_powershell_encoded_commands_are_denied() {
+    for flag in ["-e", "-ec", "-enc", "-EncodedCommand"] {
+        let message = denied(&["powershell", flag, "R2V0LUNoaWxkSXRlbQ=="]);
+        assert!(message.contains("encoded PowerShell"), "message: {message}");
+    }
+    denied(&["pwsh", "-EncodedCommand:R2V0LUNoaWxkSXRlbQ=="]);
+    allowed(&[
+        "powershell",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-ChildItem",
+    ]);
+}
+
+#[test]
+fn find_delete_and_exec_cannot_target_configured_fragments() {
+    let config = protected_config();
+    denied_with_config(&["find", "protected_cache", "-delete"], &config);
+    denied_with_config(
+        &["find", ".", "-path", "*/protected_cache/*", "-delete"],
+        &config,
+    );
+    denied_with_config(
+        &[
+            "find",
+            ".",
+            "-exec",
+            "rm",
+            "-f",
+            "critical.sqlite",
+            "{}",
+            "+",
+        ],
+        &config,
+    );
+    denied_with_config(
+        &["find", "protected_cache", "-exec", "rm", "-f", "{}", ";"],
+        &config,
+    );
+    allowed_with_config(
+        &[
+            "find",
+            "protected_cache",
+            "-exec",
+            "printf",
+            "%s",
+            "{}",
+            ";",
+        ],
+        &config,
+    );
+}
+
+#[test]
+fn configured_rules_can_be_scoped_off_without_disabling_builtins() {
+    assert_eq!(
+        evaluate_argv_with_config_scope(
+            &argv(&["rm", "-rf", "protected_cache"]),
+            &protected_config(),
+            false,
+            false,
+        ),
+        DenyDecision::Allow
+    );
+    assert!(matches!(
+        evaluate_argv_with_config_scope(
+            &argv(&["git", "clean", "-fdX"]),
+            &protected_config(),
+            false,
+            false,
+        ),
+        DenyDecision::Deny { .. }
+    ));
+    assert!(matches!(
+        evaluate_argv_with_config_scope(
+            &argv(&["find", ".", "-exec", "git", "clean", "-fdX", "{}", ";"]),
+            &protected_config(),
+            false,
+            false,
+        ),
+        DenyDecision::Deny { .. }
+    ));
 }
 
 #[test]

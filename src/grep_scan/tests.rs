@@ -80,11 +80,29 @@ fn dense_matches_do_not_extend_context_after_the_sample_cap() {
         FileScan::Matched {
             matching_lines,
             samples,
+            sample_matching_lines_omitted,
             ..
         } => {
             assert_eq!(matching_lines, 4);
             assert_eq!(samples.len(), 3);
             assert!(samples.iter().all(|sample| sample.is_match));
+            assert_eq!(sample_matching_lines_omitted, 1);
+        }
+        other => panic!("expected match, got {other:?}"),
+    }
+}
+
+#[test]
+fn sample_lines_record_character_clipping() {
+    let dir = fixture_dir("sample-line-clipping");
+    let path = write_fixture(&dir, "a.txt", "needle payload\n");
+    let matcher = TextMatcher::new("needle", true, false).unwrap();
+    let mut scan_limits = limits(1, 0);
+    scan_limits.max_line_chars = 6;
+    match scan_file(path, &matcher, &scan_limits).unwrap() {
+        FileScan::Matched { samples, .. } => {
+            assert_eq!(samples[0].text, "nee...");
+            assert!(samples[0].text_truncated);
         }
         other => panic!("expected match, got {other:?}"),
     }

@@ -28,36 +28,40 @@ edition 2024).
 
 ## Add to a project
 
-Copy from the unpacked archive into the target repository:
+Run the unpacked release binary from the agent task responsible for maintaining
+the target repository:
 
-1. `contextmink(.exe)` to `tools/contextmink/bin/`. On Windows also copy
-   `contextmink-bridge.exe`; the PowerShell-to-Git-Bash launcher path requires
-   both release binaries.
-2. `templates/scripts/contextmink` to `scripts/contextmink`. The launcher
-   picks or builds the right binary and smooths Git Bash argument handling on
-   Windows.
-3. `templates/.contextmink.toml` to `.contextmink.toml`; edit the excludes to
-   your high-output trees.
-4. `templates/AGENTS.contextmink.md` into `AGENTS.md` (Codex) and/or
-   `templates/CLAUDE.contextmink.md` into `CLAUDE.md` (Claude). These carry
-   the usage policy agents follow.
-5. Ignore host-specific local binaries by default. Add
-   `/tools/contextmink/bin/contextmink*` to the target repository's
-   `.gitignore`. Tracking binaries is an explicit hermetic-install choice, not
-   the portable default.
-   An ignored binary is a per-workstation dependency: fresh clones must repeat
-   the release install. Vendor the source checkout or use a reviewed
-   multi-platform package policy when clone-ready installation is required.
-6. Verify with the invocation for the active shell:
+```bash
+./contextmink setup-project /path/to/repository --dry-run
+./contextmink setup-project /path/to/repository
+```
 
-   | Active shell | Command |
-   | --- | --- |
-   | Bash-hosted session (macOS, Linux, Git Bash, WSL, Claude Code) | `scripts/contextmink files . --limit 20` |
-   | Windows PowerShell, direct contextmink command | `& tools\contextmink\bin\contextmink.exe files . --limit 20` |
-   | Windows PowerShell, Bash launcher path | `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink files . --limit 20` |
+On Windows PowerShell, use
+`& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
+the platform-appropriate release artifacts, installs the Bash launcher and the
+PowerShell diagnostic shim, generates a real project profile, adds the binary
+directory to `.gitignore`, and writes
+`tools/contextmink/agent_integration.md`. It deliberately does not edit
+`AGENTS.md` or `CLAUDE.md`: the maintaining agent must inspect the repository,
+adapt the integration reference to its existing guidance, and choose
+project-specific excludes and destructive-guard fragments.
 
-Variants (standalone binary, vendored source, delegated setup) and the
-Windows bridge are covered in [docs/setup.md](docs/setup.md).
+`setup-project` preflights every destination before writing. It is idempotent
+for the same release, refuses divergent repository-owned configuration, and
+requires `--replace-managed` to update divergent release-managed binaries,
+launchers, or the integration reference. It never replaces
+`.contextmink.toml`.
+
+After integration, verify from the repository root:
+
+```bash
+scripts/contextmink --json files . --limit 1
+scripts/contextmink --json guard-check -- git clean
+```
+
+The first result must carry `schema: "contextmink.receipt.v2"`; the second must
+report `decision: "deny"`. Shell-specific invocation and hermetic-install
+choices are covered in [docs/setup.md](docs/setup.md).
 
 ## Commands
 
@@ -68,15 +72,18 @@ below is the short map.
   deep. Orientation before `files` or `grep`.
 - `files` — list candidate files. `--glob`, `--term`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
-  `--quiet` suppresses the list and reports the exact candidate count without
-  treating display limits as truncation.
+  Enumeration is exact; `--limit` caps only retained/displayed paths.
+  `--quiet` suppresses the path payload, sets `result.shown` to zero, and keeps
+  exact totals and scope caps. Deliberate quiet suppression is not output
+  truncation.
 - `grep` — bounded match summary for a regex or `--literal` pattern. Use
   `--pattern PATTERN` when every positional argument should be a path, and
   `--pattern-file` for shell-fragile regex. `--glob`/`--ext` narrow, `-i`,
-  `--context N`, `--limit`, `--max-matches`. `--quiet` suppresses per-file
-  match content and file lists and emits only the receipt (totals, caps,
-  truncation, scan-scope fields) — for existence/count checks that do not need
-  the matching lines.
+  `--context N`, `--limit`, `--max-sample-lines`, `--max-matching-files`,
+  `--max-content-files`, and optional deterministic `--max-content-bytes`.
+  `--quiet` suppresses per-file match content and file lists, reports zero
+  shown/sample rows, and emits only the receipt. Exact totals and scope caps
+  remain; sample/output caps that would apply only to suppressed payload do not.
 - `grep-terms` — match lines containing every `--term` value (`--any` for
   any). Token search without regex quoting; `--term-file` for phrase lists;
   same narrowing flags as `grep`, including `--quiet`.
@@ -85,7 +92,8 @@ below is the short map.
   banner titles; for JSON, container-opening keys; for XML, container
   elements via a depth-tracking element-stack parse — named/id'd containers
   at any depth plus shallow unnamed sections, never self-closing leaves).
-  21 built-in languages, shebang detection for extensionless scripts.
+  Built-in heuristics cover common source/config formats; shebang detection
+  handles extensionless scripts.
   `--lang` overrides detection, `--prefix <text>` matches literal line
   starts, `--pattern <regex>` covers anything else, `--contains` filters
   rows.
@@ -105,6 +113,9 @@ below is the short map.
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
   strings to INTEGER for indexed joins against integer address columns),
   and a `--timeout-secs` watchdog (default 60).
+- `setup-project` — install a project-local release and print the remaining
+  agent-owned configuration and guidance work. Supports `--dry-run` and
+  explicit `--replace-managed` release upgrades.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument.
 - `capture` — execute argv and print stdout/stderr within one combined line
@@ -131,7 +142,7 @@ below is the short map.
 
 Global flags: `--json` emits one JSON object for machine consumption;
 `--fail-if-truncated` exits nonzero on capped output;
-`--require-complete-scan` exits nonzero when scan caps made totals lower
+`--require-complete-scope` exits nonzero when scope caps made totals lower
 bounds.
 
 ## Examples
@@ -144,7 +155,7 @@ scripts/contextmink files vendor --with-git-ignored --limit 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
-scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --max-matches 12
+scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --max-sample-lines 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
 scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
 scripts/contextmink outline capture_sidecar.json --limit 30
@@ -162,38 +173,44 @@ scripts/contextmink hook-snippet
 
 ## Receipts
 
-Every command ends with `CONTEXTMINK_RECEIPT` followed by JSON (under
-`--json`, the receipt is the output object). `"truncated": true` or
-`"complete": false` means the output was capped: narrow the query and rerun.
-The strict flags emit the receipt first, then exit nonzero.
+Every bounded inspection command ends with `CONTEXTMINK_RECEIPT` followed by a
+`contextmink.receipt.v2` JSON object (under `--json`, that object is the
+output). `scope_complete: false` means the result describes only a bounded
+subset; `output_truncated: true` means emitted payload was omitted or shortened,
+including per-line/per-value character clipping. Character limits include the
+ellipsis itself. `complete` is true only when both conditions are clear. The
+strict flags emit the receipt first, then exit nonzero.
 
 | field | meaning |
 | --- | --- |
 | `tool` | always `"contextmink"` |
+| `schema` | always `"contextmink.receipt.v2"` |
 | `command` | subcommand that ran |
 | `profile` | active `.contextmink.toml` profile, or `null` |
-| `unit` | what `shown` and `total` count |
-| `shown` | items printed, in `unit` |
-| `total` | items available, in `unit` |
-| `truncated` | whether output was capped |
-| `complete` | `!truncated` |
-| `cap_reason` | why output stopped, or `null` |
+| `result.unit` | what `result.shown` and `result.total` count |
+| `result.shown` | result items actually emitted; zero under `--quiet` |
+| `result.total` | observed result items |
+| `result.total_is_lower_bound` | whether a scope cap prevents an exact total |
+| `caps` | structured `{boundary, dimension, limit}` rows |
+| `scope_complete` | false when any cap has `boundary: "scope"` |
+| `output_truncated` | true when any cap has `boundary: "output"` |
+| `complete` | `scope_complete && !output_truncated` |
 | `duration_ms` | wall-clock cost of the command |
 
-Search receipts add match, scan, and skip counts. Candidate enumeration
-always completes, so `candidate_files_total` is exact even when
-`--max-scan-files` caps the content scan (`cap_reason: "scan"`); the
-match-side lower-bound fields (`matched_files_total_is_lower_bound`,
-`total_matches_is_lower_bound`) then mean match totals describe only the
-scanned subset. `no_match_scope` says whether a no-match verdict covered the
+Search receipts use `result.unit: "matching_files"` and add
+`matching_lines_total`, candidate/content admission telemetry, and skip
+counts. Candidate enumeration always completes, so `candidate_files_total` is
+exact; `--max-content-files`, `--max-content-bytes`,
+`--max-matching-files`, or an oversized skipped file add a scope cap and make
+the match-side totals lower bounds. `no_match_scope` says whether a no-match verdict covered the
 `"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
 files skipped as too large or binary. Capture receipts record the child's
-`exit_code`, actual `success`, `expected_exit_codes`, and `exit_expected`
-(`--expect-exit CODE[,CODE...]` changes only expectedness, not actual
-success). Contextmink itself exits zero when capture worked, even if the child
-failed; pass `--fail-with-child` to propagate an unexpected child status after
-the receipt. Use `--receipt-out <file>` to write the full capture receipt,
-including retained stdout/stderr text, while keeping terminal output bounded.
+`child_exit_code`, `child_exit_zero`, `expected_exit_codes`, and `exit_expected`
+(`--expect-exit CODE[,CODE...]` changes only expectedness, not the observed
+exit code or zero-code fact). After emitting the receipt, contextmink propagates every child status
+not declared by `--expect-exit`; a failed child therefore cannot become a
+successful outer workflow. Use `--receipt-out <file>` to write the full capture
+receipt, including the same bounded stdout/stderr text emitted in JSON mode.
 
 ## Behavior notes
 
@@ -214,6 +231,13 @@ including retained stdout/stderr text, while keeping terminal output bounded.
   a force flag. The
   `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override is for human maintenance
   only and prints a warning.
+- The destructive guard is a careless-command tripwire, not a containment or
+  authorization boundary. The built-in `git clean` rule and opaque encoded
+  PowerShell denial are always active, independent of repository cwd;
+  configured protected-path fragments apply only inside their owning project.
+  Finite wrappers such as `env -S`, PowerShell encoded-command flags, and
+  `find -delete`/`-exec` are parsed, but arbitrary indirection can always move
+  behavior outside a static command-string evaluator.
 - `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
   it reads the hook event JSON from stdin, extracts the command string at
   `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
@@ -268,9 +292,9 @@ repositories whose scripts are Bash-first while the agent runs in PowerShell:
   and `capture` share the same Rust process-boundary implementation; no
   parallel shell bridge is retained.
 
-The `scripts/contextmink` launcher additionally shields slash-bearing
-`--pattern`, `--prefix`, `--contains`, `--term`, and JSON Pointer values from
-MSYS rewriting on Git Bash. Setup and boundary details:
+The `scripts/contextmink` launcher additionally shields slash-bearing JSON
+selectors, predicates, regexes, literal terms, SQL, and shell-command values
+from MSYS rewriting on Git Bash. Setup and boundary details:
 [docs/setup.md](docs/setup.md).
 
 ## Configuration
@@ -282,10 +306,7 @@ MSYS rewriting on Git Bash. Setup and boundary details:
 profile = "repo-name"
 
 exclude_globs = [
-  "target/**",
-  "**/target/**",
-  "node_modules/**",
-  "**/node_modules/**",
+  "generated/reports/**",
 ]
 
 # Optional spawn safety for repository-owned critical paths:
@@ -298,6 +319,9 @@ Accepted keys are `profile`, `exclude_globs`,
 `destructive_guard_delete_fragments`; unknown keys, duplicate keys, and
 malformed values are hard errors. Exclude globs match paths relative to the
 config file's directory, so anchored rules hold from any working directory.
+Empty profiles and the shipped placeholder profile are hard errors. Use
+`--config <file>` for an explicit policy or `--no-config` for built-in defaults
+only.
 Excludes quiet broad scans only: pass an explicit file or subdirectory when an
 excluded tree is the target, or `--with-excluded` to lift the globs for one
 command. Git ignore rules are separate; `--with-git-ignored` lifts those.
@@ -319,6 +343,13 @@ checks on Windows, Linux, and macOS. Source checkouts also provide an optional
 cross-link smoke test: install Zig plus `cargo-zigbuild` and run
 `scripts/cross_check.sh`. Zig is not a normal build dependency and the
 repository does not retain host-specific compiler wrappers.
+
+Keep package verification in a separate Cargo target directory. `cargo package`
+verifies the staged source tree under `target/package`; sharing its fingerprints
+with a later checkout build can make that build reuse the staged artifact. CI
+uses `CARGO_TARGET_DIR=target/package-check cargo package --locked`. Use the same
+boundary for local package checks (in PowerShell, set `$env:CARGO_TARGET_DIR`
+before the command), then build the checkout in the ordinary target directory.
 
 ## Scope
 

@@ -14,7 +14,49 @@ on:
         default: true
 
 jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require master for publication
+        if: inputs.create_release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/master" ]]; then
+            echo "public releases must be dispatched from refs/heads/master, got ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --locked --all-targets --all-features
+
+      - name: Run clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check package contents
+        run: cargo package --locked
+        env:
+          CARGO_TARGET_DIR: target/package-check
+
+      - name: Check minimum supported Rust version
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.92.0 --profile minimal
+          cargo +1.92.0 check --locked
+
   build:
+    needs: verify-source
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -156,7 +198,7 @@ jobs:
           test -d "${bundle}/templates"
           test "$("${bundle}/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
-          "${bundle}/${{ matrix.binary_name }}" files src --limit 1 --max-scan-files 20 > /tmp/contextmink-smoke.txt
+          "${bundle}/${{ matrix.binary_name }}" files src --limit 1 > /tmp/contextmink-smoke.txt
           grep -q "CONTEXTMINK_RECEIPT" /tmp/contextmink-smoke.txt
           test -f "${archive}"
           test -f "${archive}.sha256"
@@ -167,22 +209,28 @@ jobs:
           fi
 
           project="${verify_root}/integration-project"
-          mkdir -p "${project}/tools/contextmink/bin" "${project}/scripts" "${project}/nested/work"
-          cp "${bundle}/${{ matrix.binary_name }}" "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
-          cp "${bundle}/templates/scripts/contextmink" "${project}/scripts/contextmink"
-          cp "${bundle}/templates/.contextmink.toml" "${project}/.contextmink.toml"
-          chmod +x "${project}/tools/contextmink/bin/${{ matrix.binary_name }}" "${project}/scripts/contextmink"
+          mkdir -p "${project}/nested/work"
+          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v1"' "${verify_root}/setup-smoke.json"
+          test -f "${project}/tools/contextmink/agent_integration.md"
           printf 'fixture\n' > "${project}/nested/work/fixture.txt"
           (cd "${project}" && scripts/contextmink --json files . --limit 1) > "${verify_root}/root-smoke.json"
           (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --limit 1) > "${verify_root}/nested-smoke.json"
-          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"replace-with-workspace-name"' "${verify_root}/root-smoke.json"
-          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"replace-with-workspace-name"' "${verify_root}/nested-smoke.json"
+          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"integration-project"' "${verify_root}/root-smoke.json"
+          grep -Eq '"profile"[[:space:]]*:[[:space:]]*"integration-project"' "${verify_root}/nested-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.receipt.v2"' "${verify_root}/root-smoke.json"
           (cd "${project}" && scripts/contextmink --json guard-check -- git clean) > "${verify_root}/guard-smoke.json"
           grep -Eq '"decision"[[:space:]]*:[[:space:]]*"deny"' "${verify_root}/guard-smoke.json"
           (cd "${project}" && scripts/contextmink --json hook-snippet --binary "tools/contextmink/bin/${{ matrix.binary_name }}" --guard-config .contextmink.toml) > "${verify_root}/hook-smoke.json"
           grep -q '"PreToolUse"' "${verify_root}/hook-smoke.json"
           (cd "${project}" && scripts/contextmink --json capture -- "tools/contextmink/bin/${{ matrix.binary_name }}" --version) > "${verify_root}/capture-smoke.json"
-          grep -Eq '"success"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
+          grep -Eq '"child_exit_code"[[:space:]]*:[[:space:]]*0' "${verify_root}/capture-smoke.json"
+          grep -Eq '"child_exit_zero"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
+          grep -Eq '"exit_expected"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
+          if grep -Eq '"(exit_code|success)"[[:space:]]*:' "${verify_root}/capture-smoke.json"; then
+            echo "capture smoke retained a removed generic exit field" >&2
+            exit 1
+          fi
 
       - name: Verify packaged release (Windows)
         if: runner.os == 'Windows'
@@ -213,7 +261,7 @@ jobs:
             throw "binary version mismatch: $reportedVersion"
           }
           & $binary --help | Out-File -Encoding utf8 "$env:TEMP/contextmink-help.txt"
-          & $binary files src --limit 1 --max-scan-files 20 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
+          & $binary files src --limit 1 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
           if (!(Select-String -Path "$env:TEMP/contextmink-smoke.txt" -Pattern "CONTEXTMINK_RECEIPT")) {
             throw "smoke output missing receipt"
           }
@@ -225,14 +273,13 @@ jobs:
           if ($actualHash -ne $expectedHash) { throw "archive checksum mismatch" }
 
           $project = "$verifyRoot/integration-project"
-          $projectBin = "$project/tools/contextmink/bin"
-          New-Item -ItemType Directory -Force -Path $projectBin,"$project/scripts","$project/nested/work" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$project/nested/work" | Out-Null
           $project = (Resolve-Path $project).Path
+          $setupSmoke = (& $binary --json setup-project $project | Out-String) | ConvertFrom-Json
+          if ($setupSmoke.schema -ne "contextmink.project_setup.v1") { throw "setup-project schema mismatch" }
+          if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
+          if (!(Test-Path "$project/scripts/contextmink.cmd")) { throw "PowerShell diagnostic shim missing" }
           $projectBin = "$project/tools/contextmink/bin"
-          Copy-Item $binary "$projectBin/contextmink.exe"
-          Copy-Item $bridge "$projectBin/contextmink-bridge.exe"
-          Copy-Item "$bundle/templates/scripts/contextmink" "$project/scripts/contextmink"
-          Copy-Item "$bundle/templates/.contextmink.toml" "$project/.contextmink.toml"
           Set-Content -Path "$project/nested/work/fixture.txt" -Value "fixture" -NoNewline
           $projectBinary = "$projectBin/contextmink.exe"
           $projectBridge = "$projectBin/contextmink-bridge.exe"
@@ -241,19 +288,27 @@ jobs:
             $rootSmoke = (& $projectBinary --json files . --limit 1 | Out-String) | ConvertFrom-Json
             $guardSmoke = (& $projectBinary --json guard-check -- git clean | Out-String) | ConvertFrom-Json
             $hookSmoke = (& $projectBinary --json hook-snippet --binary $projectBinary --guard-config "$project/.contextmink.toml" | Out-String) | ConvertFrom-Json
+            $captureSmoke = (& $projectBinary --json capture -- $projectBinary --version | Out-String) | ConvertFrom-Json
           } finally {
             Pop-Location
           }
-          if ($rootSmoke.profile -ne "replace-with-workspace-name") { throw "root config discovery failed" }
+          if ($rootSmoke.profile -ne "integration-project") { throw "root config discovery failed" }
+          if ($rootSmoke.schema -ne "contextmink.receipt.v2") { throw "root receipt schema mismatch" }
           if ($guardSmoke.decision -ne "deny") { throw "guard-check integration smoke failed" }
           if (!$hookSmoke.hooks.PreToolUse) { throw "hook-snippet integration smoke failed" }
+          if ($captureSmoke.child_exit_code -ne 0 -or !$captureSmoke.child_exit_zero -or !$captureSmoke.exit_expected) {
+            throw "capture exit contract smoke failed"
+          }
+          if ($captureSmoke.PSObject.Properties.Name -contains 'exit_code' -or $captureSmoke.PSObject.Properties.Name -contains 'success') {
+            throw "capture smoke retained a removed generic exit field"
+          }
           Push-Location "$project/nested/work"
           try {
             $nestedSmoke = (& $projectBridge --script scripts/contextmink --json files . --limit 1 | Out-String) | ConvertFrom-Json
           } finally {
             Pop-Location
           }
-          if ($nestedSmoke.profile -ne "replace-with-workspace-name") { throw "nested bridge config discovery failed" }
+          if ($nestedSmoke.profile -ne "integration-project") { throw "nested bridge config discovery failed" }
           $probeArgs = @('native-child', '/type/path', 'he said "hi"', '')
           $probeToken = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($probeArgs -join [char]0)))
           $argvEcho = & $projectBridge --print-argv --argv-b64 $probeToken | Out-String
@@ -271,7 +326,7 @@ jobs:
 
   publish-release:
     if: inputs.create_release
-    needs: build
+    needs: [verify-source, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -21,7 +21,7 @@ use serde_json::Value;
 
 use crate::config::DestructiveGuardConfig;
 use crate::destructive_guard::{
-    DenyDecision, ShellDialect, destructive_override_active, evaluate_argv,
+    DenyDecision, ShellDialect, destructive_override_active, evaluate_argv_with_config_scope,
 };
 
 /// Exit code that hook protocols treat as "block this tool call".
@@ -46,8 +46,8 @@ pub(crate) fn command_hook_guard(
         shell,
     ) {
         HookVerdict::Allow => Ok(()),
-        HookVerdict::AllowUnparsed { note } => {
-            eprintln!("[contextmink hook-guard] {note}; allowing (nothing to scan)");
+        HookVerdict::AllowWithNote { note } => {
+            eprintln!("[contextmink hook-guard] {note}; allowing");
             Ok(())
         }
         HookVerdict::AllowWithOverride { message } => {
@@ -68,8 +68,9 @@ pub(crate) fn command_hook_guard(
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum HookVerdict {
     Allow,
-    /// Payload could not be interpreted; allow, but say why on stderr.
-    AllowUnparsed {
+    /// A recognized non-blocking limitation prevented some policy from being
+    /// applied; allow, but make the exact limitation visible on stderr.
+    AllowWithNote {
         note: String,
     },
     AllowWithOverride {
@@ -124,61 +125,65 @@ pub(crate) fn evaluate_hook_payload_for_root(
     // so tolerate the BOM rather than let it disable the guard.
     let raw = raw.trim_start_matches('\u{feff}');
     if raw.trim().is_empty() {
-        return HookVerdict::AllowUnparsed {
+        return HookVerdict::AllowWithNote {
             note: "empty hook payload".to_owned(),
         };
     }
     let payload: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
         Err(error) => {
-            return HookVerdict::AllowUnparsed {
+            return HookVerdict::AllowWithNote {
                 note: format!("hook payload is not valid JSON ({error})"),
             };
         }
     };
-    if let Some(expected_root) = expected_root {
-        let Some(cwd) = payload.get("cwd").and_then(Value::as_str) else {
-            return HookVerdict::AllowUnparsed {
-                note: format!(
-                    "hook payload has no string `cwd`; policy is bound to {}",
-                    expected_root.display()
-                ),
-            };
-        };
-        if !hook_cwd_is_within(Path::new(cwd), expected_root) {
-            return HookVerdict::AllowUnparsed {
-                note: format!(
-                    "hook cwd {cwd:?} is outside policy root {}",
-                    expected_root.display()
-                ),
-            };
-        }
-    }
     let mut cursor = &payload;
     for key in command_field.split('.') {
         match cursor.get(key) {
             Some(next) => cursor = next,
             None => {
-                return HookVerdict::AllowUnparsed {
+                return HookVerdict::AllowWithNote {
                     note: format!("hook payload has no `{command_field}` field"),
                 };
             }
         }
     }
     let Some(command) = cursor.as_str() else {
-        return HookVerdict::AllowUnparsed {
+        return HookVerdict::AllowWithNote {
             note: format!("hook payload `{command_field}` is not a string"),
         };
     };
     if command.trim().is_empty() {
         return HookVerdict::Allow;
     }
+    let (configured_rules_active, scope_note) = match expected_root {
+        None => (true, None),
+        Some(expected_root) => match payload.get("cwd").and_then(Value::as_str) {
+            Some(cwd) if hook_cwd_is_within(Path::new(cwd), expected_root) => (true, None),
+            Some(cwd) => (
+                false,
+                Some(format!(
+                    "hook cwd {cwd:?} is outside policy root {}",
+                    expected_root.display()
+                )),
+            ),
+            None => (
+                false,
+                Some(format!(
+                    "hook payload has no string `cwd`; configured path policy is bound to {}",
+                    expected_root.display()
+                )),
+            ),
+        },
+    };
     // Present the command exactly as a shell payload: argv[0] is a shell
     // stem, so the quote- and boundary-aware parser applies the same rules it
     // uses for `bash -lc '<script>'` children.
     let argv = shell.command_argv(command);
-    match evaluate_argv(&argv, config, override_active) {
-        DenyDecision::Allow => HookVerdict::Allow,
+    match evaluate_argv_with_config_scope(&argv, config, override_active, configured_rules_active) {
+        DenyDecision::Allow => scope_note.map_or(HookVerdict::Allow, |note| {
+            HookVerdict::AllowWithNote { note }
+        }),
         DenyDecision::AllowWithOverride { message } => HookVerdict::AllowWithOverride { message },
         DenyDecision::Deny { message } => HookVerdict::Deny { message },
     }

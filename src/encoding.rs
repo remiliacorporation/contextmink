@@ -5,7 +5,8 @@
 //! no-match report dishonest, so decoding is BOM-driven here instead of being
 //! left to callers.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -19,6 +20,13 @@ pub(crate) enum FileText {
     SkippedLarge {
         bytes: u64,
     },
+    SkippedBinary,
+}
+
+#[derive(Debug)]
+pub(crate) enum VisitedFileText {
+    Text { encoding: &'static str },
+    SkippedLarge { bytes: u64 },
     SkippedBinary,
 }
 
@@ -37,10 +45,77 @@ pub(crate) fn read_file_text(path: &Path, max_file_bytes: u64) -> Result<FileTex
         });
     }
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok(decode_bytes(&bytes))
+    Ok(decode_owned_bytes(bytes))
 }
 
+/// Visit decoded lines without retaining the complete common-case UTF-8 file.
+/// UTF-16 remains a materialized fallback so its decoding behavior stays
+/// byte-identical to `read_file_text` until the incremental UTF-16 decoder is
+/// separately proven.
+pub(crate) fn visit_file_lines(
+    path: &Path,
+    max_file_bytes: u64,
+    mut visit: impl FnMut(usize, &str),
+) -> Result<VisitedFileText> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
+    if metadata.len() > max_file_bytes {
+        return Ok(VisitedFileText::SkippedLarge {
+            bytes: metadata.len(),
+        });
+    }
+    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let prefix = reader
+        .fill_buf()
+        .with_context(|| format!("failed to inspect encoding for {}", path.display()))?;
+    if prefix.starts_with(&[0xFF, 0xFE]) || prefix.starts_with(&[0xFE, 0xFF]) {
+        return match read_file_text(path, max_file_bytes)? {
+            FileText::Text { text, encoding } => {
+                for (index, line) in text.lines().enumerate() {
+                    visit(index + 1, line);
+                }
+                Ok(VisitedFileText::Text { encoding })
+            }
+            FileText::SkippedLarge { bytes } => Ok(VisitedFileText::SkippedLarge { bytes }),
+            FileText::SkippedBinary => Ok(VisitedFileText::SkippedBinary),
+        };
+    }
+    if prefix.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        reader.consume(3);
+    }
+    let mut raw_line = Vec::new();
+    let mut total_lines = 0usize;
+    loop {
+        raw_line.clear();
+        let bytes = reader
+            .read_until(b'\n', &mut raw_line)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if bytes == 0 {
+            break;
+        }
+        if raw_line.contains(&0) {
+            return Ok(VisitedFileText::SkippedBinary);
+        }
+        if raw_line.last() == Some(&b'\n') {
+            raw_line.pop();
+            if raw_line.last() == Some(&b'\r') {
+                raw_line.pop();
+            }
+        }
+        total_lines += 1;
+        let line = String::from_utf8_lossy(&raw_line);
+        visit(total_lines, &line);
+    }
+    Ok(VisitedFileText::Text { encoding: "utf8" })
+}
+
+#[cfg(test)]
 pub(crate) fn decode_bytes(bytes: &[u8]) -> FileText {
+    decode_owned_bytes(bytes.to_vec())
+}
+
+fn decode_owned_bytes(mut bytes: Vec<u8>) -> FileText {
     if bytes.starts_with(&[0xFF, 0xFE]) {
         return FileText::Text {
             text: decode_utf16(&bytes[2..], u16::from_le_bytes),
@@ -53,12 +128,18 @@ pub(crate) fn decode_bytes(bytes: &[u8]) -> FileText {
             encoding: "utf16be",
         };
     }
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        bytes.drain(..3);
+    }
     if bytes.contains(&0) {
         return FileText::SkippedBinary;
     }
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => String::from_utf8_lossy(&error.into_bytes()).into_owned(),
+    };
     FileText::Text {
-        text: String::from_utf8_lossy(bytes).into_owned(),
+        text,
         encoding: "utf8",
     }
 }
@@ -132,6 +213,15 @@ impl EncodingSuspects {
         }
         note
     }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.double_encoded += other.double_encoded;
+        self.replacement_chars += other.replacement_chars;
+        self.c1_controls += other.c1_controls;
+        if self.sample.is_none() {
+            self.sample = other.sample;
+        }
+    }
 }
 
 /// Scan decoded text for encoding suspects. `double_encode_only` skips the
@@ -145,9 +235,17 @@ impl EncodingSuspects {
 /// per-run comment below). Even so the result is "suspects", reported in
 /// receipts only — never a failure.
 pub(crate) fn scan_encoding_suspects(text: &str, double_encode_only: bool) -> EncodingSuspects {
+    scan_encoding_suspects_from_line(text, double_encode_only, 1)
+}
+
+pub(crate) fn scan_encoding_suspects_from_line(
+    text: &str,
+    double_encode_only: bool,
+    first_line: usize,
+) -> EncodingSuspects {
     let mut suspects = EncodingSuspects::default();
     let mut runs: Vec<DoubleEncodeRun> = Vec::new();
-    let mut line = 1usize;
+    let mut line = first_line;
     let mut char_pos = 0usize;
     let mut iter = text.char_indices().peekable();
     while let Some((index, ch)) = iter.next() {

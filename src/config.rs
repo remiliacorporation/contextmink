@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::{Deserialize, Serialize};
 
 const CONFIG_NAME: &str = ".contextmink.toml";
 const BUILTIN_EXCLUDES: &[&str] = &[
@@ -16,11 +17,20 @@ const BUILTIN_EXCLUDES: &[&str] = &[
     "**/.venv/**",
 ];
 
-#[derive(Debug, Default)]
+const PLACEHOLDER_PROFILE: &str = "replace-with-workspace-name";
+const ACCEPTED_CONFIG_KEYS: &str = "profile, exclude_globs, \
+destructive_guard_recursive_delete_fragments, destructive_guard_delete_fragments";
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ContextminkConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     exclude_globs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     destructive_guard_recursive_delete_fragments: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     destructive_guard_delete_fragments: Option<Vec<String>>,
 }
 
@@ -48,7 +58,7 @@ pub(crate) fn load_context_config(
     let mut raw = ContextminkConfig::default();
     let mut policy_root = None;
     if !no_config {
-        let discovered_config = find_config_path();
+        let discovered_config = find_config_path()?;
         let selected_config = config_path.map(Path::to_path_buf).or(discovered_config);
         if let Some(path) = selected_config.as_deref() {
             let text = fs::read_to_string(path)
@@ -102,192 +112,53 @@ pub(crate) fn canonical_normalized(path: &Path) -> Option<String> {
     }
 }
 
-/// Bespoke parser for the small `.contextmink.toml` surface: `profile`,
-/// `exclude_globs`, and optional destructive-guard fragment lists. Anything
-/// else is a hard error so config typos fail fast instead of silently
-/// changing scan or spawn scope.
+/// Strict TOML parser for the small `.contextmink.toml` surface. Serde rejects
+/// unknown and duplicate fields, while the real TOML parser preserves standard
+/// escaping, multiline arrays, and comment behavior.
 fn parse_config(text: &str) -> Result<ContextminkConfig> {
-    let mut config = ContextminkConfig::default();
-    let mut lines = text.lines().enumerate();
-    while let Some((index, line)) = lines.next() {
-        let line_no = index + 1;
-        let line = strip_comment(line).trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (key, value) = line
-            .split_once('=')
-            .ok_or_else(|| anyhow!("line {line_no}: expected `key = value`, found {line:?}"))?;
-        let key = key.trim();
-        let value = value.trim();
-        match key {
-            "profile" => {
-                if config.profile.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate key `profile`"));
-                }
-                config.profile =
-                    Some(parse_string(value).ok_or_else(|| {
-                        anyhow!("line {line_no}: profile must be a quoted string")
-                    })?);
-            }
-            "exclude_globs" => {
-                if config.exclude_globs.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate key `exclude_globs`"));
-                }
-                config.exclude_globs = Some(parse_config_array(
-                    "exclude_globs",
-                    line_no,
-                    value,
-                    &mut lines,
-                )?);
-            }
-            "destructive_guard_recursive_delete_fragments" => {
-                if config
-                    .destructive_guard_recursive_delete_fragments
-                    .is_some()
-                {
-                    return Err(anyhow!(
-                        "line {line_no}: duplicate key `destructive_guard_recursive_delete_fragments`"
-                    ));
-                }
-                config.destructive_guard_recursive_delete_fragments = Some(parse_config_array(
-                    "destructive_guard_recursive_delete_fragments",
-                    line_no,
-                    value,
-                    &mut lines,
-                )?);
-            }
-            "destructive_guard_delete_fragments" => {
-                if config.destructive_guard_delete_fragments.is_some() {
-                    return Err(anyhow!(
-                        "line {line_no}: duplicate key `destructive_guard_delete_fragments`"
-                    ));
-                }
-                config.destructive_guard_delete_fragments = Some(parse_config_array(
-                    "destructive_guard_delete_fragments",
-                    line_no,
-                    value,
-                    &mut lines,
-                )?);
-            }
-            other => {
-                return Err(anyhow!(
-                    "line {line_no}: unknown key `{other}`; contextmink config accepts `profile`, `exclude_globs`, `destructive_guard_recursive_delete_fragments`, and `destructive_guard_delete_fragments`"
-                ));
-            }
-        }
+    let config: ContextminkConfig = toml::from_str(text).map_err(|error| {
+        let detail = error.to_string();
+        let unknown_key_nudge = detail
+            .split_once("unknown field `")
+            .and_then(|(_, tail)| tail.split_once('`'))
+            .map_or(String::new(), |(field, _)| {
+                format!("unknown key `{field}`; ")
+            });
+        anyhow!(
+            "invalid contextmink TOML: {unknown_key_nudge}{detail}; accepted top-level keys: {ACCEPTED_CONFIG_KEYS}"
+        )
+    })?;
+    if let Some(profile) = config.profile.as_deref() {
+        validate_profile(profile)?;
     }
     Ok(config)
 }
 
-fn parse_config_array<'a, I>(
-    key: &str,
-    line_no: usize,
-    value: &str,
-    lines: &mut I,
-) -> Result<Vec<String>>
-where
-    I: Iterator<Item = (usize, &'a str)>,
-{
-    let mut body = value.to_owned();
-    if !body.starts_with('[') {
-        return Err(anyhow!("line {line_no}: {key} must be an array"));
+fn validate_profile(profile: &str) -> Result<()> {
+    let profile = profile.trim();
+    if profile.is_empty() {
+        return Err(anyhow!("contextmink profile must not be empty"));
     }
-    while !array_is_closed(&body) {
-        let Some((next_index, next_line)) = lines.next() else {
-            return Err(anyhow!(
-                "line {line_no}: {key} array is never closed with `]`"
-            ));
-        };
-        let next_line = strip_comment(next_line).trim();
-        if next_line.contains('=') && !next_line.starts_with(['"', '\'', ']', ',']) {
-            return Err(anyhow!(
-                "line {}: {key} array is never closed with `]`",
-                next_index + 1
-            ));
-        }
-        body.push(' ');
-        body.push_str(next_line);
+    if profile.eq_ignore_ascii_case(PLACEHOLDER_PROFILE) {
+        return Err(anyhow!(
+            "contextmink profile is still the template placeholder {PLACEHOLDER_PROFILE:?}; replace it with the workspace name"
+        ));
     }
-    parse_string_array(&body).map_err(|error| anyhow!("{key} starting at line {line_no}: {error}"))
+    Ok(())
 }
 
-/// A `]` outside quoted strings closes an `exclude_globs` array body.
-fn array_is_closed(body: &str) -> bool {
-    let mut in_string = false;
-    let mut quote = '"';
-    for ch in body.chars() {
-        match ch {
-            '"' | '\'' if !in_string => {
-                in_string = true;
-                quote = ch;
-            }
-            ch if in_string && ch == quote => in_string = false,
-            ']' if !in_string => return true,
-            _ => {}
-        }
-    }
-    false
+pub(crate) fn find_config_path() -> Result<Option<PathBuf>> {
+    let current =
+        std::env::current_dir().context("resolve cwd for contextmink config discovery")?;
+    Ok(crate::process_boundary::find_ancestor_file(
+        &current,
+        CONFIG_NAME,
+    ))
 }
 
-/// Strip a `#` comment that is not inside a quoted string.
-fn strip_comment(line: &str) -> &str {
-    let mut in_string = false;
-    let mut quote = '"';
-    for (offset, ch) in line.char_indices() {
-        match ch {
-            '"' | '\'' if !in_string => {
-                in_string = true;
-                quote = ch;
-            }
-            ch if in_string && ch == quote => in_string = false,
-            '#' if !in_string => return &line[..offset],
-            _ => {}
-        }
-    }
-    line
-}
-
-fn parse_string(value: &str) -> Option<String> {
-    let value = value.trim();
-    let inner = value
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|rest| rest.strip_suffix('\''))
-        })?;
-    if inner.contains(['"', '\'']) {
-        return None;
-    }
-    Some(inner.replace("\\\\", "\\"))
-}
-
-fn parse_string_array(body: &str) -> Result<Vec<String>> {
-    let body = body.trim();
-    let inner = body
-        .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'))
-        .ok_or_else(|| anyhow!("array must be wrapped in [ and ]"))?;
-    let mut values = Vec::new();
-    for item in inner.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        values.push(
-            parse_string(item)
-                .ok_or_else(|| anyhow!("array entries must be quoted strings, found {item:?}"))?,
-        );
-    }
-    Ok(values)
-}
-
-pub(crate) fn find_config_path() -> Option<PathBuf> {
-    let current = std::env::current_dir().ok()?;
-    crate::process_boundary::find_ancestor_file(&current, CONFIG_NAME)
-}
+#[path = "project_setup.rs"]
+#[allow(dead_code)] // The bridge shares config.rs but does not expose project setup.
+pub(crate) mod project_setup;
 
 #[cfg(test)]
 #[path = "config/tests.rs"]

@@ -29,7 +29,9 @@ more output than the transcript should carry.
   `grep --context` instead of raising `--max-lines`.
 - Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
   for literal tokens or phrases (AND by default; pass `--any` for OR). Load
-  phrases with `--term-file` and cap with `--limit` / `--max-matches`. Narrow
+  phrases with `--term-file` and cap with `--limit` /
+  `--max-sample-lines`. Bound inspected content deterministically with
+  `--max-content-files` or `--max-content-bytes`. Narrow
   either with `--glob` / `--ext`, add `-i` for
   case-insensitive matching, and `--context N` when the surrounding lines
   would otherwise need a follow-up `slice`.
@@ -43,7 +45,8 @@ more output than the transcript should carry.
   columns.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no
-  native bound exists; read the child `exit_code`/`success` fields in the
+  native bound exists; read `child_exit_code`, `child_exit_zero`, and
+  `exit_expected` in the
   receipt. Direct capture recognizes files whose first line begins `#!`; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Truncated
   captures keep both the head and the tail of the output.
@@ -53,13 +56,16 @@ more output than the transcript should carry.
   only for files hidden by Git or `.ignore` rules. Broad scans enter
   git-ignored nested repository roots and disclose them in
   `nested_repos_entered`; pass `--skip-nested-repos` for strict Git scope.
-- Treat a `CONTEXTMINK_RECEIPT` with `"truncated": true` or `"complete": false`
-  as capped output and narrow the query. Use `--fail-if-truncated` for
-  automation that requires full displayed output, or `--require-complete-scan`
-  when scan-capped totals should fail. When
-  `cap_reason` is `"scan"` or match-side lower-bound fields are true, match
-  totals and no-match results cover only the scanned subset (candidate file
-  totals stay exact). A no-match grep with
+- Read the `contextmink.receipt.v2` envelope structurally. `scope_complete:
+  false` means totals cover only a bounded subset; `output_truncated: true`
+  means the scope was inspected but payload was omitted. Inspect `caps[]` for
+  the `boundary`, `dimension`, and `limit`, and use `result.unit`,
+  `result.shown`, `result.total`, and `result.total_is_lower_bound` together.
+  Use `--fail-if-truncated` when complete displayed output is required or
+  `--require-complete-scope` when bounded evidence is unacceptable. Candidate
+  enumeration totals stay exact, while grep match totals become lower bounds
+  under content-file, content-byte, matching-file, or oversized-file scope
+  caps. A no-match grep with
   `no_match_scope: "scanned_subset"` or a `json-select` with `all_null_fields`
   entries needs a narrower or corrected query, not a conclusion.
 - Direct commands are fine when output is already known to be small or

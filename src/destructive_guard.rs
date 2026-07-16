@@ -99,6 +99,25 @@ pub(crate) fn evaluate_argv(
     }
 }
 
+/// Evaluate always-on structural rules while optionally disabling the
+/// repository-configured path fragments. Hook adapters use this when a
+/// command belongs to a foreign or unlocated cwd: opaque PowerShell payloads
+/// and git clean remain blocked, but one repository's path policy cannot bleed
+/// into another checkout.
+#[allow(dead_code)] // The bridge uses the fully scoped evaluator; hook-guard selects this variant.
+pub(crate) fn evaluate_argv_with_config_scope(
+    argv: &[String],
+    config: &DestructiveGuardConfig,
+    override_active: bool,
+    configured_rules_active: bool,
+) -> DenyDecision {
+    match deny_destructive_argv_scoped(argv, config, configured_rules_active) {
+        None => DenyDecision::Allow,
+        Some(message) if override_active => DenyDecision::AllowWithOverride { message },
+        Some(message) => DenyDecision::Deny { message },
+    }
+}
+
 pub(crate) fn destructive_override_active() -> bool {
     std::env::var_os(ALLOW_DESTRUCTIVE_ENV).is_some_and(|value| value == "1")
 }
@@ -109,7 +128,21 @@ pub(crate) fn destructive_override_active() -> bool {
 /// that will execute. Shell payloads are parsed into simple commands while
 /// preserving quotes and command boundaries before the same rules are applied.
 fn deny_destructive_argv(argv: &[String], config: &DestructiveGuardConfig) -> Option<String> {
-    deny_command(argv, config, 0, ShellDialect::Posix)
+    deny_destructive_argv_scoped(argv, config, true)
+}
+
+fn deny_destructive_argv_scoped(
+    argv: &[String],
+    config: &DestructiveGuardConfig,
+    configured_rules_active: bool,
+) -> Option<String> {
+    deny_command(
+        argv,
+        config,
+        0,
+        ShellDialect::Posix,
+        configured_rules_active,
+    )
 }
 
 const MAX_NESTED_SHELL_DEPTH: usize = 16;
@@ -119,9 +152,21 @@ fn deny_command(
     config: &DestructiveGuardConfig,
     depth: usize,
     dialect: ShellDialect,
+    configured_rules_active: bool,
 ) -> Option<String> {
     if depth > MAX_NESTED_SHELL_DEPTH {
         return Some("destructive-command inspection exceeded the nested shell limit".to_owned());
+    }
+    if let Some(payload) = env_split_string_payload(tokens)
+        && let Some(message) = deny_shell_payload(
+            payload,
+            config,
+            depth + 1,
+            ShellDialect::Posix,
+            configured_rules_active,
+        )
+    {
+        return Some(message);
     }
     let program_index = command_program_index(tokens, dialect)?;
     let stem = stem_lower(&tokens[program_index]);
@@ -133,7 +178,7 @@ fn deny_command(
         if subcommand.eq_ignore_ascii_case("clean") {
             return Some(GIT_CLEAN_MESSAGE.to_owned());
         }
-        if subcommand.eq_ignore_ascii_case("rm") {
+        if configured_rules_active && subcommand.eq_ignore_ascii_case("rm") {
             let git_rm_args = &args[subcommand_index + 1..];
             let targets = path_operands("git-rm", git_rm_args);
             if git_rm_args
@@ -149,16 +194,43 @@ fn deny_command(
         }
     }
 
+    if matches!(stem.as_str(), "powershell" | "pwsh")
+        && args.iter().any(|token| powershell_encoded_flag(token))
+    {
+        return Some(
+            "encoded PowerShell commands are blocked because their payload cannot be inspected; pass the decoded script with -Command instead"
+                .to_owned(),
+        );
+    }
+
     if SHELL_STEMS.contains(&stem.as_str())
         && let Some(payload) = shell_payload(&stem, args)
-        && let Some(message) = deny_shell_payload(&payload, config, depth + 1, shell_dialect(&stem))
+        && let Some(message) = deny_shell_payload(
+            &payload,
+            config,
+            depth + 1,
+            shell_dialect(&stem),
+            configured_rules_active,
+        )
     {
         return Some(message);
     }
     if stem == "eval"
         && !args.is_empty()
+        && let Some(message) = deny_shell_payload(
+            &args.join(" "),
+            config,
+            depth + 1,
+            ShellDialect::Posix,
+            configured_rules_active,
+        )
+    {
+        return Some(message);
+    }
+
+    if stem == "find"
         && let Some(message) =
-            deny_shell_payload(&args.join(" "), config, depth + 1, ShellDialect::Posix)
+            deny_find_command(args, config, depth, dialect, configured_rules_active)
     {
         return Some(message);
     }
@@ -180,7 +252,7 @@ fn deny_command(
         stem.as_str(),
         "rm" | "del" | "erase" | "unlink" | "remove-item" | "ri" | "rmdir" | "rd"
     );
-    if !is_delete {
+    if !is_delete || !configured_rules_active {
         return None;
     }
     let targets = path_operands(&stem, args);
@@ -199,6 +271,7 @@ fn deny_shell_payload(
     config: &DestructiveGuardConfig,
     depth: usize,
     dialect: ShellDialect,
+    configured_rules_active: bool,
 ) -> Option<String> {
     let parsed = parse_shell_payload(payload, dialect);
     for command in parsed.commands {
@@ -212,17 +285,141 @@ fn deny_shell_payload(
             }
         };
         for expanded in expanded_commands {
-            if let Some(message) = deny_command(&expanded, config, depth, dialect) {
+            if let Some(message) =
+                deny_command(&expanded, config, depth, dialect, configured_rules_active)
+            {
                 return Some(message);
             }
         }
     }
     for substitution in parsed.substitutions {
-        if let Some(message) = deny_shell_payload(&substitution, config, depth + 1, dialect) {
+        if let Some(message) = deny_shell_payload(
+            &substitution,
+            config,
+            depth + 1,
+            dialect,
+            configured_rules_active,
+        ) {
             return Some(message);
         }
     }
     None
+}
+
+/// GNU/BSD env split-string payloads are opaque to ordinary argv scanning.
+/// Follow only env wrappers in command position; an `env -S` token later in
+/// an ordinary command remains data.
+fn env_split_string_payload(tokens: &[String]) -> Option<&str> {
+    let mut index = 0usize;
+    while index < tokens.len() && shell_assignment(&tokens[index]) {
+        index += 1;
+    }
+    while stem_lower(tokens.get(index)?) == "env" {
+        index += 1;
+        while index < tokens.len() {
+            let token = &tokens[index];
+            if matches!(token.as_str(), "-S" | "--split-string") {
+                return tokens.get(index + 1).map(String::as_str);
+            }
+            if let Some(payload) = token.strip_prefix("--split-string=") {
+                return Some(payload);
+            }
+            if let Some(payload) = token.strip_prefix("-S")
+                && !payload.is_empty()
+            {
+                return Some(payload);
+            }
+            if token == "--" {
+                index += 1;
+                break;
+            }
+            if shell_assignment(token) {
+                index += 1;
+            } else if matches!(token.as_str(), "-u" | "--unset" | "-C" | "--chdir") {
+                index += 2;
+            } else if token.starts_with('-') {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    None
+}
+
+fn powershell_encoded_flag(token: &str) -> bool {
+    let Some(option) = token.strip_prefix('-') else {
+        return false;
+    };
+    let option = option
+        .split_once([':', '='])
+        .map_or(option, |(name, _)| name)
+        .to_ascii_lowercase();
+    matches!(option.as_str(), "e" | "ec")
+        || !option.is_empty() && "encodedcommand".starts_with(&option)
+}
+
+fn deny_find_command(
+    args: &[String],
+    config: &DestructiveGuardConfig,
+    depth: usize,
+    dialect: ShellDialect,
+    configured_rules_active: bool,
+) -> Option<String> {
+    let all_tokens = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let recursive_fragment = configured_rules_active
+        .then(|| any_fragment(&all_tokens, &config.recursive_delete_fragments))
+        .flatten();
+    let delete_fragment = configured_rules_active
+        .then(|| any_fragment(&all_tokens, &config.delete_fragments))
+        .flatten();
+    if configured_rules_active && args.iter().any(|token| token == "-delete") {
+        if let Some(fragment) = recursive_fragment {
+            return Some(protected_recursive_delete_message(fragment));
+        }
+        if let Some(fragment) = delete_fragment {
+            return Some(protected_delete_message(fragment));
+        }
+    }
+
+    let mut index = 0usize;
+    while index < args.len() {
+        if !matches!(args[index].as_str(), "-exec" | "-execdir") {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let end = args[start..]
+            .iter()
+            .position(|token| matches!(token.as_str(), ";" | "+"))
+            .map_or(args.len(), |offset| start + offset);
+        let command = &args[start..end];
+        if let Some(message) =
+            deny_command(command, config, depth + 1, dialect, configured_rules_active)
+        {
+            return Some(message);
+        }
+        if configured_rules_active && find_exec_is_delete(command, dialect) {
+            if let Some(fragment) = recursive_fragment {
+                return Some(protected_recursive_delete_message(fragment));
+            }
+            if let Some(fragment) = delete_fragment {
+                return Some(protected_delete_message(fragment));
+            }
+        }
+        index = end.saturating_add(1);
+    }
+    None
+}
+
+fn find_exec_is_delete(tokens: &[String], dialect: ShellDialect) -> bool {
+    let Some(program_index) = command_program_index(tokens, dialect) else {
+        return false;
+    };
+    matches!(
+        stem_lower(&tokens[program_index]).as_str(),
+        "rm" | "del" | "erase" | "unlink" | "remove-item" | "ri" | "rmdir" | "rd"
+    )
 }
 
 fn shell_dialect(stem: &str) -> ShellDialect {

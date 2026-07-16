@@ -26,13 +26,15 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --locked --all-targets --all-features
 
       - name: Run clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Check package contents
         run: cargo package --locked
+        env:
+          CARGO_TARGET_DIR: target/package-check
 
   msrv:
     runs-on: ubuntu-latest

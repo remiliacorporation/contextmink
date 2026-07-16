@@ -158,7 +158,7 @@ fn unparseable_payloads_allow_with_note() {
         (r#"{"tool_input": {"command": 42}}"#, "is not a string"),
     ] {
         match evaluate_hook_payload(raw, FIELD, &config, false) {
-            HookVerdict::AllowUnparsed { note } => assert!(
+            HookVerdict::AllowWithNote { note } => assert!(
                 note.contains(expect),
                 "note for {raw:?} missing {expect:?}: {note}"
             ),
@@ -179,7 +179,7 @@ fn custom_command_field_path_is_honored() {
 #[test]
 fn expected_root_prevents_a_foreign_checkout_policy_from_applying() {
     let config = protected_config();
-    let foreign = evaluate_hook_payload_for_root(
+    let foreign_builtin = evaluate_hook_payload_for_root(
         &payload_with_cwd("git clean -fdX", "D:/work/other-repo"),
         FIELD,
         &config,
@@ -187,8 +187,18 @@ fn expected_root_prevents_a_foreign_checkout_policy_from_applying() {
         Some(Path::new("D:/work/expected-repo")),
         ShellDialect::Posix,
     );
-    match foreign {
-        HookVerdict::AllowUnparsed { note } => {
+    assert!(matches!(foreign_builtin, HookVerdict::Deny { .. }));
+
+    let foreign_configured = evaluate_hook_payload_for_root(
+        &payload_with_cwd("rm -rf .state-cache", "D:/work/other-repo"),
+        FIELD,
+        &config,
+        false,
+        Some(Path::new("D:/work/expected-repo")),
+        ShellDialect::Posix,
+    );
+    match foreign_configured {
+        HookVerdict::AllowWithNote { note } => {
             assert!(note.contains("outside policy root"), "note: {note}");
         }
         other => panic!("expected foreign policy to allow with a note, got {other:?}"),
@@ -203,4 +213,27 @@ fn expected_root_prevents_a_foreign_checkout_policy_from_applying() {
         ShellDialect::Posix,
     );
     assert!(matches!(local, HookVerdict::Deny { .. }));
+}
+
+#[test]
+fn missing_cwd_does_not_disable_always_on_rules() {
+    let verdict = evaluate_hook_payload_for_root(
+        &payload("git clean -fdX"),
+        FIELD,
+        &protected_config(),
+        false,
+        Some(Path::new("D:/work/expected-repo")),
+        ShellDialect::Posix,
+    );
+    assert!(matches!(verdict, HookVerdict::Deny { .. }));
+
+    let configured = evaluate_hook_payload_for_root(
+        &payload("rm -rf .state-cache"),
+        FIELD,
+        &protected_config(),
+        false,
+        Some(Path::new("D:/work/expected-repo")),
+        ShellDialect::Posix,
+    );
+    assert!(matches!(configured, HookVerdict::AllowWithNote { .. }));
 }

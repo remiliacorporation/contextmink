@@ -54,15 +54,105 @@ fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
 }
 
 fn assert_envelope(value: &Value, command: &str, unit: &str) {
+    assert_eq!(value["schema"], "contextmink.receipt.v2");
     assert_eq!(value["tool"], "contextmink");
     assert_eq!(value["command"], command);
     assert_eq!(value["profile"], "test-profile");
-    assert_eq!(value["unit"], unit);
-    assert!(value["shown"].is_number());
-    assert!(value["total"].is_number());
-    assert!(value["truncated"].is_boolean());
+    assert_eq!(value["result"]["unit"], unit);
+    assert!(value["result"]["shown"].is_number());
+    assert!(value["result"]["total"].is_number());
+    assert!(value["result"]["total_is_lower_bound"].is_boolean());
+    assert!(value["scope_complete"].is_boolean());
+    assert!(value["output_truncated"].is_boolean());
     assert!(value["complete"].is_boolean());
-    assert!(value.get("cap_reason").is_some());
+    assert!(value["caps"].is_array());
+}
+
+fn result(value: &Value) -> &Value {
+    &value["result"]
+}
+
+fn has_cap(value: &Value, boundary: &str, dimension: &str) -> bool {
+    value["caps"].as_array().is_some_and(|caps| {
+        caps.iter()
+            .any(|cap| cap["boundary"] == boundary && cap["dimension"] == dimension)
+    })
+}
+
+fn parse_human_receipt(output: &str) -> Value {
+    let receipt = output
+        .lines()
+        .last()
+        .expect("human output must end with a receipt")
+        .strip_prefix("CONTEXTMINK_RECEIPT ")
+        .expect("last line must be the receipt envelope");
+    serde_json::from_str(receipt).expect("receipt must be valid JSON")
+}
+
+#[test]
+fn setup_project_installs_agent_integration_without_editing_guidance() {
+    let root = fixture_root("setup-project-command");
+    fs::remove_file(root.join(".contextmink.toml")).unwrap();
+    fs::write(root.join("AGENTS.md"), "existing guidance\n").unwrap();
+
+    let setup = parse_json_output(&root, &["--json", "setup-project", "."]);
+    assert_eq!(setup["schema"], "contextmink.project_setup.v1");
+    assert_eq!(setup["dry_run"], false);
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "existing guidance\n"
+    );
+    assert!(
+        root.join("tools/contextmink/agent_integration.md")
+            .is_file()
+    );
+    assert!(root.join("scripts/contextmink").is_file());
+    assert!(
+        fs::read_to_string(root.join(".contextmink.toml"))
+            .unwrap()
+            .contains("profile = \"contextmink-setup-project-command-")
+    );
+    assert!(
+        setup["agent_guidance_files_found"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "AGENTS.md")
+    );
+    assert!(
+        setup["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action.as_str().unwrap().contains("agent_integration.md"))
+    );
+
+    let second = parse_json_output(&root, &["--json", "setup-project", "."]);
+    assert!(
+        second["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| { action["action"] == "unchanged" })
+    );
+}
+
+#[test]
+fn setup_project_rejects_unrelated_global_flags() {
+    let root = fixture_root("setup-project-global-flags");
+    for flag in [
+        "--no-config",
+        "--fail-if-truncated",
+        "--require-complete-scope",
+    ] {
+        let output = run_contextmink_raw(&root, &[flag, "setup-project", "."]);
+        assert!(!output.status.success(), "{flag} must be rejected");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("setup-project accepts only its own flags plus --json"),
+            "unexpected stderr for {flag}: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -224,14 +314,14 @@ fn json_commands_share_receipt_envelope() {
 
     let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["truncated"], true);
+    assert_eq!(files["output_truncated"], true);
     assert_eq!(files["complete"], false);
-    assert_eq!(files["cap_reason"], "max");
+    assert!(has_cap(&files, "output", "candidate_files"));
 
     let slice = parse_json_output(&root, &["--json", "slice", "sample.txt", "--range", "1:2"]);
     assert_envelope(&slice, "slice", "lines");
     assert_eq!(slice["complete"], true);
-    assert!(slice["cap_reason"].is_null());
+    assert_eq!(slice["caps"], serde_json::json!([]));
 
     let json_find = parse_json_output(
         &root,
@@ -244,7 +334,7 @@ fn json_commands_share_receipt_envelope() {
         ],
     );
     assert_envelope(&json_find, "json-find", "matches");
-    assert_eq!(json_find["total"], 2);
+    assert_eq!(result(&json_find)["total"], 2);
 }
 
 #[test]
@@ -264,8 +354,8 @@ fn files_filters_by_literal_path_terms() {
     );
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["total"], 1);
-    assert_eq!(files["files"][0], "./render/cgx_state.rs");
+    assert_eq!(result(&files)["total"], 1);
+    assert_eq!(files["files"][0], "render/cgx_state.rs");
 }
 
 #[test]
@@ -309,7 +399,7 @@ fn outline_maps_declarations_with_receipt_envelope() {
     assert_eq!(json["language"], "rust");
     assert_eq!(json["path"], "sample.rs");
     assert_eq!(json["total_lines"], 15);
-    assert_eq!(json["total"], 5);
+    assert_eq!(result(&json)["total"], 5);
     assert_eq!(json["declaration_lines_total"], 5);
     assert_eq!(json["complete"], true);
     assert_eq!(json["items"][0]["line"], 3);
@@ -327,7 +417,7 @@ fn outline_maps_declarations_with_receipt_envelope() {
             "--ignore-case",
         ],
     );
-    assert_eq!(filtered["total"], 1);
+    assert_eq!(result(&filtered)["total"], 1);
     assert_eq!(filtered["declaration_lines_total"], 5);
     assert_eq!(
         filtered["items"][0]["text"],
@@ -335,16 +425,257 @@ fn outline_maps_declarations_with_receipt_envelope() {
     );
 
     let capped = parse_json_output(&root, &["--json", "outline", "sample.rs", "--limit", "2"]);
-    assert_eq!(capped["truncated"], true);
-    assert_eq!(capped["cap_reason"], "max_items");
-    assert_eq!(capped["shown"], 2);
-    assert_eq!(capped["total"], 5);
+    assert_eq!(capped["output_truncated"], true);
+    assert!(has_cap(&capped, "output", "items"));
+    assert_eq!(result(&capped)["shown"], 2);
+    assert_eq!(result(&capped)["total"], 5);
 
     let human = run_contextmink(&root, &["outline", "sample.rs", "--limit", "2"]);
     assert!(human.contains("[contextmink] outline path=sample.rs language=rust total_lines=15"));
     assert!(human.contains("3: pub struct Frame {"));
     assert!(human.contains("capped outline at 2 items"));
     assert!(human.contains("CONTEXTMINK_RECEIPT "));
+}
+
+#[test]
+fn outline_resolves_php_wgsl_and_markdown_document_rules_end_to_end() {
+    let root = fixture_root("outline-added-languages");
+    fs::write(
+        root.join("controller.phtml"),
+        "#[Route('/items')] FINAL CLASS Controller {}\nPUBLIC STATIC FUNCTION Build(): void {}\n$closure = static function () {};\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("shader.wgsl"),
+        "@group(0) @binding(0) var<uniform> camera: Camera;\n@vertex fn main() -> @builtin(position) vec4<f32> {\n    var local = 1;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("guide.md"),
+        "# Visible\n```sh\n# hidden\n```not-a-close\n# still hidden\n```\n   ## Also visible\n",
+    )
+    .unwrap();
+
+    let php = parse_json_output(&root, &["--json", "outline", "controller.phtml"]);
+    assert_envelope(&php, "outline", "items");
+    assert_eq!(php["language"], "php");
+    assert_eq!(php["declaration_lines_total"], 2);
+    assert_eq!(php["items"][0]["line"], 1);
+    assert_eq!(php["items"][1]["line"], 2);
+
+    let wgsl = parse_json_output(&root, &["--json", "outline", "shader.wgsl"]);
+    assert_envelope(&wgsl, "outline", "items");
+    assert_eq!(wgsl["language"], "wgsl");
+    assert_eq!(wgsl["declaration_lines_total"], 2);
+    assert_eq!(wgsl["items"][0]["line"], 1);
+    assert_eq!(wgsl["items"][1]["line"], 2);
+
+    let markdown = parse_json_output(&root, &["--json", "outline", "guide.md"]);
+    assert_envelope(&markdown, "outline", "items");
+    assert_eq!(markdown["language"], "markdown");
+    assert_eq!(markdown["declaration_lines_total"], 2);
+    assert_eq!(markdown["items"][0]["line"], 1);
+    assert_eq!(markdown["items"][1]["line"], 7);
+}
+
+#[test]
+fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
+    let root = fixture_root("payload-character-caps");
+    fs::write(
+        root.join("long.rs"),
+        "pub fn declaration_name_that_exceeds_the_budget() {}\n",
+    )
+    .unwrap();
+    let long_file = root.join("filename_that_exceeds_the_budget.rs");
+    fs::write(&long_file, "needle payload that exceeds the budget\n").unwrap();
+    let long_dir = root.join("directory_name_that_exceeds_the_budget");
+    fs::create_dir_all(&long_dir).unwrap();
+    fs::write(long_dir.join("item.rs"), "fn item() {}\n").unwrap();
+
+    let outline = parse_json_output(
+        &root,
+        &["--json", "outline", "long.rs", "--max-line-chars", "12"],
+    );
+    assert!(
+        outline["items"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("...")
+    );
+    assert_eq!(
+        outline["items"][0]["text"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        12
+    );
+    assert!(has_cap(&outline, "output", "line_characters"));
+
+    let slice = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+            "--max-line-chars",
+            "5",
+        ],
+    );
+    assert_eq!(slice["lines"][0]["text"], "al...");
+    assert!(has_cap(&slice, "output", "line_characters"));
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            long_file.file_name().unwrap().to_str().unwrap(),
+            "--max-line-chars",
+            "8",
+        ],
+    );
+    assert_eq!(files["files"][0].as_str().unwrap().chars().count(), 8);
+    assert!(has_cap(&files, "output", "line_characters"));
+
+    let dirs = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "dirs",
+            long_dir.file_name().unwrap().to_str().unwrap(),
+            "--depth",
+            "1",
+            "--max-line-chars",
+            "12",
+        ],
+    );
+    assert!(
+        dirs["dirs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["display"].as_str().unwrap().chars().count() <= 12)
+    );
+    assert!(has_cap(&dirs, "output", "line_characters"));
+    let dirs_text = run_contextmink(
+        &root,
+        &[
+            "dirs",
+            long_dir.file_name().unwrap().to_str().unwrap(),
+            "--depth",
+            "1",
+            "--max-line-chars",
+            "12",
+        ],
+    );
+    let dirs_receipt = parse_human_receipt(&dirs_text);
+    assert!(has_cap(&dirs_receipt, "output", "line_characters"));
+    assert!(
+        dirs_text
+            .lines()
+            .filter(|line| {
+                !line.starts_with("[contextmink]") && !line.starts_with("CONTEXTMINK_RECEIPT")
+            })
+            .all(|line| line.chars().count() <= 12),
+        "output: {dirs_text}"
+    );
+
+    let grep = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "needle",
+            long_file.file_name().unwrap().to_str().unwrap(),
+            "--max-line-chars",
+            "10",
+        ],
+    );
+    assert_eq!(
+        grep["matching_files"][0]["samples"][0]["text"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        10
+    );
+    assert!(has_cap(&grep, "output", "line_characters"));
+
+    let strict = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "--fail-if-truncated",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+            "--max-line-chars",
+            "5",
+        ],
+    );
+    assert!(!strict.status.success());
+    let strict_receipt: Value = serde_json::from_slice(&strict.stdout).unwrap();
+    assert!(has_cap(&strict_receipt, "output", "line_characters"));
+}
+
+#[test]
+fn grep_reports_actual_per_file_sample_match_omissions() {
+    let root = fixture_root("grep-per-file-sample-omissions");
+    fs::write(
+        root.join("many.txt"),
+        "needle one\nneedle two\nneedle three\n",
+    )
+    .unwrap();
+
+    let omitted = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "needle",
+            "many.txt",
+            "--lines-per-file",
+            "1",
+            "--max-sample-lines",
+            "10",
+        ],
+    );
+    assert_eq!(omitted["sample_matching_lines_omitted"], 2);
+    assert_eq!(
+        omitted["matching_files"][0]["sample_matching_lines_omitted"],
+        2
+    );
+    assert!(has_cap(
+        &omitted,
+        "output",
+        "sample_matching_lines_per_file"
+    ));
+
+    let retained_as_context = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "needle",
+            "many.txt",
+            "--lines-per-file",
+            "1",
+            "--context",
+            "2",
+            "--max-sample-lines",
+            "10",
+        ],
+    );
+    assert_eq!(retained_as_context["sample_matching_lines_omitted"], 0);
+    assert!(!has_cap(
+        &retained_as_context,
+        "output",
+        "sample_matching_lines_per_file"
+    ));
 }
 
 #[test]
@@ -361,14 +692,14 @@ fn outline_fails_fast_without_language_heuristic() {
         &["--json", "outline", "sample.txt", "--pattern", "^alpha"],
     );
     assert_eq!(custom["language"], "pattern");
-    assert_eq!(custom["total"], 2);
+    assert_eq!(result(&custom)["total"], 2);
 
     let prefixed = parse_json_output(
         &root,
         &["--json", "outline", "sample.txt", "--prefix", "alpha"],
     );
     assert_eq!(prefixed["language"], "prefix");
-    assert_eq!(prefixed["total"], 2);
+    assert_eq!(result(&prefixed)["total"], 2);
     assert_eq!(prefixed["items"][0]["line"], 1);
 }
 
@@ -387,7 +718,7 @@ fn json_commands_accept_positional_file() {
         ],
     );
     assert_envelope(&find, "json-find", "matches");
-    assert_eq!(find["total"], 2);
+    assert_eq!(result(&find)["total"], 2);
 
     let select = parse_json_output(
         &root,
@@ -419,15 +750,15 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
         ],
     );
     assert_envelope(&json, "capture", "lines");
-    assert_eq!(json["success"], true);
-    assert_eq!(json["exit_code"], 0);
+    assert_eq!(json["child_exit_zero"], true);
+    assert_eq!(json["child_exit_code"], 0);
     assert_eq!(json["execution_mode"], "native");
     assert!(json["effective_argv"].is_array());
     assert_eq!(json["stdout"]["shown_lines"], 1);
     assert!(json["stdout"]["total_lines"].as_u64().unwrap() > 1);
     assert!(json["stdout"]["omitted_lines"].as_u64().unwrap() > 0);
-    assert_eq!(json["truncated"], true);
-    assert_eq!(json["cap_reason"], "lines");
+    assert_eq!(json["output_truncated"], true);
+    assert!(has_cap(&json, "output", "lines"));
     // With a one-line budget the tail (verdict end of the output) wins.
     assert!(
         json["stdout_text"]
@@ -464,12 +795,101 @@ fn capture_keeps_head_and_tail_when_line_capped() {
     assert!(text.contains("alpha beta"), "head kept: {text}");
     assert!(text.contains("CONTEXTMINK_RECEIPT"), "tail kept: {text}");
     assert!(
-        !text.contains("omitted"),
-        "retained receipt text is not line-clamped: {text}"
+        text.contains("[contextmink] ... omitted 2 line(s) ..."),
+        "JSON carries the same bounded head/tail payload as text mode: {text}"
     );
+    assert!(!text.contains("gamma delta"), "middle omitted: {text}");
     assert_eq!(json["stdout"]["head_lines"], 1);
     assert_eq!(json["stdout"]["tail_lines"], 1);
     assert_eq!(json["stdout"]["omitted_lines"], 2);
+}
+
+#[test]
+fn capture_json_applies_the_line_character_cap_to_payload_text() {
+    let root = fixture_root("capture-line-characters");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "10",
+            "--max-line-chars",
+            "5",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+    let text = json["stdout_text"].as_str().unwrap();
+    assert!(text.contains("1:..."), "clamped payload: {text}");
+    assert!(!text.contains("alpha beta"), "unbounded payload: {text}");
+    assert_eq!(json["stdout"]["char_truncated"], true);
+    assert_eq!(json["output_truncated"], true);
+    assert!(has_cap(&json, "output", "line_characters"));
+}
+
+#[test]
+fn capture_json_applies_the_character_cap_to_omission_markers() {
+    let root = fixture_root("capture-marker-line-characters");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "1",
+            "--max-line-chars",
+            "10",
+            "--",
+            bin,
+            "--help",
+        ],
+    );
+    let text = json["stdout_text"].as_str().unwrap();
+    assert!(
+        text.lines().all(|line| line.chars().count() <= 10),
+        "{text}"
+    );
+    assert_eq!(json["stdout"]["line_truncated"], true);
+    assert_eq!(json["stdout"]["char_truncated"], true);
+    assert!(has_cap(&json, "output", "lines"));
+    assert!(has_cap(&json, "output", "line_characters"));
+}
+
+#[test]
+fn capture_byte_retention_does_not_claim_a_nonbinding_line_cap() {
+    let root = fixture_root("capture-byte-only-cap");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "100",
+            "--max-bytes",
+            "100",
+            "--max-line-chars",
+            "1000",
+            "--",
+            bin,
+            "--help",
+        ],
+    );
+    assert_eq!(json["stdout"]["byte_truncated"], true);
+    assert_eq!(json["stdout"]["line_truncated"], false);
+    assert!(has_cap(&json, "output", "bytes_per_stream"));
+    assert!(!has_cap(&json, "output", "lines"));
 }
 
 #[test]
@@ -530,8 +950,10 @@ fn capture_uses_capture_receipt_shape() {
         ],
     );
     assert_envelope(&json, "capture", "lines");
-    assert_eq!(json["success"], true);
-    assert_eq!(json["exit_code"], 0);
+    assert_eq!(json["child_exit_zero"], true);
+    assert_eq!(json["child_exit_code"], 0);
+    assert!(json.get("exit_code").is_none());
+    assert!(json.get("success").is_none());
 }
 
 #[test]
@@ -551,7 +973,7 @@ fn capture_script_runs_no_shebang_bash_script_through_shared_boundary() {
         ],
     );
     assert_envelope(&json, "capture", "lines");
-    assert_eq!(json["success"], true);
+    assert_eq!(json["child_exit_zero"], true);
     assert_eq!(json["execution_mode"], "bash_script");
     assert!(json["stdout_text"].as_str().unwrap().contains("two words"));
     assert_eq!(json["effective_argv"].as_array().unwrap().len(), 3);
@@ -563,21 +985,13 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
 
     let output = run_contextmink_raw(
         &root,
-        &[
-            "--fail-if-truncated",
-            "files",
-            ".",
-            "--limit",
-            "1",
-            "--max-scan-files",
-            "20",
-        ],
+        &["--fail-if-truncated", "files", ".", "--limit", "1"],
     );
     assert!(!output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stdout.contains("CONTEXTMINK_RECEIPT "));
-    assert!(stdout.contains("\"truncated\":true"));
+    assert!(stdout.contains("\"output_truncated\":true"));
     assert!(stderr.contains("strict completion requested"));
 }
 
@@ -597,45 +1011,37 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
 
     let display_capped = run_contextmink_raw(
         &root,
-        &[
-            "--require-complete-scan",
-            "files",
-            ".",
-            "--limit",
-            "1",
-            "--max-scan-files",
-            "20",
-        ],
+        &["--require-complete-scope", "files", ".", "--limit", "1"],
     );
     assert!(display_capped.status.success());
     let display_stdout = String::from_utf8(display_capped.stdout).unwrap();
-    assert!(display_stdout.contains("\"cap_reason\":\"max\""));
+    assert!(display_stdout.contains("\"scope_complete\":true"));
+    assert!(display_stdout.contains("\"output_truncated\":true"));
 
     let scan_capped = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scan",
-            "files",
+            "--require-complete-scope",
+            "grep",
+            "not-present",
             ".",
-            "--limit",
-            "10",
-            "--max-scan-files",
+            "--max-content-files",
             "1",
         ],
     );
     assert!(!scan_capped.status.success());
     let scan_stdout = String::from_utf8(scan_capped.stdout).unwrap();
     let scan_stderr = String::from_utf8(scan_capped.stderr).unwrap();
-    assert!(scan_stdout.contains("\"cap_reason\":\"scan\""));
-    assert!(scan_stderr.contains("--require-complete-scan"));
+    assert!(scan_stdout.contains("\"boundary\":\"scope\""));
+    assert!(scan_stderr.contains("--require-complete-scope"));
 }
 
 #[test]
-fn capture_keeps_nonzero_child_status_in_receipt() {
+fn capture_propagates_unexpected_child_status_after_receipt() {
     let root = fixture_root("capture-nonzero");
     let bin = env!("CARGO_BIN_EXE_contextmink");
 
-    let json = parse_json_output(
+    let output = run_contextmink_raw(
         &root,
         &[
             "--json",
@@ -649,9 +1055,11 @@ fn capture_keeps_nonzero_child_status_in_receipt() {
             "1:1",
         ],
     );
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_envelope(&json, "capture", "lines");
-    assert_eq!(json["success"], false);
-    assert_ne!(json["exit_code"], 0);
+    assert_eq!(json["child_exit_zero"], false);
+    assert_ne!(json["child_exit_code"], 0);
     assert!(json["stderr"]["total_bytes"].as_u64().unwrap() > 0);
     assert!(
         json["stderr_text"]
@@ -662,39 +1070,15 @@ fn capture_keeps_nonzero_child_status_in_receipt() {
 }
 
 #[test]
-fn capture_fail_with_child_propagates_exit_code_after_receipt() {
-    let root = fixture_root("capture-fail-with-child");
+fn capture_successful_child_keeps_outer_success() {
+    let root = fixture_root("capture-success");
     let bin = env!("CARGO_BIN_EXE_contextmink");
 
-    // Failing child: contextmink exits with the child's code, receipt intact.
     let output = run_contextmink_raw(
         &root,
         &[
             "--json",
             "capture",
-            "--fail-with-child",
-            "--",
-            bin,
-            "--no-config",
-            "slice",
-            "missing.txt",
-            "--range",
-            "1:1",
-        ],
-    );
-    assert!(!output.status.success());
-    assert_eq!(output.status.code(), Some(1));
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_envelope(&json, "capture", "lines");
-    assert_eq!(json["success"], false);
-
-    // Succeeding child: exit stays 0.
-    let output = run_contextmink_raw(
-        &root,
-        &[
-            "--json",
-            "capture",
-            "--fail-with-child",
             "--",
             bin,
             "--no-config",
@@ -706,11 +1090,20 @@ fn capture_fail_with_child_propagates_exit_code_after_receipt() {
     );
     assert!(output.status.success());
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["success"], true);
+    assert_eq!(json["child_exit_zero"], true);
 }
 
 #[test]
-fn capture_expect_exit_gates_fail_with_child_without_overwriting_success() {
+fn capture_help_omits_the_removed_fail_with_child_flag() {
+    let root = fixture_root("capture-removed-fail-with-child");
+    let output = run_contextmink_raw(&root, &["capture", "--help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("--fail-with-child"));
+}
+
+#[test]
+fn capture_expect_exit_accepts_declared_nonzero_and_reports_child_exit_zero() {
     let root = fixture_root("capture-expect-exit");
     let bin = env!("CARGO_BIN_EXE_contextmink");
 
@@ -719,7 +1112,6 @@ fn capture_expect_exit_gates_fail_with_child_without_overwriting_success() {
         &[
             "--json",
             "capture",
-            "--fail-with-child",
             "--expect-exit",
             "0,1",
             "--",
@@ -733,13 +1125,13 @@ fn capture_expect_exit_gates_fail_with_child_without_overwriting_success() {
     );
     assert!(
         output.status.success(),
-        "expected exit code should satisfy --fail-with-child\nstdout:\n{}\nstderr:\n{}",
+        "declared child exit code should be accepted\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["exit_code"], 1);
-    assert_eq!(json["success"], false);
+    assert_eq!(json["child_exit_code"], 1);
+    assert_eq!(json["child_exit_zero"], false);
     assert_eq!(json["exit_expected"], true);
     assert_eq!(json["expected_exit_codes"], serde_json::json!([0, 1]));
 }
@@ -774,12 +1166,12 @@ fn capture_receipt_out_writes_full_json_receipt() {
     let json: Value = serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
     assert_envelope(&json, "capture", "lines");
     assert_eq!(json["exit_expected"], true);
-    assert_eq!(json["success"], true);
+    assert_eq!(json["child_exit_zero"], true);
     assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
 }
 
 #[test]
-fn capture_receipt_out_preserves_retained_long_line_text() {
+fn capture_receipt_out_uses_the_same_bounded_long_line_text() {
     let root = fixture_root("capture-receipt-out-long-line");
     let bin = env!("CARGO_BIN_EXE_contextmink");
     let receipt = root.join("receipts").join("long.json");
@@ -815,43 +1207,34 @@ fn capture_receipt_out_preserves_retained_long_line_text() {
         String::from_utf8_lossy(&output.stderr)
     );
     let json: Value = serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_eq!(json["stdout"]["output_truncated"], true);
     assert_eq!(json["stdout"]["char_truncated"], true);
+    assert!(has_cap(&json, "output", "line_characters"));
     let stdout_text = json["stdout_text"].as_str().unwrap();
-    let child_json: Value = serde_json::from_str(stdout_text).unwrap();
-    assert_eq!(child_json["lines"][0]["text"], long_payload);
+    assert!(!stdout_text.contains(&long_payload));
+    assert!(stdout_text.lines().all(|line| line.chars().count() <= 80));
 }
 
 #[test]
-fn files_scan_cap_sets_complete_false() {
+fn files_display_cap_preserves_exact_scope() {
     let root = fixture_root("files-scan-cap");
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
     fs::write(root.join("extra_b.txt"), "b\n").unwrap();
 
-    let files = parse_json_output(
-        &root,
-        &[
-            "--json",
-            "files",
-            ".",
-            "--limit",
-            "10",
-            "--max-scan-files",
-            "2",
-        ],
-    );
+    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "2"]);
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 2);
-    assert_eq!(files["truncated"], true);
+    assert_eq!(result(&files)["shown"], 2);
+    assert_eq!(files["output_truncated"], true);
+    assert_eq!(files["scope_complete"], true);
     assert_eq!(files["complete"], false);
-    assert_eq!(files["cap_reason"], "scan");
-    assert_eq!(files["candidate_files_scanned"], 2);
+    assert!(has_cap(&files, "output", "candidate_files"));
     // Enumeration completes before the cap applies: the total is exact and
     // the surviving subset is the sorted prefix.
-    assert_eq!(files["candidate_files_total_is_lower_bound"], false);
-    assert_eq!(files["total"], 5);
+    assert_eq!(result(&files)["total_is_lower_bound"], false);
+    assert_eq!(result(&files)["total"], 5);
     assert_eq!(
         files["files"],
-        serde_json::json!(["./.contextmink.toml", "./extra_a.txt"])
+        serde_json::json!([".contextmink.toml", "extra_a.txt"])
     );
 }
 
@@ -864,9 +1247,9 @@ fn files_deduplicates_overlapping_root_spellings() {
         &["--json", "files", ".", absolute.as_str(), "--limit", "10"],
     );
 
-    assert_eq!(files["total"], 3);
-    assert_eq!(files["shown"], 3);
-    assert_eq!(files["truncated"], false);
+    assert_eq!(result(&files)["total"], 3);
+    assert_eq!(result(&files)["shown"], 3);
+    assert_eq!(files["output_truncated"], false);
 }
 
 #[test]
@@ -884,8 +1267,8 @@ fn files_glob_matches_basename_inside_explicit_roots() {
     );
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 1);
-    assert_eq!(files["total"], 1);
+    assert_eq!(result(&files)["shown"], 1);
+    assert_eq!(result(&files)["total"], 1);
     assert_eq!(files["files"][0], "queue/work.jsonl");
 }
 
@@ -929,8 +1312,8 @@ fn files_term_matches_literal_decomp_ledger_name() {
     );
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 1);
-    assert_eq!(files["total"], 1);
+    assert_eq!(result(&files)["shown"], 1);
+    assert_eq!(result(&files)["total"], 1);
     assert_eq!(
         files["files"][0],
         "decompilation_outputs/ledgers/rename/rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl"
@@ -954,8 +1337,8 @@ fn files_term_composes_with_repeated_terms_and_extension_filter() {
     );
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 1);
-    assert_eq!(files["total"], 1);
+    assert_eq!(result(&files)["shown"], 1);
+    assert_eq!(result(&files)["total"], 1);
     assert_eq!(files["files"][0], "queue/rename_alpha_target.jsonl");
 }
 
@@ -975,8 +1358,8 @@ fn files_ext_filters_without_shell_glob_patterns() {
     );
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 2);
-    assert_eq!(files["total"], 2);
+    assert_eq!(result(&files)["shown"], 2);
+    assert_eq!(result(&files)["total"], 2);
     assert_eq!(files["files"][0], "queue/work.JSON");
     assert_eq!(files["files"][1], "queue/work.jsonl");
 }
@@ -990,7 +1373,7 @@ fn files_positional_path_overrides_default_root() {
     let files = parse_json_output(&root, &["--json", "files", "queue"]);
 
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["total"], 1);
+    assert_eq!(result(&files)["total"], 1);
     assert_eq!(files["files"][0], "queue/work.jsonl");
 }
 
@@ -1030,16 +1413,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
 
     let bypass = parse_json_output(
         &root,
-        &[
-            "--json",
-            "files",
-            ".",
-            "--with-excluded",
-            "--limit",
-            "20",
-            "--max-scan-files",
-            "20",
-        ],
+        &["--json", "files", ".", "--with-excluded", "--limit", "20"],
     );
     assert_envelope(&bypass, "files", "files");
     assert!(
@@ -1047,24 +1421,16 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|path| path.as_str().unwrap() == "./artifacts/notes/finding.md")
+            .any(|path| path.as_str().unwrap() == "artifacts/notes/finding.md")
     );
 
     let files = parse_json_output(
         &root,
-        &[
-            "--json",
-            "files",
-            "artifacts/notes",
-            "--limit",
-            "20",
-            "--max-scan-files",
-            "20",
-        ],
+        &["--json", "files", "artifacts/notes", "--limit", "20"],
     );
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 1);
-    assert_eq!(files["total"], 1);
+    assert_eq!(result(&files)["shown"], 1);
+    assert_eq!(result(&files)["total"], 1);
     assert_eq!(files["files"][0], "artifacts/notes/finding.md");
 
     let grep = parse_json_output(
@@ -1074,14 +1440,14 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
             "grep",
             "needle",
             "artifacts/notes",
-            "--max-scan-files",
+            "--max-content-files",
             "20",
         ],
     );
-    assert_envelope(&grep, "grep", "files");
-    assert_eq!(grep["shown"], 1);
-    assert_eq!(grep["total"], 1);
-    assert_eq!(grep["total_matches"], 1);
+    assert_envelope(&grep, "grep", "matching_files");
+    assert_eq!(result(&grep)["shown"], 1);
+    assert_eq!(result(&grep)["total"], 1);
+    assert_eq!(grep["matching_lines_total"], 1);
 }
 
 #[test]
@@ -1106,18 +1472,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
 
     // vendor/sqlite-tool is git-ignored but is itself a repo root: the
     // nested-repo supplement enters it and discloses the entry.
-    let without_flag = parse_json_output(
-        &root,
-        &[
-            "--json",
-            "files",
-            ".",
-            "--limit",
-            "20",
-            "--max-scan-files",
-            "20",
-        ],
-    );
+    let without_flag = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
     assert_envelope(&without_flag, "files", "files");
     let files_without_flag = without_flag["files"].as_array().unwrap();
     assert!(
@@ -1143,8 +1498,6 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "--skip-nested-repos",
             "--limit",
             "20",
-            "--max-scan-files",
-            "20",
         ],
     );
     assert_envelope(&skipped, "files", "files");
@@ -1165,8 +1518,6 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             ".",
             "--with-git-ignored",
             "--limit",
-            "20",
-            "--max-scan-files",
             "20",
         ],
     );
@@ -1202,18 +1553,7 @@ fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
 
     let expected = ["group/a-repo", "ignored/z-repo"];
     for _ in 0..4 {
-        let receipt = parse_json_output(
-            &root,
-            &[
-                "--json",
-                "files",
-                ".",
-                "--limit",
-                "200",
-                "--max-scan-files",
-                "200",
-            ],
-        );
+        let receipt = parse_json_output(&root, &["--json", "files", ".", "--limit", "200"]);
         let nested = receipt["nested_repos_entered"]
             .as_array()
             .unwrap()
@@ -1225,7 +1565,7 @@ fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
 }
 
 #[test]
-fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
+fn grep_content_file_cap_marks_no_match_as_scanned_subset_only() {
     let root = fixture_root("grep-scan-cap");
     fs::write(root.join("extra_a.txt"), "alpha\n").unwrap();
     fs::write(root.join("extra_b.txt"), "alpha\n").unwrap();
@@ -1237,18 +1577,18 @@ fn grep_scan_cap_marks_no_match_as_scanned_subset_only() {
             "grep",
             "not-present",
             ".",
-            "--max-scan-files",
+            "--max-content-files",
             "1",
         ],
     );
-    assert_envelope(&grep, "grep", "files");
-    assert_eq!(grep["shown"], 0);
-    assert_eq!(grep["truncated"], true);
+    assert_envelope(&grep, "grep", "matching_files");
+    assert_eq!(result(&grep)["shown"], 0);
+    assert_eq!(grep["scope_complete"], false);
     assert_eq!(grep["complete"], false);
-    assert_eq!(grep["cap_reason"], "scan");
-    assert_eq!(grep["candidate_files_scanned"], 1);
+    assert!(has_cap(&grep, "scope", "candidate_files"));
+    assert_eq!(grep["candidate_files_selected"], 1);
     // The candidate total is exact even though content scanning was capped.
-    assert_eq!(grep["candidate_files_total_is_lower_bound"], false);
+    assert_eq!(result(&grep)["total_is_lower_bound"], true);
     assert_eq!(grep["candidate_files_total"], 5);
     assert_eq!(grep["no_match_scope"], "scanned_subset");
 }
@@ -1269,8 +1609,8 @@ fn grep_terms_reports_public_command_name() {
             "sample.txt",
         ],
     );
-    assert_envelope(&json, "grep-terms", "files");
-    assert_eq!(json["total_matches"], 1);
+    assert_envelope(&json, "grep-terms", "matching_files");
+    assert_eq!(json["matching_lines_total"], 1);
 
     let human = run_contextmink(
         &root,
@@ -1283,7 +1623,7 @@ fn grep_terms_reports_public_command_name() {
         .strip_prefix("CONTEXTMINK_RECEIPT ")
         .unwrap();
     let receipt: Value = serde_json::from_str(receipt).unwrap();
-    assert_envelope(&receipt, "grep-terms", "files");
+    assert_envelope(&receipt, "grep-terms", "matching_files");
 }
 
 #[test]
@@ -1303,9 +1643,9 @@ fn grep_terms_supports_any_mode_and_term_files() {
             "sample.txt",
         ],
     );
-    assert_envelope(&default_all, "grep-terms", "files");
+    assert_envelope(&default_all, "grep-terms", "matching_files");
     assert_eq!(default_all["pattern"], "all_terms(alpha,beta)");
-    assert_eq!(default_all["total_matches"], 1);
+    assert_eq!(default_all["matching_lines_total"], 1);
 
     let any = parse_json_output(
         &root,
@@ -1320,9 +1660,9 @@ fn grep_terms_supports_any_mode_and_term_files() {
             "sample.txt",
         ],
     );
-    assert_envelope(&any, "grep-terms", "files");
+    assert_envelope(&any, "grep-terms", "matching_files");
     assert_eq!(any["pattern"], "any_terms(alpha,beta)");
-    assert_eq!(any["total_matches"], 3);
+    assert_eq!(any["matching_lines_total"], 3);
 
     let term_file = parse_json_output(
         &root,
@@ -1335,9 +1675,9 @@ fn grep_terms_supports_any_mode_and_term_files() {
             "sample.txt",
         ],
     );
-    assert_envelope(&term_file, "grep-terms", "files");
+    assert_envelope(&term_file, "grep-terms", "matching_files");
     assert_eq!(term_file["pattern"], "any_terms(alpha beta,missing phrase)");
-    assert_eq!(term_file["total_matches"], 1);
+    assert_eq!(term_file["matching_lines_total"], 1);
 }
 
 #[test]
@@ -1354,28 +1694,34 @@ fn grep_terms_accepts_canonical_limits() {
             "alpha",
             "--limit",
             "1",
-            "--max-matches",
+            "--max-sample-lines",
             "1",
             "sample.txt",
         ],
     );
-    assert_envelope(&json, "grep-terms", "files");
-    assert_eq!(json["shown"], 1);
+    assert_envelope(&json, "grep-terms", "matching_files");
+    assert_eq!(result(&json)["shown"], 1);
     assert_eq!(json["sample_lines_shown"], 1);
-    assert_eq!(json["cap_reason"], "samples");
-    assert_eq!(json["files"][0]["samples"].as_array().unwrap().len(), 1);
+    assert!(has_cap(&json, "output", "sample_lines"));
+    assert_eq!(
+        json["matching_files"][0]["samples"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 
     let flag_like = parse_json_output(
         &root,
         &["--json", "grep-terms", "--term", "--flag-like", "flags.txt"],
     );
-    assert_envelope(&flag_like, "grep-terms", "files");
-    assert_eq!(flag_like["total_matches"], 1);
+    assert_envelope(&flag_like, "grep-terms", "matching_files");
+    assert_eq!(flag_like["matching_lines_total"], 1);
 
     let help = run_contextmink(&root, &["grep-terms", "--help"]);
-    assert!(help.contains("--max-count-files"));
+    assert!(help.contains("--max-matching-files"));
     assert!(help.contains("--limit"));
-    assert!(help.contains("--max-matches"));
+    assert!(help.contains("--max-sample-lines"));
     assert!(help.contains("--any"));
     assert!(!help.contains("--max-lines"));
     assert!(!help.contains("--mode"));
@@ -1397,32 +1743,32 @@ fn grep_stops_content_scan_at_matching_file_cap() {
             "grep-terms",
             "--term",
             "needle",
-            "--max-count-files",
+            "--max-matching-files",
             "2",
             "--limit",
             "2",
             "matches",
         ],
     );
-    assert_envelope(&json, "grep-terms", "files");
-    assert_eq!(json["shown"], 2);
-    assert_eq!(json["matched_files_total"], 2);
-    assert_eq!(json["matched_files_total_is_lower_bound"], true);
-    assert_eq!(json["total_matches"], 2);
-    assert_eq!(json["total_matches_is_lower_bound"], true);
-    assert_eq!(json["candidate_files_scanned"], 5);
+    assert_envelope(&json, "grep-terms", "matching_files");
+    assert_eq!(result(&json)["shown"], 2);
+    assert_eq!(result(&json)["total"], 2);
+    assert_eq!(result(&json)["total_is_lower_bound"], true);
+    assert_eq!(json["matching_lines_total"], 2);
+    assert_eq!(json["matching_lines_total_is_lower_bound"], true);
+    assert_eq!(json["candidate_files_selected"], 5);
     assert_eq!(json["content_files_scanned"], 2);
-    assert_eq!(json["cap_reason"], "matched_files");
-    assert_eq!(json["truncated"], true);
+    assert!(has_cap(&json, "scope", "matching_files"));
+    assert_eq!(json["scope_complete"], false);
 
     let guarded = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scan",
+            "--require-complete-scope",
             "grep-terms",
             "--term",
             "needle",
-            "--max-count-files",
+            "--max-matching-files",
             "2",
             "matches",
         ],
@@ -1430,12 +1776,12 @@ fn grep_stops_content_scan_at_matching_file_cap() {
     assert!(!guarded.status.success());
     let guarded_stdout = String::from_utf8(guarded.stdout).unwrap();
     let guarded_stderr = String::from_utf8(guarded.stderr).unwrap();
-    assert!(guarded_stdout.contains("\"cap_reason\":\"matched_files\""));
-    assert!(guarded_stderr.contains("--require-complete-scan"));
+    assert!(guarded_stdout.contains("\"dimension\":\"matching_files\""));
+    assert!(guarded_stderr.contains("--require-complete-scope"));
 }
 
 #[test]
-fn grep_marks_match_totals_lower_bound_when_candidate_scan_is_capped() {
+fn grep_marks_match_totals_lower_bound_when_content_file_scope_is_capped() {
     let root = fixture_root("grep-scan-cap-match-bounds");
     let matches = root.join("matches");
     fs::create_dir_all(&matches).unwrap();
@@ -1450,25 +1796,25 @@ fn grep_marks_match_totals_lower_bound_when_candidate_scan_is_capped() {
             "grep-terms",
             "--term",
             "needle",
-            "--max-scan-files",
+            "--max-content-files",
             "1",
-            "--max-count-files",
+            "--max-matching-files",
             "10",
             "--limit",
             "10",
             "matches",
         ],
     );
-    assert_envelope(&json, "grep-terms", "files");
+    assert_envelope(&json, "grep-terms", "matching_files");
     assert_eq!(json["candidate_files_total"], 3);
-    assert_eq!(json["candidate_files_scanned"], 1);
+    assert_eq!(json["candidate_files_selected"], 1);
     assert_eq!(json["content_files_scanned"], 1);
-    assert_eq!(json["matched_files_total"], 1);
-    assert_eq!(json["matched_files_total_is_lower_bound"], true);
-    assert_eq!(json["total_matches"], 1);
-    assert_eq!(json["total_matches_is_lower_bound"], true);
-    assert_eq!(json["cap_reason"], "scan");
-    assert_eq!(json["truncated"], true);
+    assert_eq!(result(&json)["total"], 1);
+    assert_eq!(result(&json)["total_is_lower_bound"], true);
+    assert_eq!(json["matching_lines_total"], 1);
+    assert_eq!(json["matching_lines_total_is_lower_bound"], true);
+    assert!(has_cap(&json, "scope", "candidate_files"));
+    assert_eq!(json["scope_complete"], false);
 }
 
 #[test]
@@ -1484,17 +1830,23 @@ fn grep_json_honors_global_sample_cap() {
             "sample.txt",
             "--lines-per-file",
             "3",
-            "--max-matches",
+            "--max-sample-lines",
             "1",
         ],
     );
-    assert_envelope(&json, "grep", "files");
-    assert_eq!(json["shown"], 1);
-    assert_eq!(json["files"].as_array().unwrap().len(), 1);
-    assert_eq!(json["files"][0]["samples"].as_array().unwrap().len(), 1);
+    assert_envelope(&json, "grep", "matching_files");
+    assert_eq!(result(&json)["shown"], 1);
+    assert_eq!(json["matching_files"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json["matching_files"][0]["samples"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(json["sample_lines_shown"], 1);
-    assert_eq!(json["cap_reason"], "samples");
-    assert_eq!(json["truncated"], true);
+    assert!(has_cap(&json, "output", "sample_lines"));
+    assert_eq!(json["output_truncated"], true);
 }
 
 #[test]
@@ -1512,10 +1864,9 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
             "sample.txt",
         ],
     );
-    assert_envelope(&json, "grep", "files");
+    assert_envelope(&json, "grep", "matching_files");
     assert_eq!(json["pattern"], "\"alpha|beta\"");
-    // total_matches counts matching lines: "alpha beta", "alpha", "beta".
-    assert_eq!(json["total_matches"], 3);
+    assert_eq!(json["matching_lines_total"], 3);
 }
 
 #[test]
@@ -1523,10 +1874,10 @@ fn grep_accepts_positional_search_paths() {
     let root = fixture_root("grep-positional-path");
 
     let json = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
-    assert_envelope(&json, "grep", "files");
-    assert_eq!(json["shown"], 1);
-    assert_eq!(json["total_matches"], 2);
-    assert_eq!(json["files"][0]["path"], "sample.txt");
+    assert_envelope(&json, "grep", "matching_files");
+    assert_eq!(result(&json)["shown"], 1);
+    assert_eq!(json["matching_lines_total"], 2);
+    assert_eq!(json["matching_files"][0]["path"], "sample.txt");
 }
 
 #[test]
@@ -1540,11 +1891,11 @@ fn grep_pattern_flag_treats_all_positionals_as_paths() {
         &["--json", "grep", "--pattern", "needle", "alpha", "beta.txt"],
     );
 
-    assert_envelope(&json, "grep", "files");
-    assert_eq!(json["shown"], 2);
-    assert_eq!(json["total_matches"], 2);
-    assert_eq!(json["files"][0]["path"], "alpha");
-    assert_eq!(json["files"][1]["path"], "beta.txt");
+    assert_envelope(&json, "grep", "matching_files");
+    assert_eq!(result(&json)["shown"], 2);
+    assert_eq!(json["matching_lines_total"], 2);
+    assert_eq!(json["matching_files"][0]["path"], "alpha");
+    assert_eq!(json["matching_files"][1]["path"], "beta.txt");
 }
 
 #[test]
@@ -1566,7 +1917,7 @@ fn json_select_projects_array_fields_without_jq_filters() {
         ],
     );
     assert_envelope(&json, "json-select", "rows");
-    assert_eq!(json["total"], 2);
+    assert_eq!(result(&json)["total"], 2);
     assert_eq!(json["rows"][0]["fields"]["index"], "0");
     assert_eq!(json["rows"][0]["fields"]["path"], "\"World|A.blp\"");
 }
@@ -1654,9 +2005,9 @@ fn json_select_projects_jsonl_rows_with_limit() {
 
     assert_envelope(&json, "json-select", "rows");
     assert_eq!(json["input_format"], "jsonl");
-    assert_eq!(json["shown"], 1);
-    assert_eq!(json["total"], 2);
-    assert_eq!(json["truncated"], true);
+    assert_eq!(result(&json)["shown"], 1);
+    assert_eq!(result(&json)["total"], 2);
+    assert_eq!(json["output_truncated"], true);
     assert_eq!(json["rows"][0]["fields"]["addr"], "\"0x408690\"");
     assert_eq!(
         json["rows"][0]["fields"]["flags"],
@@ -1671,8 +2022,8 @@ fn canonical_limits_cap_outputs() {
 
     let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
     assert_envelope(&files, "files", "files");
-    assert_eq!(files["shown"], 1);
-    assert_eq!(files["truncated"], true);
+    assert_eq!(result(&files)["shown"], 1);
+    assert_eq!(files["output_truncated"], true);
 
     let json_find = parse_json_output(
         &root,
@@ -1687,9 +2038,9 @@ fn canonical_limits_cap_outputs() {
         ],
     );
     assert_envelope(&json_find, "json-find", "matches");
-    assert_eq!(json_find["shown"], 1);
-    assert_eq!(json_find["total"], 2);
-    assert_eq!(json_find["truncated"], true);
+    assert_eq!(result(&json_find)["shown"], 1);
+    assert_eq!(result(&json_find)["total"], 2);
+    assert_eq!(json_find["output_truncated"], true);
 
     let db_path = root.join("limit.sqlite");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
@@ -1712,10 +2063,10 @@ fn canonical_limits_cap_outputs() {
         ],
     );
     assert_envelope(&sqlite, "sqlite", "rows");
-    assert_eq!(sqlite["shown"], 1);
-    assert_eq!(sqlite["total"], 2);
-    assert_eq!(sqlite["truncated"], true);
-    assert_eq!(sqlite["rows_total_is_lower_bound"], false);
+    assert_eq!(result(&sqlite)["shown"], 1);
+    assert_eq!(result(&sqlite)["total"], 2);
+    assert_eq!(sqlite["output_truncated"], true);
+    assert_eq!(result(&sqlite)["total_is_lower_bound"], false);
 
     let sqlite_scan = parse_json_output(
         &root,
@@ -1727,25 +2078,25 @@ fn canonical_limits_cap_outputs() {
             "SELECT * FROM rows ORDER BY id",
             "--limit",
             "1",
-            "--max-scan-rows",
+            "--max-rows-scanned",
             "1",
         ],
     );
     assert_envelope(&sqlite_scan, "sqlite", "rows");
-    assert_eq!(sqlite_scan["rows_total_is_lower_bound"], true);
-    assert_eq!(sqlite_scan["cap_reason"], "scan");
+    assert_eq!(result(&sqlite_scan)["total_is_lower_bound"], true);
+    assert!(has_cap(&sqlite_scan, "scope", "rows_processed"));
 
     let guarded_scan = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scan",
+            "--require-complete-scope",
             "sqlite",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
             "--limit",
             "1",
-            "--max-scan-rows",
+            "--max-rows-scanned",
             "1",
         ],
     );
@@ -1753,7 +2104,7 @@ fn canonical_limits_cap_outputs() {
     assert!(
         String::from_utf8(guarded_scan.stderr)
             .unwrap()
-            .contains("--require-complete-scan")
+            .contains("--require-complete-scope")
     );
 }
 
@@ -1787,10 +2138,45 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
         ],
     );
     assert_envelope(&json, "sqlite", "rows");
-    assert_eq!(json["shown"], 1);
-    assert_eq!(json["total"], 2);
-    assert_eq!(json["cap_reason"], "rows");
+    assert_eq!(result(&json)["shown"], 1);
+    assert_eq!(result(&json)["total"], 2);
+    assert!(has_cap(&json, "output", "rows"));
     assert_eq!(json["rows"][0]["fields"]["joined"], "\"alpha:beta\"");
+}
+
+#[test]
+fn sqlite_rejects_multiple_executable_statements_without_rejecting_empty_tails() {
+    let root = fixture_root("sqlite-single-statement");
+    let db_path = root.join("sample.sqlite");
+    rusqlite::Connection::open(&db_path).unwrap();
+
+    let rejected = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "sample.sqlite",
+            "--sql",
+            "SELECT 1 AS first; SELECT 2 AS second",
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8(rejected.stderr)
+            .unwrap()
+            .contains("exactly one executable read-only statement; found 2")
+    );
+
+    let accepted = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "sample.sqlite",
+            "--sql",
+            "/* leading comment */; SELECT 1 AS one; -- empty tail\n;",
+        ],
+    );
+    assert_eq!(accepted["rows"][0]["fields"]["one"], "1");
 }
 
 #[test]
@@ -1856,7 +2242,7 @@ fn sqlite_binds_json_and_jsonl_file_params() {
         ],
     );
     assert_envelope(&json, "sqlite", "rows");
-    assert_eq!(json["shown"], 1);
+    assert_eq!(result(&json)["shown"], 1);
     assert_eq!(json["rows"][0]["fields"]["name"], "\"item_b\"");
     assert_eq!(json["rows"][0]["fields"]["size"], "8");
     assert_eq!(json["params"][0]["name"], ":filter");
@@ -1919,7 +2305,7 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
         ],
     );
     assert_envelope(&json, "sqlite-schema", "tables");
-    assert_eq!(json["shown"], 1);
+    assert_eq!(result(&json)["shown"], 1);
     assert_eq!(json["tables"][0]["name"], "child");
     assert_eq!(json["tables"][0]["strict"], true);
     assert_eq!(json["tables"][0]["columns_total"], 3);
@@ -1952,11 +2338,8 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
             "1",
         ],
     );
-    assert_eq!(capped["truncated"], true);
-    assert!(matches!(
-        capped["cap_reason"].as_str(),
-        Some("tables") | Some("columns")
-    ));
+    assert_eq!(capped["output_truncated"], true);
+    assert!(has_cap(&capped, "output", "tables") || has_cap(&capped, "output", "columns"));
 }
 
 #[test]
@@ -1976,12 +2359,12 @@ fn slice_past_eof_is_complete_when_every_available_line_is_shown() {
         ],
     );
     assert_envelope(&json, "slice", "lines");
-    assert_eq!(json["shown"], 3);
-    assert_eq!(json["total"], 3);
+    assert_eq!(result(&json)["shown"], 3);
+    assert_eq!(result(&json)["total"], 3);
     assert_eq!(json["end"], 3);
-    assert_eq!(json["truncated"], false);
+    assert_eq!(json["output_truncated"], false);
     assert_eq!(json["complete"], true);
-    assert!(json["cap_reason"].is_null());
+    assert_eq!(json["caps"], serde_json::json!([]));
 }
 
 #[test]
@@ -1991,14 +2374,14 @@ fn grep_filters_by_extension_and_glob() {
     fs::write(root.join("notes.md"), "needle in markdown\n").unwrap();
 
     let by_ext = parse_json_output(&root, &["--json", "grep", "needle", ".", "--ext", "rs"]);
-    assert_envelope(&by_ext, "grep", "files");
-    assert_eq!(by_ext["total"], 1);
-    assert_eq!(by_ext["files"][0]["path"], "./code.rs");
+    assert_envelope(&by_ext, "grep", "matching_files");
+    assert_eq!(result(&by_ext)["total"], 1);
+    assert_eq!(by_ext["matching_files"][0]["path"], "code.rs");
 
     let by_glob = parse_json_output(&root, &["--json", "grep", "needle", ".", "--glob", "*.md"]);
-    assert_envelope(&by_glob, "grep", "files");
-    assert_eq!(by_glob["total"], 1);
-    assert_eq!(by_glob["files"][0]["path"], "./notes.md");
+    assert_envelope(&by_glob, "grep", "matching_files");
+    assert_eq!(result(&by_glob)["total"], 1);
+    assert_eq!(by_glob["matching_files"][0]["path"], "notes.md");
 }
 
 #[test]
@@ -2007,13 +2390,13 @@ fn grep_ignore_case_matches_and_labels() {
     fs::write(root.join("mixed.txt"), "NeEdLe here\n").unwrap();
 
     let sensitive = parse_json_output(&root, &["--json", "grep", "needle", "mixed.txt"]);
-    assert_eq!(sensitive["total_matches"], 0);
+    assert_eq!(sensitive["matching_lines_total"], 0);
 
     let insensitive = parse_json_output(
         &root,
         &["--json", "grep", "-i", "--literal", "needle", "mixed.txt"],
     );
-    assert_eq!(insensitive["total_matches"], 1);
+    assert_eq!(insensitive["matching_lines_total"], 1);
     assert!(
         insensitive["pattern"]
             .as_str()
@@ -2032,7 +2415,7 @@ fn grep_ignore_case_matches_and_labels() {
             "mixed.txt",
         ],
     );
-    assert_eq!(terms["total_matches"], 1);
+    assert_eq!(terms["matching_lines_total"], 1);
 }
 
 #[test]
@@ -2044,7 +2427,7 @@ fn grep_context_lines_render_with_dash_separator() {
         &root,
         &["--json", "grep", "needle", "ctx.txt", "--context", "1"],
     );
-    let samples = json["files"][0]["samples"].as_array().unwrap();
+    let samples = json["matching_files"][0]["samples"].as_array().unwrap();
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0]["is_match"], false);
     assert_eq!(samples[1]["is_match"], true);
@@ -2067,12 +2450,12 @@ fn grep_scans_utf16_files_and_lists_skipped_files() {
     fs::write(root.join("binary.bin"), b"MZ\x00\x00needle").unwrap();
 
     let json = parse_json_output(&root, &["--json", "grep", "needle", "."]);
-    assert_eq!(json["total_matches"], 1);
-    assert_eq!(json["files"][0]["path"], "./powershell.log");
+    assert_eq!(json["matching_lines_total"], 1);
+    assert_eq!(json["matching_files"][0]["path"], "powershell.log");
     assert_eq!(json["skipped_large_or_binary"], 1);
     let skipped = json["skipped_files_sample"].as_array().unwrap();
     assert_eq!(skipped.len(), 1);
-    assert_eq!(skipped[0]["path"], "./binary.bin");
+    assert_eq!(skipped[0]["path"], "binary.bin");
     assert_eq!(skipped[0]["reason"], "binary");
 }
 
@@ -2092,7 +2475,7 @@ fn grep_no_match_scope_demotes_when_large_files_skipped() {
             "8",
         ],
     );
-    assert_eq!(json["total_matches"], 0);
+    assert_eq!(json["matching_lines_total"], 0);
     assert_eq!(json["no_match_scope"], "scanned_subset");
     assert_eq!(json["skipped_files_sample"][0]["reason"], "large");
 }
@@ -2103,7 +2486,7 @@ fn slice_tail_returns_last_lines() {
 
     let json = parse_json_output(&root, &["--json", "slice", "sample.txt", "--tail", "2"]);
     assert_envelope(&json, "slice", "lines");
-    assert_eq!(json["shown"], 2);
+    assert_eq!(result(&json)["shown"], 2);
     assert_eq!(json["lines"][0]["line"], 2);
     assert_eq!(json["lines"][0]["text"], "alpha");
     assert_eq!(json["lines"][1]["line"], 3);
@@ -2133,7 +2516,7 @@ fn json_select_where_filters_rows() {
         ],
     );
     assert_envelope(&json, "json-select", "rows");
-    assert_eq!(json["total"], 2);
+    assert_eq!(result(&json)["total"], 2);
     assert_eq!(json["rows_scanned"], 3);
     assert_eq!(json["rows"][0]["fields"]["addr"], "\"0x1\"");
     assert_eq!(json["rows"][1]["fields"]["addr"], "\"0x3\"");
@@ -2150,7 +2533,7 @@ fn json_select_where_filters_rows() {
             "state=clo",
         ],
     );
-    assert_eq!(contains["total"], 1);
+    assert_eq!(result(&contains)["total"], 1);
     assert_eq!(contains["rows"][0]["fields"]["addr"], "\"0x2\"");
 }
 
@@ -2195,13 +2578,40 @@ fn json_commands_tolerate_utf8_bom_documents() {
         &root,
         &["--json", "json-find", "bom.json", "--key-contains", "mode"],
     );
-    assert_eq!(json["total"], 1);
+    assert_eq!(result(&json)["total"], 1);
 
     let select = parse_json_output(
         &root,
         &["--json", "json-select", "bom.json", "--fields", "mode"],
     );
     assert_eq!(select["rows"][0]["fields"]["mode"], "\"demo\"");
+}
+
+#[test]
+fn json_select_decodes_bom_jsonl_consistently() {
+    let root = fixture_root("jsonl-bom");
+    fs::write(
+        root.join("utf8.jsonl"),
+        b"\xEF\xBB\xBF{\"id\":1}\n{\"id\":2}\n",
+    )
+    .unwrap();
+    let utf8 = parse_json_output(
+        &root,
+        &["--json", "json-select", "utf8.jsonl", "--fields", "id"],
+    );
+    assert_eq!(result(&utf8)["total"], 2);
+
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in "{\"id\":1}\n{\"id\":2}\n".encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    fs::write(root.join("utf16.jsonl"), utf16).unwrap();
+    let utf16 = parse_json_output(
+        &root,
+        &["--json", "json-select", "utf16.jsonl", "--fields", "id"],
+    );
+    assert_eq!(result(&utf16)["total"], 2);
+    assert_eq!(utf16["rows"][1]["fields"]["id"], "2");
 }
 
 #[test]
@@ -2296,7 +2706,7 @@ fn excludes_hold_for_absolute_scan_roots() {
         &root,
         &["--json", "files", &absolute_excluded, "--limit", "10"],
     );
-    assert_eq!(explicit["total"], 1);
+    assert_eq!(result(&explicit)["total"], 1);
     assert!(
         explicit["files"][0]
             .as_str()
@@ -2353,27 +2763,32 @@ fn sqlite_timeout_interrupts_runaway_queries() {
 fn grep_quiet_suppresses_match_content_but_keeps_receipt_fields() {
     let root = fixture_root("grep-quiet");
 
-    // JSON: no "files" array, but every receipt field is still present and
-    // identical to a non-quiet run.
+    // JSON: no matching-files payload. Quiet reports emitted payload truthfully
+    // while retaining scan totals and scope classification.
     let loud = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
     let quiet = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt", "--quiet"]);
-    assert_envelope(&quiet, "grep", "files");
-    assert!(quiet.get("files").is_none());
+    assert_envelope(&quiet, "grep", "matching_files");
+    assert!(quiet.get("matching_files").is_none());
     assert_eq!(quiet["quiet"], true);
-    assert!(loud["files"].is_array());
+    assert!(loud["matching_files"].is_array());
+    assert_eq!(result(&quiet)["shown"], 0);
+    assert_eq!(quiet["sample_lines_shown"], 0);
+    assert_eq!(quiet["output_truncated"], false);
+    assert_eq!(quiet["complete"], quiet["scope_complete"]);
+    assert!(
+        quiet["caps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|cap| cap["boundary"] != "output")
+    );
     for field in [
-        "shown",
-        "total",
-        "matched_files_total",
-        "matched_files_total_is_lower_bound",
-        "total_matches",
-        "total_matches_is_lower_bound",
-        "sample_lines_shown",
+        "matching_lines_total",
+        "matching_lines_total_is_lower_bound",
         "candidate_files_total",
-        "candidate_files_scanned",
+        "candidate_files_selected",
+        "content_files_admitted",
         "content_files_scanned",
-        "candidate_files_total_is_lower_bound",
-        "cap_reason",
         "skipped_large_or_binary",
         "no_match_scope",
     ] {
@@ -2391,10 +2806,21 @@ fn grep_quiet_suppresses_match_content_but_keeps_receipt_fields() {
         .strip_prefix("CONTEXTMINK_RECEIPT ")
         .unwrap();
     let receipt: Value = serde_json::from_str(receipt).unwrap();
-    assert_envelope(&receipt, "grep", "files");
+    assert_envelope(&receipt, "grep", "matching_files");
     assert_eq!(receipt["quiet"], true);
-    assert_eq!(receipt["total_matches"], loud["total_matches"]);
-    assert_eq!(receipt["sample_lines_shown"], loud["sample_lines_shown"]);
+    assert_eq!(
+        receipt["matching_lines_total"],
+        loud["matching_lines_total"]
+    );
+    assert_eq!(result(&receipt)["shown"], 0);
+    assert_eq!(receipt["sample_lines_shown"], 0);
+    assert!(
+        receipt["caps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|cap| cap["boundary"] != "output")
+    );
 }
 
 #[test]
@@ -2411,15 +2837,15 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
             "not-present",
             ".",
             "--quiet",
-            "--max-scan-files",
+            "--max-content-files",
             "1",
         ],
     );
-    assert_envelope(&json, "grep", "files");
+    assert_envelope(&json, "grep", "matching_files");
     assert_eq!(json["quiet"], true);
-    assert_eq!(json["cap_reason"], "scan");
+    assert!(has_cap(&json, "scope", "candidate_files"));
     assert_eq!(json["no_match_scope"], "scanned_subset");
-    assert_eq!(json["candidate_files_total_is_lower_bound"], false);
+    assert_eq!(result(&json)["total_is_lower_bound"], true);
 
     let human = run_contextmink(&root, &["grep", "not-present", "sample.txt", "--quiet"]);
     assert!(human.contains("no_matches"), "output: {human}");
@@ -2452,11 +2878,13 @@ fn grep_terms_quiet_composes_with_any_mode() {
             "--quiet",
         ],
     );
-    assert_envelope(&json, "grep-terms", "files");
+    assert_envelope(&json, "grep-terms", "matching_files");
     assert_eq!(json["quiet"], true);
-    assert!(json.get("files").is_none());
-    assert_eq!(json["matched_files_total"], 1);
-    assert_eq!(json["total_matches"], 2);
+    assert!(json.get("matching_files").is_none());
+    assert_eq!(result(&json)["total"], 1);
+    assert_eq!(result(&json)["shown"], 0);
+    assert_eq!(json["matching_lines_total"], 2);
+    assert_eq!(json["sample_lines_shown"], 0);
 
     let human = run_contextmink(
         &root,
@@ -2479,7 +2907,7 @@ fn grep_terms_quiet_composes_with_any_mode() {
         .strip_prefix("CONTEXTMINK_RECEIPT ")
         .unwrap();
     let receipt: Value = serde_json::from_str(receipt).unwrap();
-    assert_envelope(&receipt, "grep-terms", "files");
+    assert_envelope(&receipt, "grep-terms", "matching_files");
     assert_eq!(receipt["quiet"], true);
 }
 
@@ -2513,7 +2941,7 @@ fn sqlite_hexint_joins_hex_address_strings_against_integer_columns() {
         ],
     );
     assert_envelope(&json, "sqlite", "rows");
-    assert_eq!(json["shown"], 3);
+    assert_eq!(result(&json)["shown"], 3);
     assert_eq!(json["rows"][0]["fields"]["name"], "\"alpha\"");
     assert_eq!(json["rows"][2]["fields"]["name"], "\"beta\"");
     assert_eq!(json["params"][0]["values"], 3);
@@ -2605,8 +3033,8 @@ fn files_ext_accepts_comma_separated_lists() {
 
     let json = parse_json_output(&root, &["--json", "files", ".", "--ext", "rs,md"]);
     assert_envelope(&json, "files", "files");
-    assert_eq!(json["total"], 2);
-    assert_eq!(json["truncated"], false);
+    assert_eq!(result(&json)["total"], 2);
+    assert_eq!(json["output_truncated"], false);
 }
 
 #[test]
@@ -2618,26 +3046,18 @@ fn files_quiet_suppresses_list_but_keeps_receipt() {
     let json = parse_json_output(
         &root,
         &[
-            "--json",
-            "files",
-            ".",
-            "--ext",
-            "rs",
-            "--quiet",
-            "--limit",
-            "1",
-            "--max-scan-files",
-            "1",
+            "--json", "files", ".", "--ext", "rs", "--quiet", "--limit", "1",
         ],
     );
     assert_envelope(&json, "files", "files");
     assert_eq!(json["quiet"], true);
-    assert_eq!(json["total"], 2);
-    assert_eq!(json["shown"], 0);
-    assert_eq!(json["truncated"], false);
+    assert_eq!(result(&json)["total"], 2);
+    assert_eq!(result(&json)["shown"], 0);
+    assert_eq!(json["output_truncated"], false);
+    assert_eq!(json["scope_complete"], true);
     assert_eq!(json["complete"], true);
-    assert_eq!(json["cap_reason"], Value::Null);
-    assert_eq!(json["candidate_files_scanned"], 2);
+    assert_eq!(json["candidate_files_selected"], 1);
+    assert!(json["caps"].as_array().unwrap().is_empty());
     assert!(json.get("files").is_none());
 
     let text = run_contextmink(&root, &["files", ".", "--ext", "rs", "--quiet"]);
@@ -2667,7 +3087,7 @@ fn json_select_array_accepts_bare_top_level_key() {
         ],
     );
     assert_envelope(&json, "json-select", "rows");
-    assert_eq!(json["shown"], 2);
+    assert_eq!(result(&json)["shown"], 2);
     assert_eq!(json["rows"][0]["fields"]["id"], "\"a\"");
 }
 
@@ -2688,7 +3108,7 @@ fn json_select_keys_reports_row_shape() {
     assert_envelope(&json, "json-select", "keys");
     assert_eq!(json["keys_mode"], true);
     assert_eq!(json["rows_scanned"], 3);
-    assert_eq!(json["total"], 3);
+    assert_eq!(result(&json)["total"], 3);
     let keys = json["keys"].as_array().unwrap();
     assert_eq!(keys[0]["key"], "expect");
     assert_eq!(keys[0]["present"], 2);
@@ -2720,7 +3140,7 @@ fn json_select_keys_reports_row_shape() {
         ],
     );
     assert_eq!(filtered["rows_scanned"], 3);
-    assert_eq!(filtered["rows_matched"], 0);
+    assert_eq!(filtered["rows_matching"], 0);
     assert_eq!(filtered["all_null_fields"][0], "missing");
 
     let human = run_contextmink(
@@ -2772,7 +3192,7 @@ fn sqlite_schema_elides_table_detail_atomically() {
     let narrow = tables.iter().find(|t| t["name"] == "narrow").unwrap();
     assert_eq!(narrow["detail_elided"], false);
     assert_eq!(narrow["columns"].as_array().unwrap().len(), 1);
-    assert_eq!(json["truncated"], true);
+    assert_eq!(json["output_truncated"], true);
 }
 
 #[test]
@@ -2785,7 +3205,7 @@ fn grep_receipts_split_skipped_large_and_binary() {
     assert_eq!(json["skipped_binary"], 1);
     assert_eq!(json["skipped_large"], 0);
     assert_eq!(json["skipped_large_or_binary"], 1);
-    assert_eq!(json["matched_files_total_is_lower_bound"], false);
+    assert_eq!(result(&json)["total_is_lower_bound"], false);
 }
 
 /// Re-encode UTF-8 text as if its bytes were read back through WHATWG

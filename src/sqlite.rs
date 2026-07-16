@@ -2,6 +2,7 @@ use std::cmp::min;
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::ptr;
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
@@ -12,7 +13,10 @@ use crate::config::ContextConfig;
 use crate::encoding::read_required_text;
 use crate::files::display_path;
 use crate::json_tools::contains_any;
-use crate::output::{base_receipt, clamp_text, emit_json_checked, write_receipt_checked};
+use crate::output::{
+    ClampedText, Receipt, ReceiptCap, ReceiptResult, clamp_text, clamp_text_with_status,
+    emit_json_checked, write_receipt_checked,
+};
 use crate::text::collect_single_text_source;
 
 #[derive(Debug)]
@@ -79,24 +83,31 @@ pub(crate) fn command_sqlite(
     jsonl_params: &[String],
     max_param_bytes: u64,
     max_rows: usize,
-    max_scan_rows: usize,
+    max_rows_scanned: usize,
     timeout_secs: u64,
     max_value_chars: usize,
 ) -> Result<()> {
     if max_rows == 0 {
         return Err(anyhow!("sqlite --limit must be greater than zero"));
     }
-    if max_scan_rows == 0 {
-        return Err(anyhow!("sqlite --max-scan-rows must be greater than zero"));
-    }
-    if max_scan_rows < max_rows {
+    if max_rows_scanned == 0 {
         return Err(anyhow!(
-            "sqlite --max-scan-rows must be greater than or equal to --limit"
+            "sqlite --max-rows-scanned must be greater than zero"
+        ));
+    }
+    if max_rows_scanned < max_rows {
+        return Err(anyhow!(
+            "sqlite --max-rows-scanned must be greater than or equal to --limit"
         ));
     }
     if max_param_bytes == 0 {
         return Err(anyhow!(
             "sqlite --max-param-bytes must be greater than zero"
+        ));
+    }
+    if max_value_chars == 0 {
+        return Err(anyhow!(
+            "sqlite --max-value-chars must be greater than zero"
         ));
     }
     let sql = collect_single_text_source("sqlite SQL", sql, sql_file, false)?;
@@ -106,6 +117,7 @@ pub(crate) fn command_sqlite(
     let params = collect_sqlite_file_params(json_params, jsonl_params, max_param_bytes)?;
     let conn = open_sqlite_readonly(db)?;
     let _watchdog = QueryWatchdog::arm(&conn, timeout_secs);
+    reject_multiple_sqlite_statements(&conn, &sql)?;
     let mut stmt = conn.prepare(&sql).context("failed to prepare sqlite SQL")?;
     if stmt.parameter_count() != 0 && params.is_empty() {
         return Err(anyhow!(
@@ -126,7 +138,8 @@ pub(crate) fn command_sqlite(
     let mut rendered_rows = Vec::new();
     let mut json_rows = Vec::new();
     let mut total_seen = 0usize;
-    let mut scan_truncated = false;
+    let mut row_scope_capped = false;
+    let mut value_characters_truncated = false;
     while let Some(row) = row_iter
         .next()
         .map_err(|error| annotate_interrupt(error, timeout_secs))?
@@ -137,8 +150,9 @@ pub(crate) fn command_sqlite(
             let mut fields = serde_json::Map::new();
             for (index, column) in columns.iter().enumerate() {
                 let summary = sqlite_value_summary(row.get_ref(index)?, max_value_chars);
-                rendered.push((column.clone(), summary.clone()));
-                fields.insert(column.clone(), json!(summary));
+                value_characters_truncated |= summary.truncated;
+                rendered.push((column.clone(), summary.text.clone()));
+                fields.insert(column.clone(), json!(summary.text));
             }
             rendered_rows.push(rendered);
             json_rows.push(json!({
@@ -146,39 +160,36 @@ pub(crate) fn command_sqlite(
                 "fields": fields,
             }));
         }
-        if total_seen > max_scan_rows {
-            scan_truncated = true;
+        if total_seen > max_rows_scanned {
+            row_scope_capped = true;
             break;
         }
     }
     let shown = rendered_rows.len();
-    let cap_reason = if scan_truncated {
-        Some("scan")
-    } else if shown < total_seen {
-        Some("rows")
-    } else {
-        None
-    };
+    let mut receipt = Receipt::new(
+        "sqlite",
+        config.profile.as_deref(),
+        ReceiptResult::new("rows", total_seen, row_scope_capped, shown),
+    );
+    if row_scope_capped {
+        receipt.add_cap(ReceiptCap::scope("rows_processed", Some(max_rows_scanned)));
+    }
+    if shown < total_seen {
+        receipt.add_cap(ReceiptCap::output("rows", Some(max_rows)));
+    }
+    if value_characters_truncated {
+        receipt.add_cap(ReceiptCap::output(
+            "value_characters",
+            Some(max_value_chars),
+        ));
+    }
+    receipt.insert("db", json!(display_path(db)));
+    receipt.insert("columns", json!(columns));
+    receipt.insert("params", sqlite_param_receipt_rows(&params));
+    receipt.insert("rows_examined", json!(total_seen));
     if cli.json {
-        let mut map = base_receipt(
-            "sqlite",
-            config.profile.as_deref(),
-            "rows",
-            shown,
-            total_seen,
-            cap_reason.is_some(),
-            cap_reason,
-        );
-        map.insert("db".to_string(), json!(display_path(db)));
-        map.insert("columns".to_string(), json!(columns));
-        map.insert("params".to_string(), sqlite_param_receipt_rows(&params));
-        map.insert("rows_scanned".to_string(), json!(total_seen));
-        map.insert(
-            "rows_total_is_lower_bound".to_string(),
-            json!(scan_truncated),
-        );
-        map.insert("rows".to_string(), json!(json_rows));
-        emit_json_checked(cli, Value::Object(map))
+        receipt.insert("rows", json!(json_rows));
+        emit_json_checked(cli, receipt)
     } else {
         let mut stdout = io::stdout();
         writeln!(
@@ -198,10 +209,10 @@ pub(crate) fn command_sqlite(
                 .join(" ");
             writeln!(stdout, "{row_index}: {rendered}")?;
         }
-        if scan_truncated {
+        if row_scope_capped {
             writeln!(
                 stdout,
-                "[contextmink] capped sqlite scan at {max_scan_rows} rows; add WHERE/LIMIT or narrow the query before treating this as complete."
+                "[contextmink] capped sqlite row processing at {max_rows_scanned} rows; add WHERE/LIMIT or narrow the query before treating this as complete."
             )?;
         } else if shown < total_seen {
             writeln!(
@@ -209,24 +220,82 @@ pub(crate) fn command_sqlite(
                 "[contextmink] capped sqlite output at {max_rows} rows; increase --limit or narrow the query."
             )?;
         }
-        let mut map = base_receipt(
-            "sqlite",
-            config.profile.as_deref(),
-            "rows",
-            shown,
-            total_seen,
-            cap_reason.is_some(),
-            cap_reason,
-        );
-        map.insert("columns".to_string(), json!(columns));
-        map.insert("params".to_string(), sqlite_param_receipt_rows(&params));
-        map.insert("rows_scanned".to_string(), json!(total_seen));
-        map.insert(
-            "rows_total_is_lower_bound".to_string(),
-            json!(scan_truncated),
-        );
-        write_receipt_checked(cli, map)
+        write_receipt_checked(cli, receipt)
     }
+}
+
+fn reject_multiple_sqlite_statements(conn: &Connection, sql: &str) -> Result<()> {
+    if sql.as_bytes().contains(&0) {
+        return Err(anyhow!("sqlite SQL must not contain NUL bytes"));
+    }
+    let mut offset = 0usize;
+    let mut statements = 0usize;
+    while offset < sql.len() {
+        let remaining = &sql.as_bytes()[offset..];
+        let byte_count =
+            i32::try_from(remaining.len()).context("sqlite SQL is too large to prepare safely")?;
+        let mut raw_statement = ptr::null_mut();
+        let mut tail = ptr::null();
+        // SQLite owns SQL grammar and comment handling. Preparing each tail is
+        // the only reliable way to distinguish executable statements from
+        // semicolons inside strings or trailing whitespace/comments.
+        let status = unsafe {
+            rusqlite::ffi::sqlite3_prepare_v3(
+                conn.handle(),
+                remaining.as_ptr().cast(),
+                byte_count,
+                0,
+                &mut raw_statement,
+                &mut tail,
+            )
+        };
+        if status != rusqlite::ffi::SQLITE_OK {
+            // sqlite3_errmsg returns a connection-owned UTF-8 string that is
+            // valid until the next SQLite call on this connection.
+            let detail = unsafe {
+                let raw = rusqlite::ffi::sqlite3_errmsg(conn.handle());
+                if raw.is_null() {
+                    String::from("no SQLite error message")
+                } else {
+                    std::ffi::CStr::from_ptr(raw).to_string_lossy().into_owned()
+                }
+            };
+            let sqlite_error_offset = unsafe { rusqlite::ffi::sqlite3_error_offset(conn.handle()) };
+            let location = if sqlite_error_offset >= 0 {
+                format!("at byte {}", offset + sqlite_error_offset as usize)
+            } else {
+                format!("from byte {offset}")
+            };
+            if !raw_statement.is_null() {
+                let _ = unsafe { rusqlite::ffi::sqlite3_finalize(raw_statement) }; // guardrail: allow-ignore-result validation-only finalize cannot recover meaningfully
+            }
+            return Err(anyhow!(
+                "failed to validate sqlite SQL {location}: {detail} (SQLite status {status})"
+            ));
+        }
+        if !raw_statement.is_null() {
+            statements += 1;
+            let _ = unsafe { rusqlite::ffi::sqlite3_finalize(raw_statement) }; // guardrail: allow-ignore-result validation-only finalize cannot recover meaningfully
+        }
+        let consumed = if tail.is_null() {
+            remaining.len()
+        } else {
+            // `tail` points inside `remaining` by SQLite contract for a
+            // successful prepare call using an explicit byte count.
+            usize::try_from(unsafe { tail.offset_from(remaining.as_ptr().cast()) })
+                .context("SQLite returned an invalid SQL tail pointer")?
+        };
+        if consumed == 0 {
+            break;
+        }
+        offset = offset.saturating_add(consumed);
+    }
+    if statements != 1 {
+        return Err(anyhow!(
+            "sqlite accepts exactly one executable read-only statement; found {statements}"
+        ));
+    }
+    Ok(())
 }
 
 fn collect_sqlite_file_params(
@@ -459,6 +528,11 @@ pub(crate) fn command_sqlite_schema(
             "sqlite-schema --max-tables must be greater than zero"
         ));
     }
+    if max_line_chars == 0 {
+        return Err(anyhow!(
+            "sqlite-schema --max-line-chars must be greater than zero"
+        ));
+    }
     let conn = open_sqlite_readonly(db)?;
     let requested = requested_tables.iter().collect::<BTreeSet<_>>();
     let mut stmt = conn
@@ -548,37 +622,47 @@ pub(crate) fn command_sqlite_schema(
     }
     let columns_truncated = columns_shown < columns_total;
     let indexes_truncated = indexes_shown < indexes_total;
-    let truncated = shown_tables < total_tables || columns_truncated || indexes_truncated;
-    let cap_reason = if shown_tables < total_tables {
-        Some("tables")
-    } else if columns_truncated {
-        Some("columns")
-    } else if indexes_truncated {
-        Some("indexes")
-    } else {
-        None
-    };
+    let line_characters_truncated = !cli.json
+        && summaries.iter().any(|table| {
+            sqlite_table_summary_human(table).chars().count() > max_line_chars
+                || table.columns.iter().any(|column| {
+                    sqlite_column_summary_human(column).chars().count() > max_line_chars
+                })
+                || table
+                    .indexes
+                    .iter()
+                    .any(|index| sqlite_index_summary_human(index).chars().count() > max_line_chars)
+        });
+    let truncated = shown_tables < total_tables
+        || columns_truncated
+        || indexes_truncated
+        || line_characters_truncated;
+    let mut receipt = Receipt::new(
+        "sqlite-schema",
+        config.profile.as_deref(),
+        ReceiptResult::new("tables", total_tables, false, shown_tables),
+    );
+    if shown_tables < total_tables {
+        receipt.add_cap(ReceiptCap::output("tables", Some(max_tables)));
+    }
+    if columns_truncated {
+        receipt.add_cap(ReceiptCap::output("columns", Some(max_columns)));
+    }
+    if indexes_truncated {
+        receipt.add_cap(ReceiptCap::output("indexes", Some(max_indexes)));
+    }
+    if line_characters_truncated {
+        receipt.add_cap(ReceiptCap::output("line_characters", Some(max_line_chars)));
+    }
+    receipt.insert("db", json!(display_path(db)));
+    receipt.insert("columns_shown", json!(columns_shown));
+    receipt.insert("columns_total", json!(columns_total));
+    receipt.insert("indexes_shown", json!(indexes_shown));
+    receipt.insert("indexes_total", json!(indexes_total));
+    receipt.insert("tables_detail_elided", json!(tables_detail_elided));
     if cli.json {
-        let mut map = base_receipt(
-            "sqlite-schema",
-            config.profile.as_deref(),
+        receipt.insert(
             "tables",
-            shown_tables,
-            total_tables,
-            truncated,
-            cap_reason,
-        );
-        map.insert("db".to_string(), json!(display_path(db)));
-        map.insert("columns_shown".to_string(), json!(columns_shown));
-        map.insert("columns_total".to_string(), json!(columns_total));
-        map.insert("indexes_shown".to_string(), json!(indexes_shown));
-        map.insert("indexes_total".to_string(), json!(indexes_total));
-        map.insert(
-            "tables_detail_elided".to_string(),
-            json!(tables_detail_elided),
-        );
-        map.insert(
-            "tables".to_string(),
             Value::Array(
                 summaries
                     .iter()
@@ -586,7 +670,7 @@ pub(crate) fn command_sqlite_schema(
                     .collect::<Vec<_>>(),
             ),
         );
-        return emit_json_checked(cli, Value::Object(map));
+        return emit_json_checked(cli, receipt);
     }
     let mut stdout = io::stdout();
     writeln!(
@@ -600,13 +684,8 @@ pub(crate) fn command_sqlite_schema(
     for table in &summaries {
         writeln!(
             stdout,
-            "{}.{} type={} ncol={} strict={} without_rowid={}",
-            table.schema,
-            table.name,
-            table.kind,
-            table.column_count_declared,
-            table.strict,
-            table.without_rowid
+            "{}",
+            clamp_text(&sqlite_table_summary_human(table), max_line_chars)
         )?;
         for column in &table.columns {
             writeln!(
@@ -636,24 +715,7 @@ pub(crate) fn command_sqlite_schema(
             "[contextmink] capped sqlite schema output at tables={max_tables} columns={max_columns} indexes={max_indexes}; narrow with --table or --name-contains."
         )?;
     }
-    let mut map = base_receipt(
-        "sqlite-schema",
-        config.profile.as_deref(),
-        "tables",
-        shown_tables,
-        total_tables,
-        truncated,
-        cap_reason,
-    );
-    map.insert("columns_shown".to_string(), json!(columns_shown));
-    map.insert("columns_total".to_string(), json!(columns_total));
-    map.insert("indexes_shown".to_string(), json!(indexes_shown));
-    map.insert("indexes_total".to_string(), json!(indexes_total));
-    map.insert(
-        "tables_detail_elided".to_string(),
-        json!(tables_detail_elided),
-    );
-    write_receipt_checked(cli, map)
+    write_receipt_checked(cli, receipt)
 }
 
 fn sqlite_schema_columns(
@@ -786,6 +848,18 @@ fn sqlite_table_summary_json(table: &SqliteTableSummary) -> Value {
             })
         }).collect::<Vec<_>>(),
     })
+}
+
+fn sqlite_table_summary_human(table: &SqliteTableSummary) -> String {
+    format!(
+        "{}.{} type={} ncol={} strict={} without_rowid={}",
+        table.schema,
+        table.name,
+        table.kind,
+        table.column_count_declared,
+        table.strict,
+        table.without_rowid
+    )
 }
 
 fn sqlite_column_summary_human(column: &SqliteColumnSummary) -> String {
@@ -938,15 +1012,19 @@ fn register_hexint(conn: &Connection) -> Result<()> {
     .context("failed to register hexint SQL function")
 }
 
-fn sqlite_value_summary(value: ValueRef<'_>, max_chars: usize) -> String {
-    match value {
+fn sqlite_value_summary(value: ValueRef<'_>, max_chars: usize) -> ClampedText {
+    let full = match value {
         ValueRef::Null => "null".to_owned(),
         ValueRef::Integer(value) => value.to_string(),
         ValueRef::Real(value) => value.to_string(),
         ValueRef::Text(value) => {
             let value = String::from_utf8_lossy(value);
-            clamp_text(&format!("{value:?}"), max_chars)
+            format!("{value:?}")
         }
         ValueRef::Blob(value) => format!("<blob:{} bytes>", value.len()),
-    }
+    };
+    clamp_text_with_status(&full, max_chars)
 }
+
+#[cfg(test)]
+mod tests;

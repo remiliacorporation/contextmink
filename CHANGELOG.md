@@ -6,6 +6,48 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-17
+
+### Added
+
+- Added `setup-project` for agent-owned repository integration: dry-run preflight, platform-specific project-local artifacts, real profile generation, idempotent `.gitignore` coverage, a locally installed agent-integration reference, explicit release-managed replacement, and refusal to overwrite repository-owned configuration or agent guidance.
+- Added deterministic grep content admission with `--max-content-files` and optional `--max-content-bytes`, including structured scope caps and admitted-file/byte telemetry.
+- Added `php` and `wgsl` outline languages: PHP's case-insensitive declarations and attribute-prefixed classes/functions, plus attributed WGSL functions, types, constants, overrides, and module resource bindings. Extensionless PHP scripts also resolve from a `php` shebang.
+
+### Changed
+
+- Replaced the loose receipt envelope with typed `contextmink.receipt.v2`: one nested `result`, structured `caps`, separately derived `scope_complete` and `output_truncated`, and a single `complete` verdict shared by JSON, text, quiet, strict, and receipt-file paths.
+- Cut over public limit names to their actual objects: `--require-complete-scope`, `--max-files-counted`, `--max-matching-files`, `--max-sample-lines`, `--max-content-files`, and `--max-rows-scanned`. The replaced spellings are rejected.
+- Renamed grep result concepts to `matching_files` and `matching_lines`, kept candidate enumeration exact, and made `--quiet` suppress payload only without changing result counts or cap truth.
+- Made configuration strict TOML with standard escaping, unknown/duplicate-field rejection, and hard failure for empty or placeholder profiles.
+- Made scan-root-relative include matching independent of absolute/relative root spelling, preserved native POSIX backslashes, and made path deduplication deterministic across overlapping roots.
+- Streamed common-case UTF-8 grep and line-slice reads, batched walker-worker results instead of locking per entry, and retained only the requested slice window.
+- Made `capture` propagate unexpected child exits by default after emitting its receipt; `--expect-exit` is the only way to declare accepted nonzero statuses, and the receipt distinguishes `child_exit_code`, `child_exit_zero`, and `exit_expected` without a generic `success` field.
+- Made character limits include the ellipsis itself, so every bounded text/value field is at most the advertised number of characters.
+- Made Markdown outlines track CommonMark backtick and tilde fences, including indentation, closing-run length, and closing-line content, so code comments cannot appear as headings.
+- Gated public release publication on locked formatting, tests, Clippy, package verification, the minimum Rust version, and a `master`-branch dispatch.
+
+### Fixed
+
+- End-anchored capped tail windows, rejected zero/inverted slice bounds, and made empty/past-EOF receipt counts exact.
+- Rejected more than one executable SQLite statement instead of silently ignoring a tail statement; kept comments and empty separators valid.
+- Unified JSON/text/quiet receipt construction for files, dirs, grep, JSON, SQLite, outline, slice, and capture; scope and output caps can no longer disagree by rendering mode.
+- Reported per-line and per-value clipping as output caps across slice, outline, grep, JSON, and SQLite; strict truncation mode now fails when any rendered field is shortened.
+- Made quiet file/grep receipts describe the payload actually emitted (`shown: 0`, no hypothetical output caps) while preserving exact totals and scope caps.
+- Kept include globs relative to the caller's original scan root while entering git-ignored nested repositories, rather than silently rebasing them at each nested root.
+- Applied capture line and character limits to JSON `stdout_text`/`stderr_text` as well as human output, and stopped reporting a line cap when only byte retention bound the stream.
+- Decoupled `json-find --value-contains` matching from `--max-value-chars`, and disclosed JSON/SQLite value shortening with `value_characters` output caps.
+- Routed UTF-8-BOM and UTF-16 JSONL through the encoding contract, and shielded slash-bearing predicate/filter values from Git Bash MSYS rewriting.
+- Reapplied nested exclusions below explicitly targeted excluded roots while preserving the target entry boundary.
+- Made built-in `git clean` and opaque encoded-PowerShell rules independent of repository cwd, added `env -S`, PowerShell encoded-command abbreviations, and protected `find -delete`/`-exec` handling, and kept repository fragments scoped to their owning root.
+- Annotated intentional best-effort supervision cleanup so ignored results remain visible to the fail-fast audit contract.
+- Cut release archive capture smokes over to `child_exit_code`, `child_exit_zero`, and `exit_expected`, rejected the removed generic fields there, and isolated package verification from ordinary build fingerprints.
+- Made `sqlite` validation failures preserve SQLite's own diagnostic and native byte offset before statement cleanup.
+
+### Removed
+
+- Removed the v1 receipt fields, every replaced public flag spelling, and the opt-in child-failure propagation flag; 0.8.0 has no compatibility aliases or dual receipt schema.
+
 ## [0.7.0] - 2026-07-14
 
 ### Added
