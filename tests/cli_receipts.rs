@@ -133,7 +133,27 @@ fn setup_project_installs_agent_integration_without_editing_guidance() {
             .as_array()
             .unwrap()
             .iter()
+            .filter(|action| action["path"] != ".contextmink.toml")
             .all(|action| { action["action"] == "unchanged" })
+    );
+    assert!(second["actions"].as_array().unwrap().iter().any(|action| {
+        action["path"] == ".contextmink.toml" && action["action"] == "preserve_repository_owned"
+    }));
+
+    fs::write(root.join("scripts/contextmink"), "older launcher\n").unwrap();
+    let upgrade_plan = parse_json_output(&root, &["--json", "setup-project", ".", "--dry-run"]);
+    assert!(
+        upgrade_plan["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| {
+                action["path"] == "scripts/contextmink" && action["action"] == "replace"
+            })
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("scripts/contextmink")).unwrap(),
+        "older launcher\n"
     );
 }
 
@@ -1488,7 +1508,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
         "vendor/sqlite-tool"
     );
 
-    // --skip-nested-repos restores strict Git-scope behavior.
+    // --skip-nested-repos keeps the scan inside the explicit repository root.
     let skipped = parse_json_output(
         &root,
         &[
@@ -1534,6 +1554,59 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             .iter()
             .all(|path| !path.as_str().unwrap().contains("/.git/"))
     );
+}
+
+#[test]
+fn tracked_submodule_style_repo_is_disclosed_and_skipped() {
+    let root = fixture_root("tracked-submodule-boundary");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let nested = root.join("tracked-module");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(
+        nested.join(".git"),
+        "gitdir: ../.git/modules/tracked-module\n",
+    )
+    .unwrap();
+    fs::write(nested.join("README.md"), "tracked submodule\n").unwrap();
+
+    let entered = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    assert_envelope(&entered, "files", "files");
+    assert!(
+        entered["files"].as_array().unwrap().iter().any(|path| path
+            .as_str()
+            .unwrap()
+            .trim_start_matches("./")
+            == "tracked-module/README.md")
+    );
+    assert_eq!(entered["nested_repos_entered_total"], 1);
+    assert_eq!(
+        entered["nested_repos_entered"][0]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("./"),
+        "tracked-module"
+    );
+
+    let skipped = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "files",
+            ".",
+            "--skip-nested-repos",
+            "--limit",
+            "20",
+        ],
+    );
+    assert_envelope(&skipped, "files", "files");
+    assert!(
+        skipped["files"].as_array().unwrap().iter().all(|path| path
+            .as_str()
+            .unwrap()
+            .trim_start_matches("./")
+            != "tracked-module/README.md")
+    );
+    assert_eq!(skipped["nested_repos_entered_total"], 0);
 }
 
 #[test]

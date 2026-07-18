@@ -47,10 +47,19 @@ adapt the integration reference to its existing guidance, and choose
 project-specific excludes and destructive-guard fragments.
 
 `setup-project` preflights every destination before writing. It is idempotent
-for the same release, refuses divergent repository-owned configuration, and
-requires `--replace-managed` to update divergent release-managed binaries,
-launchers, or the integration reference. It never replaces
-`.contextmink.toml`.
+for the same release and requires `--replace-managed` to update divergent
+release-managed binaries, launchers, or the integration reference. An existing
+`.contextmink.toml` is repository-owned: setup validates it with the real
+configuration loader, reports `preserve_repository_owned`, and never compares
+or replaces it from the release template. Invalid configuration fails before
+any file is written. A dry run reports required release-file replacements
+without granting permission to perform them.
+
+This is also the fresh-clone repair path. Repositories normally track their
+configuration, launchers, and integration reference while ignoring
+`tools/contextmink/bin/`; running `setup-project` from an unpacked release
+preserves the tracked configuration and restores whichever host binaries are
+missing.
 
 After integration, verify from the repository root:
 
@@ -255,13 +264,13 @@ receipt, including the same bounded stdout/stderr text emitted in JSON mode.
   Unparseable payloads allow with a stderr note: the guard blocks recognized
   destructive commands, it does not validate harness payloads (fail-closed
   payload handling turns any schema drift into a total shell outage).
-- Broad scans enter git-ignored directories that are themselves repository
-  roots, apply that repository's own ignore rules, and disclose each entry in
-  `nested_repos_entered`. Multi-repo workspaces would otherwise report
-  complete scans that silently skipped sibling repos. `--skip-nested-repos`
-  restores strict Git scope and avoids the supplementary probe; repos nested
-  below an ignored plain directory are not auto-detected and need explicit
-  roots.
+- Broad scans cross nested Git repository roots by default, including tracked
+  submodules and Git-ignored sibling repositories, apply each repository's own
+  ignore rules, and disclose every crossed root in `nested_repos_entered`.
+  Pass `--skip-nested-repos` to keep a broad scan inside each explicit root.
+  Passing a nested repository as an explicit root still scans it normally.
+  Repositories below an ignored plain directory beyond the bounded discovery
+  depth need an explicit root.
 - Outline is navigational, not a compiler-grade parser. Most languages use
   line-shape heuristics; XML uses a lightweight element-stack parse. False
   positives are possible and indentation conveys nesting.

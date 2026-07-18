@@ -81,6 +81,7 @@ fn main() -> Result<()> {
                     SetupActionKind::Create => "create",
                     SetupActionKind::Replace => "replace",
                     SetupActionKind::Unchanged => "unchanged",
+                    SetupActionKind::PreserveRepositoryOwned => "preserve_repository_owned",
                     SetupActionKind::MakeExecutable => "make_executable",
                     SetupActionKind::UpdateGitignore => "update_gitignore",
                 };

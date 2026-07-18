@@ -11,6 +11,8 @@ release, the agent responsible for maintaining the target repository runs:
 The command installs platform-appropriate project-local binaries and launchers,
 generates a real profile, updates `.gitignore`, and writes
 `tools/contextmink/agent_integration.md`. It never edits repository agent
-guidance or replaces a divergent `.contextmink.toml`; the maintaining agent
-must adapt the integration reference and project policy. Use
+guidance. An existing `.contextmink.toml` is validated and preserved as
+repository-owned configuration; invalid configuration fails before any write.
+The same command restores ignored host binaries in a fresh clone. The
+maintaining agent must adapt the integration reference and project policy. Use
 `--replace-managed` only for an intentional release-artifact upgrade.

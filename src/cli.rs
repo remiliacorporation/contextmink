@@ -60,7 +60,7 @@ pub(crate) enum Command {
         with_git_ignored: bool,
         #[arg(
             long = "skip-nested-repos",
-            help = "Do not enter git-ignored nested repository roots during broad scans"
+            help = "Do not cross nested Git repository roots, including tracked submodules and Git-ignored sibling repositories, during broad scans"
         )]
         skip_nested_repos: bool,
         #[arg(
@@ -99,7 +99,7 @@ pub(crate) enum Command {
         with_git_ignored: bool,
         #[arg(
             long = "skip-nested-repos",
-            help = "Do not enter git-ignored nested repository roots during broad scans"
+            help = "Do not cross nested Git repository roots, including tracked submodules and Git-ignored sibling repositories, during broad scans"
         )]
         skip_nested_repos: bool,
         #[arg(long, default_value_t = 60, help = "Maximum directories to print")]
@@ -173,7 +173,7 @@ pub(crate) enum Command {
         with_git_ignored: bool,
         #[arg(
             long = "skip-nested-repos",
-            help = "Do not enter git-ignored nested repository roots during broad scans"
+            help = "Do not cross nested Git repository roots, including tracked submodules and Git-ignored sibling repositories, during broad scans"
         )]
         skip_nested_repos: bool,
         #[arg(
@@ -281,7 +281,7 @@ pub(crate) enum Command {
         with_git_ignored: bool,
         #[arg(
             long = "skip-nested-repos",
-            help = "Do not enter git-ignored nested repository roots during broad scans"
+            help = "Do not cross nested Git repository roots, including tracked submodules and Git-ignored sibling repositories, during broad scans"
         )]
         skip_nested_repos: bool,
         #[arg(
@@ -603,7 +603,7 @@ pub(crate) enum Command {
         dry_run: bool,
         #[arg(
             long,
-            help = "Replace divergent release-managed binaries, launchers, and integration reference; never replaces .contextmink.toml"
+            help = "Replace divergent release-managed binaries, launchers, and integration reference; validates and preserves an existing .contextmink.toml"
         )]
         replace_managed: bool,
     },

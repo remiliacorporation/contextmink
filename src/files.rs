@@ -21,8 +21,8 @@ pub(crate) struct CollectedFiles {
     /// sorted prefix, so truncation is deterministic and independent of walk
     /// order or root spelling.
     pub(crate) selection_capped: bool,
-    /// Git-ignored nested repository roots that were entered anyway, as
-    /// display paths. Empty when no supplement ran.
+    /// Nested Git repository roots crossed during the scan, including tracked
+    /// submodules and Git-ignored sibling repositories, as display paths.
     pub(crate) nested_repos_entered: Vec<String>,
 }
 
@@ -203,7 +203,7 @@ fn walk_root(
     state: &mut CollectState,
     nesting: usize,
 ) -> Result<()> {
-    let probe_nested_repos = !options.with_git_ignored
+    let probe_ignored_repo_roots = !options.with_git_ignored
         && !options.skip_nested_repos
         && nesting < NESTED_REPO_MAX_RECURSION;
     let mut walk = WalkBuilder::new(root);
@@ -233,6 +233,7 @@ fn walk_root(
     struct WalkBatch {
         files: Vec<PathBuf>,
         visited_dirs: Option<HashSet<PathBuf>>,
+        nested_repos_entered: Vec<PathBuf>,
         error: Option<ignore::Error>,
     }
 
@@ -261,7 +262,8 @@ fn walk_root(
             batches: &batches,
             batch: Some(WalkBatch {
                 files: Vec::new(),
-                visited_dirs: probe_nested_repos.then(HashSet::new),
+                visited_dirs: probe_ignored_repo_roots.then(HashSet::new),
+                nested_repos_entered: Vec::new(),
                 error: None,
             }),
         };
@@ -281,15 +283,23 @@ fn walk_root(
             };
             match entry.file_type() {
                 Some(kind) if kind.is_dir() => {
-                    if probe_nested_repos {
-                        worker
-                            .batch
-                            .as_mut()
-                            .expect("walk worker batch must be present")
+                    let path = entry.path().to_path_buf();
+                    let batch = worker
+                        .batch
+                        .as_mut()
+                        .expect("walk worker batch must be present");
+                    if entry.depth() > 0 && path.join(".git").exists() {
+                        if options.skip_nested_repos {
+                            return ignore::WalkState::Skip;
+                        }
+                        batch.nested_repos_entered.push(path.clone());
+                    }
+                    if probe_ignored_repo_roots {
+                        batch
                             .visited_dirs
                             .as_mut()
-                            .expect("nested-repo probing must retain visited directories")
-                            .insert(entry.into_path());
+                            .expect("ignored-repo probing must retain visited directories")
+                            .insert(path);
                     }
                 }
                 Some(kind)
@@ -319,10 +329,16 @@ fn walk_root(
     });
     let batches = batches.into_inner().expect("walk batch sink poisoned");
     let mut files = Vec::new();
-    let mut visited_dirs = probe_nested_repos.then(HashSet::new);
+    let mut visited_dirs = probe_ignored_repo_roots.then(HashSet::new);
     let mut error = None;
     for mut batch in batches {
         files.append(&mut batch.files);
+        state.nested_repos_entered.extend(
+            batch
+                .nested_repos_entered
+                .into_iter()
+                .map(|path| display_path(&path)),
+        );
         if let (Some(all_dirs), Some(worker_dirs)) = (&mut visited_dirs, batch.visited_dirs) {
             all_dirs.extend(worker_dirs);
         }
@@ -336,15 +352,14 @@ fn walk_root(
     for file in files {
         state.push_file(file);
     }
-    // Nested-repo supplement: a directory pruned by Git ignore rules that is
-    // itself a git repository root is a workspace member (multi-repo
-    // workspaces routinely git-ignore sibling repos for repo separation), not
-    // a generated artifact. Enter it with its own ignore rules and disclose
-    // the entry in the receipt.
-    if !probe_nested_repos {
+    // Ignored-repository supplement: a directory pruned by Git ignore rules
+    // that is itself a repository root is still part of the caller's broad
+    // workspace scope. Enter it with its own ignore rules and disclose it just
+    // like a tracked submodule crossed by the primary walk.
+    if !probe_ignored_repo_roots {
         return Ok(());
     }
-    let visited_dirs = visited_dirs.expect("nested-repo probing must retain visited directories");
+    let visited_dirs = visited_dirs.expect("ignored-repo probing must retain visited directories");
     let mut nested_roots = collect_pruned_repo_roots_for_visited_dirs(
         mapper,
         &visited_dirs,
@@ -549,6 +564,9 @@ fn file_is_included(
 ) -> bool {
     let scan_path = mapper.scan_path(path);
     if !with_excluded {
+        if path.file_name().is_some_and(|name| name == ".git") {
+            return false;
+        }
         let policy_path = mapper.policy_path(path, &scan_path);
         if is_excluded_by_policy(
             &policy_path,

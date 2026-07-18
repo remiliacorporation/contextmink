@@ -13,14 +13,14 @@ more output than the transcript should carry.
   PowerShell for contextmink commands; use
   `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...`
   when a PowerShell-hosted Windows session needs the Bash launcher.
-- Start with `dirs` to orient in an unfamiliar tree, then `files` or `grep`
-  for candidate discovery. Prefer `files --ext json` (or `--ext jsonl`)
+- When the target file is unknown, start with `dirs` to orient in the tree,
+  then use `files` or `grep` for candidate discovery. Prefer
+  `files --ext json` (or `--ext jsonl`)
   (comma-separated lists work: `--ext rs,toml`) across Windows-to-Bash
   boundaries because wildcard globs can expand before contextmink receives
   them.
-- Read source files through `outline` then `slice`, not dump windows. A named
-  file is still reconnaissance while the answer's location inside it is
-  unknown: `outline <file>` maps declaration lines with line numbers
+- Once the file is known but the relevant region is not, use `outline` then
+  `slice`, not dump windows. `outline <file>` maps declaration lines with line numbers
   (`--contains TEXT` filters rows; `--lang`, `--prefix <text>`, or
   `--pattern <regex>` cover unrecognized extensions), then
   `slice --range START:END` prints the region. `slice` replaces `sed -n` /
@@ -53,9 +53,11 @@ more output than the transcript should carry.
 - Configured excludes keep broad scans quiet. Pass an explicit file or
   subdirectory when an excluded tree is the target. Use `--with-excluded` to
   include files matched by contextmink exclude globs, and `--with-git-ignored`
-  only for files hidden by Git or `.ignore` rules. Broad scans enter
-  git-ignored nested repository roots and disclose them in
-  `nested_repos_entered`; pass `--skip-nested-repos` for strict Git scope.
+  only for files hidden by Git or `.ignore` rules. Broad scans cross nested Git
+  repository roots by default, including tracked submodules and Git-ignored
+  sibling repositories, and disclose every crossed root in
+  `nested_repos_entered`. Pass `--skip-nested-repos` to stay inside each
+  explicit root; pass a nested repository explicitly when it is the target.
 - Read the `contextmink.receipt.v2` envelope structurally. `scope_complete:
   false` means totals cover only a bounded subset; `output_truncated: true`
   means the scope was inspected but payload was omitted. Inspect `caps[]` for

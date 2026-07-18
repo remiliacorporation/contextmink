@@ -112,6 +112,62 @@ fn nested_repo_include_globs_remain_relative_to_the_explicit_scan_root() {
 }
 
 #[test]
+fn tracked_submodule_style_repo_is_disclosed_and_skipped() {
+    let fixture = Fixture::new("tracked-submodule-boundary");
+    fs::create_dir_all(fixture.root.join(".git")).expect("outer repo marker must be creatable");
+    let nested = fixture.root.join("nested");
+    let source = nested.join("src");
+    fs::create_dir_all(&source).expect("nested source tree must be creatable");
+    fs::write(nested.join(".git"), "gitdir: ../.git/modules/nested\n")
+        .expect("submodule git marker must be writable");
+    fs::write(source.join("lib.rs"), "pub fn retained() {}\n")
+        .expect("nested source must be writable");
+
+    let mut enter_options = options(&[]);
+    enter_options.skip_nested_repos = false;
+    let entered = collect_files(
+        std::slice::from_ref(&fixture.root),
+        &config(&fixture.root, &[]),
+        &enter_options,
+    )
+    .expect("tracked nested repo must be enterable");
+    assert_eq!(entered.files, vec![source.join("lib.rs")]);
+    assert_eq!(entered.total_seen, 1);
+    assert_eq!(entered.nested_repos_entered, vec![display_path(&nested)]);
+
+    let skipped = collect_files(
+        std::slice::from_ref(&fixture.root),
+        &config(&fixture.root, &[]),
+        &options(&[]),
+    )
+    .expect("tracked nested repo must be skippable");
+    assert_eq!(skipped.total_seen, 0);
+    assert!(skipped.files.is_empty());
+    assert!(skipped.nested_repos_entered.is_empty());
+}
+
+#[test]
+fn explicit_repo_root_is_not_treated_as_its_own_nested_boundary() {
+    let fixture = Fixture::new("explicit-repo-root");
+    let nested = fixture.root.join("nested");
+    fs::create_dir_all(&nested).expect("explicit repo root must be creatable");
+    fs::write(nested.join(".git"), "gitdir: ../.git/modules/nested\n")
+        .expect("submodule git marker must be writable");
+    fs::write(nested.join("README.md"), "explicit root\n")
+        .expect("explicit-root file must be writable");
+
+    let collected = collect_files(
+        std::slice::from_ref(&nested),
+        &config(&fixture.root, &[]),
+        &options(&[]),
+    )
+    .expect("explicit nested root must remain scannable");
+    assert_eq!(collected.files, vec![nested.join("README.md")]);
+    assert_eq!(collected.total_seen, 1);
+    assert!(collected.nested_repos_entered.is_empty());
+}
+
+#[test]
 fn explicit_excluded_root_reapplies_nested_exclusions() {
     let fixture = Fixture::new("explicit-exclude-boundary");
     let artifacts = fixture.root.join("artifacts");

@@ -102,13 +102,17 @@ Adapt the installation to the project before copying generic policy:
 3. Inventory project-native compact, projection, query, and diagnostic commands.
    Keep those authoritative and use contextmink around unknown-size generic
    reads rather than replacing domain tooling.
-4. Identify project-specific high-output trees, ignored nested repositories,
+4. Identify project-specific high-output trees, nested repository boundaries,
    generated outputs, and irrecoverable paths. Put scan exclusions and literal
    deletion guard fragments in `.contextmink.toml`; do not copy another
-   project's policy.
+   project's policy. Decide whether ordinary broad scans should cross nested
+   repositories or use explicit roots/`--skip-nested-repos`.
 5. Decide how fresh clones receive the executable. Ignored release binaries are
-   workstation-local and require an install step; source vendoring or a reviewed
-   multi-platform package policy is the clone-ready alternative.
+   workstation-local and require an install step. A tracked
+   `.contextmink.toml`, launcher, and integration reference are intentionally
+   compatible with rerunning `setup-project` to restore missing host binaries;
+   source vendoring or a reviewed multi-platform package policy is the
+   hermetic alternative.
 6. Merge the maintained instruction snippet into the existing guidance
    hierarchy, preserving direct-command exceptions and project shell rules.
 7. Dogfood the result on real project work from the workspace root and a nested
@@ -143,7 +147,9 @@ Adapt the installation to the project before copying generic policy:
 3. Read every printed `next_actions` entry. Inspect and edit
    `.contextmink.toml` for this repository's generated/high-output trees and
    literal deletion tripwires. The config becomes repository-owned at creation:
-   setup never overwrites a divergent copy.
+   later setup runs validate and report `preserve_repository_owned` without
+   comparing it to the release template or replacing it. Invalid configuration
+   fails before any setup write.
 
 4. Read `tools/contextmink/agent_integration.md`, inspect the existing guidance
    hierarchy, and adapt the operational contract into `AGENTS.md`, `CLAUDE.md`,
@@ -162,12 +168,18 @@ Adapt the installation to the project before copying generic policy:
    The first command must report `schema: "contextmink.receipt.v2"` and the
    intended profile. The second must report `decision: "deny"`.
 
-6. To upgrade, rerun the newer release with `--dry-run`. If release-managed
-   artifacts differ, apply with `--replace-managed`; this can replace binaries,
+6. For a fresh clone, rerun an unpacked release with `--dry-run`, inspect the
+   plan, then apply it. Existing tracked configuration is preserved while
+   missing ignored binaries are created.
+
+7. To upgrade, rerun the newer release with `--dry-run`. A valid existing
+   configuration must be reported as `preserve_repository_owned`. If
+   release-managed artifacts differ, the dry run reports `replace` without
+   changing them; apply with `--replace-managed`. This can replace binaries,
    launchers, and the integration reference, but never `.contextmink.toml`.
    Review and reintegrate guidance changes after every such replacement.
 
-7. Optional: generate a Claude hook fragment from the installed binary:
+8. Optional: generate a Claude hook fragment from the installed binary:
 
    ```bash
    scripts/contextmink hook-snippet
@@ -190,10 +202,12 @@ and irrecoverable paths. Run `contextmink setup-project <target-repo>
 --dry-run`, review its complete action plan, then apply it. Adapt
 `tools/contextmink/agent_integration.md` into the existing guidance rather than
 blindly appending it. Configure repository-specific excludes and guard
-fragments. Verify the v2 receipt and unconditional git-clean denial from the
-workspace root and a nested directory. Do not call the integration complete
-until the installed launcher, profile, guidance, and active-shell invocation
-all work end to end.
+fragments. State whether broad scans may cross nested repositories or should
+use exact roots/`--skip-nested-repos`. Verify the v2 receipt, nested-repository
+disclosure/skip behavior, and unconditional git-clean denial from the workspace
+root and a nested directory. Do not call the integration complete until the
+installed launcher, repository-owned profile, guidance, fresh-clone binary
+repair, and active-shell invocation all work end to end.
 ```
 
 ## Optional: Claude PreToolUse Hook Guard

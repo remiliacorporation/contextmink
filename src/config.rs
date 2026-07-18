@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 const CONFIG_NAME: &str = ".contextmink.toml";
 const BUILTIN_EXCLUDES: &[&str] = &[
+    ".git",
+    "**/.git",
     ".git/**",
     "**/.git/**",
     "target/**",

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
-use super::{ContextminkConfig, canonical_normalized, validate_profile};
+use super::{ContextminkConfig, canonical_normalized, load_context_config, validate_profile};
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
 const CMD_DIAGNOSTIC: &[u8] = include_bytes!("../templates/scripts/contextmink.cmd");
@@ -29,6 +29,7 @@ pub(crate) enum SetupActionKind {
     Create,
     Replace,
     Unchanged,
+    PreserveRepositoryOwned,
     MakeExecutable,
     UpdateGitignore,
 }
@@ -54,7 +55,18 @@ struct ManagedFile {
     relative_path: PathBuf,
     content: Vec<u8>,
     executable: bool,
-    release_managed: bool,
+    ownership: SetupFileOwnership,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetupFileOwnership {
+    ReleaseManaged,
+    RepositoryOwnedConfig,
+}
+
+struct PreflightFile {
+    action: SetupActionKind,
+    profile: Option<String>,
 }
 
 /// Install a project-local release without overwriting managed files that have
@@ -73,7 +85,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             root.display()
         ));
     }
-    let profile = project_profile(&root)?;
+    let generated_profile = project_profile(&root)?;
     let source_binary = match request.source_binary {
         Some(path) => path.to_path_buf(),
         None => std::env::current_exe().context("resolve the running contextmink executable")?,
@@ -98,31 +110,31 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     };
     let binary = fs::read(&source_binary)
         .with_context(|| format!("read source binary {}", source_binary.display()))?;
-    let config = generated_config(&profile)?;
+    let config = generated_config(&generated_profile)?;
     let mut managed = vec![
         ManagedFile {
             relative_path: PathBuf::from(format!("tools/contextmink/bin/contextmink{suffix}")),
             content: binary,
             executable: true,
-            release_managed: true,
+            ownership: SetupFileOwnership::ReleaseManaged,
         },
         ManagedFile {
             relative_path: PathBuf::from("scripts/contextmink"),
             content: BASH_LAUNCHER.to_vec(),
             executable: true,
-            release_managed: true,
+            ownership: SetupFileOwnership::ReleaseManaged,
         },
         ManagedFile {
             relative_path: PathBuf::from(".contextmink.toml"),
             content: config.into_bytes(),
             executable: false,
-            release_managed: false,
+            ownership: SetupFileOwnership::RepositoryOwnedConfig,
         },
         ManagedFile {
             relative_path: PathBuf::from("tools/contextmink/agent_integration.md"),
             content: AGENT_INTEGRATION.to_vec(),
             executable: false,
-            release_managed: true,
+            ownership: SetupFileOwnership::ReleaseManaged,
         },
     ];
     if suffix == ".exe" {
@@ -134,28 +146,34 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             relative_path: PathBuf::from(format!("tools/contextmink/bin/{bridge_name}")),
             content: bridge,
             executable: true,
-            release_managed: true,
+            ownership: SetupFileOwnership::ReleaseManaged,
         });
         managed.push(ManagedFile {
             relative_path: PathBuf::from("scripts/contextmink.cmd"),
             content: CMD_DIAGNOSTIC.to_vec(),
             executable: false,
-            release_managed: true,
+            ownership: SetupFileOwnership::ReleaseManaged,
         });
     }
 
     let mut actions = Vec::with_capacity(managed.len() + 1);
+    let mut profile = generated_profile.clone();
     for file in &managed {
         let destination = root.join(&file.relative_path);
-        let action = preflight_managed_file(
+        let preflight = preflight_setup_file(
             &destination,
             &file.content,
             file.executable,
-            file.release_managed && request.replace_managed,
+            file.ownership,
+            request.replace_managed || request.dry_run,
+            &generated_profile,
         )?;
+        if let Some(repository_profile) = preflight.profile {
+            profile = repository_profile;
+        }
         actions.push(SetupAction {
             path: file.relative_path.clone(),
-            action,
+            action: preflight.action,
         });
     }
     let gitignore_path = root.join(".gitignore");
@@ -187,6 +205,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 SetupActionKind::Create => write_new_file(&destination, &file.content)?,
                 SetupActionKind::Replace => fs::write(&destination, &file.content)
                     .with_context(|| format!("replace managed file {}", destination.display()))?,
+                SetupActionKind::PreserveRepositoryOwned => {}
                 SetupActionKind::MakeExecutable => {}
                 SetupActionKind::Unchanged => {}
                 SetupActionKind::UpdateGitignore => {
@@ -232,9 +251,13 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 .to_owned(),
             "Read tools/contextmink/agent_integration.md and adapt its operational contract into the repository's agent guidance; setup-project never edits AGENTS.md or CLAUDE.md."
                 .to_owned(),
-            "From Git Bash, run scripts/contextmink --json files . --limit 1 and inspect the contextmink.receipt.v2 envelope."
+            "Verify the project-local entrypoint from every supported agent shell and a representative nested working directory; require the intended profile and contextmink.receipt.v2."
                 .to_owned(),
-            "Run scripts/contextmink --json guard-check -- git clean and confirm the decision is deny."
+            "Inventory nested Git repositories, decide whether broad scans may cross them or require exact roots/--skip-nested-repos, and verify nested_repos_entered."
+                .to_owned(),
+            "Run the project-local guard-check -- git clean from the repository root and confirm the decision is deny."
+                .to_owned(),
+            "Document the fresh-clone install step: rerunning setup-project preserves tracked configuration and restores ignored host binaries."
                 .to_owned(),
         ],
     })
@@ -267,14 +290,20 @@ fn generated_config(profile: &str) -> Result<String> {
     toml::to_string_pretty(&config).context("serialize generated .contextmink.toml")
 }
 
-fn preflight_managed_file(
+fn preflight_setup_file(
     destination: &Path,
     expected: &[u8],
     executable: bool,
-    replace_divergent: bool,
-) -> Result<SetupActionKind> {
+    ownership: SetupFileOwnership,
+    replace_managed: bool,
+    generated_profile: &str,
+) -> Result<PreflightFile> {
     if !destination.exists() {
-        return Ok(SetupActionKind::Create);
+        return Ok(PreflightFile {
+            action: SetupActionKind::Create,
+            profile: matches!(ownership, SetupFileOwnership::RepositoryOwnedConfig)
+                .then(|| generated_profile.to_owned()),
+        });
     }
     if !destination.is_file() {
         return Err(anyhow!(
@@ -282,22 +311,51 @@ fn preflight_managed_file(
             destination.display()
         ));
     }
-    let existing = fs::read(destination)
-        .with_context(|| format!("read existing managed file {}", destination.display()))?;
+    if ownership == SetupFileOwnership::RepositoryOwnedConfig {
+        let config = load_context_config(Some(destination), false).with_context(|| {
+            format!(
+                "setup-project cannot preserve invalid repository-owned configuration {}",
+                destination.display()
+            )
+        })?;
+        let profile = config.profile.ok_or_else(|| {
+            anyhow!(
+                "setup-project cannot preserve repository-owned configuration {} without a profile",
+                destination.display()
+            )
+        })?;
+        return Ok(PreflightFile {
+            action: SetupActionKind::PreserveRepositoryOwned,
+            profile: Some(profile),
+        });
+    }
+    let existing = fs::read(destination).with_context(|| {
+        format!(
+            "read existing release-managed file {}",
+            destination.display()
+        )
+    })?;
     if existing != expected {
-        if replace_divergent {
-            return Ok(SetupActionKind::Replace);
+        if replace_managed {
+            return Ok(PreflightFile {
+                action: SetupActionKind::Replace,
+                profile: None,
+            });
         }
         return Err(anyhow!(
-            "setup-project refuses to overwrite divergent file {}; --replace-managed applies only to release artifacts and never replaces .contextmink.toml, which must be reviewed or removed explicitly",
+            "setup-project found divergent release-managed file {}; rerun with --replace-managed after reviewing the replacement",
             destination.display()
         ));
     }
-    if executable && executable_bit_missing(destination)? {
-        Ok(SetupActionKind::MakeExecutable)
+    let action = if executable && executable_bit_missing(destination)? {
+        SetupActionKind::MakeExecutable
     } else {
-        Ok(SetupActionKind::Unchanged)
-    }
+        SetupActionKind::Unchanged
+    };
+    Ok(PreflightFile {
+        action,
+        profile: None,
+    })
 }
 
 fn gitignore_content(existing: Option<&str>) -> String {
@@ -488,10 +546,58 @@ mod tests {
             second
                 .actions
                 .iter()
+                .filter(|action| action.path != Path::new(".contextmink.toml"))
                 .all(|action| action.action == SetupActionKind::Unchanged)
         );
+        assert!(second.actions.iter().any(|action| {
+            action.path == Path::new(".contextmink.toml")
+                && action.action == SetupActionKind::PreserveRepositoryOwned
+        }));
+        assert_eq!(second.profile, "demo-project");
         let gitignore = fs::read_to_string(project.join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(GITIGNORE_ENTRY).count(), 1);
+        cleanup(&project);
+    }
+
+    #[test]
+    fn customized_configuration_is_preserved_while_missing_binaries_are_restored() {
+        let (project, binary) = fixture("preserve-config");
+        setup_project(request(&project, &binary, false)).unwrap();
+        let config = "profile = \"owned-profile\"\nexclude_globs = [\"generated/**\"]\n";
+        fs::write(project.join(".contextmink.toml"), config).unwrap();
+        let installed_binary = project.join(format!(
+            "tools/contextmink/bin/contextmink{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        fs::remove_file(&installed_binary).unwrap();
+
+        let dry_run = setup_project(request(&project, &binary, true)).unwrap();
+        assert_eq!(dry_run.profile, "owned-profile");
+        assert!(dry_run.actions.iter().any(|action| {
+            action.path == Path::new(".contextmink.toml")
+                && action.action == SetupActionKind::PreserveRepositoryOwned
+        }));
+        assert!(dry_run.actions.iter().any(|action| {
+            action.path
+                == Path::new(&format!(
+                    "tools/contextmink/bin/contextmink{}",
+                    std::env::consts::EXE_SUFFIX
+                ))
+                && action.action == SetupActionKind::Create
+        }));
+        assert!(!installed_binary.exists());
+        assert_eq!(
+            fs::read_to_string(project.join(".contextmink.toml")).unwrap(),
+            config
+        );
+
+        let applied = setup_project(request(&project, &binary, false)).unwrap();
+        assert_eq!(applied.profile, "owned-profile");
+        assert!(installed_binary.is_file());
+        assert_eq!(
+            fs::read_to_string(project.join(".contextmink.toml")).unwrap(),
+            config
+        );
         cleanup(&project);
     }
 
@@ -503,37 +609,97 @@ mod tests {
         fs::write(project.join("scripts/contextmink"), b"locally changed").unwrap();
 
         let error = setup_project(request(&project, &binary, false)).unwrap_err();
-        assert!(error.to_string().contains("refuses to overwrite divergent"));
+        assert!(
+            error
+                .to_string()
+                .contains("found divergent release-managed file")
+        );
         assert!(!project.join(".contextmink.toml").exists());
         cleanup(&project);
     }
 
     #[test]
-    fn explicit_replacement_updates_release_files_but_never_configuration() {
+    fn dry_run_reports_release_replacement_without_mutation_authority() {
+        let (project, binary) = fixture("dry-run-replacement");
+        setup_project(request(&project, &binary, false)).unwrap();
+        fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
+        let owned_config = "profile = \"owned\"\nexclude_globs = [\"cache/**\"]\n";
+        fs::write(project.join(".contextmink.toml"), owned_config).unwrap();
+
+        let result = setup_project(request(&project, &binary, true)).unwrap();
+        assert_eq!(result.profile, "owned");
+        assert!(result.actions.iter().any(|action| {
+            action.path == Path::new("scripts/contextmink")
+                && action.action == SetupActionKind::Replace
+        }));
+        assert!(result.actions.iter().any(|action| {
+            action.path == Path::new(".contextmink.toml")
+                && action.action == SetupActionKind::PreserveRepositoryOwned
+        }));
+        assert_eq!(
+            fs::read(project.join("scripts/contextmink")).unwrap(),
+            b"older release"
+        );
+        assert_eq!(
+            fs::read_to_string(project.join(".contextmink.toml")).unwrap(),
+            owned_config
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn explicit_replacement_updates_release_files_and_preserves_configuration() {
         let (project, binary) = fixture("replace-managed");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
+        let owned_config = "profile = \"owned\"\nexclude_globs = [\"cache/**\"]\n";
+        fs::write(project.join(".contextmink.toml"), owned_config).unwrap();
 
         let mut replace = request(&project, &binary, false);
         replace.replace_managed = true;
         let result = setup_project(replace).unwrap();
+        assert_eq!(result.profile, "owned");
         assert!(result.actions.iter().any(|action| {
             action.path == Path::new("scripts/contextmink")
                 && action.action == SetupActionKind::Replace
+        }));
+        assert!(result.actions.iter().any(|action| {
+            action.path == Path::new(".contextmink.toml")
+                && action.action == SetupActionKind::PreserveRepositoryOwned
         }));
         assert_eq!(
             fs::read(project.join("scripts/contextmink")).unwrap(),
             BASH_LAUNCHER
         );
+        assert_eq!(
+            fs::read_to_string(project.join(".contextmink.toml")).unwrap(),
+            owned_config
+        );
+        cleanup(&project);
+    }
 
-        fs::write(project.join(".contextmink.toml"), "profile = \"owned\"\n").unwrap();
+    #[test]
+    fn invalid_repository_configuration_refuses_before_release_replacement() {
+        let (project, binary) = fixture("invalid-config");
+        setup_project(request(&project, &binary, false)).unwrap();
+        fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
+        fs::write(
+            project.join(".contextmink.toml"),
+            "profile = \"owned\"\nunknown_key = true\n",
+        )
+        .unwrap();
+
         let mut replace = request(&project, &binary, false);
         replace.replace_managed = true;
         let error = setup_project(replace).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("never replaces .contextmink.toml")
+                .contains("cannot preserve invalid repository-owned configuration")
+        );
+        assert_eq!(
+            fs::read(project.join("scripts/contextmink")).unwrap(),
+            b"older release"
         );
         cleanup(&project);
     }

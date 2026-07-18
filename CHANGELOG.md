@@ -26,6 +26,8 @@ The release workflow extracts the section for the requested version and fails if
 - Made character limits include the ellipsis itself, so every bounded text/value field is at most the advertised number of characters.
 - Made Markdown outlines track CommonMark backtick and tilde fences, including indentation, closing-run length, and closing-line content, so code comments cannot appear as headings.
 - Gated public release publication on locked formatting, tests, Clippy, package verification, the minimum Rust version, and a `master`-branch dispatch.
+- Made `setup-project` validate and preserve existing repository-owned configuration while still reporting and replacing release-managed artifact drift; fresh clones can now restore ignored host binaries without deleting tracked policy.
+- Made nested-repository disclosure and `--skip-nested-repos` cover tracked submodules and Git-ignored sibling repositories under one public contract.
 
 ### Fixed
 
@@ -39,6 +41,7 @@ The release workflow extracts the section for the requested version and fails if
 - Decoupled `json-find --value-contains` matching from `--max-value-chars`, and disclosed JSON/SQLite value shortening with `value_characters` output caps.
 - Routed UTF-8-BOM and UTF-16 JSONL through the encoding contract, and shielded slash-bearing predicate/filter values from Git Bash MSYS rewriting.
 - Reapplied nested exclusions below explicitly targeted excluded roots while preserving the target entry boundary.
+- Excluded submodule-style `.git` marker files from ordinary file enumeration.
 - Made built-in `git clean` and opaque encoded-PowerShell rules independent of repository cwd, added `env -S`, PowerShell encoded-command abbreviations, and protected `find -delete`/`-exec` handling, and kept repository fragments scoped to their owning root.
 - Annotated intentional best-effort supervision cleanup so ignored results remain visible to the fail-fast audit contract.
 - Cut release archive capture smokes over to `child_exit_code`, `child_exit_zero`, and `exit_expected`, rejected the removed generic fields there, and isolated package verification from ordinary build fingerprints.

@@ -213,6 +213,15 @@ jobs:
           "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v1"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/agent_integration.md"
+          sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
+          rm "${project}/.contextmink.toml.bak"
+          rm "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
+          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" --dry-run > "${verify_root}/setup-repair-smoke.json"
+          grep -Eq '"action"[[:space:]]*:[[:space:]]*"preserve_repository_owned"' "${verify_root}/setup-repair-smoke.json"
+          grep -Eq '"action"[[:space:]]*:[[:space:]]*"create"' "${verify_root}/setup-repair-smoke.json"
+          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-repair-apply.json"
+          test -f "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
+          grep -Fq 'exclude_globs = ["generated/**"]' "${project}/.contextmink.toml"
           printf 'fixture\n' > "${project}/nested/work/fixture.txt"
           (cd "${project}" && scripts/contextmink --json files . --limit 1) > "${verify_root}/root-smoke.json"
           (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --limit 1) > "${verify_root}/nested-smoke.json"
@@ -280,6 +289,25 @@ jobs:
           if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
           if (!(Test-Path "$project/scripts/contextmink.cmd")) { throw "PowerShell diagnostic shim missing" }
           $projectBin = "$project/tools/contextmink/bin"
+          $configPath = "$project/.contextmink.toml"
+          $configText = (Get-Content -Raw -Path $configPath).Replace(
+            'exclude_globs = []',
+            'exclude_globs = ["generated/**"]'
+          )
+          Set-Content -Path $configPath -Value $configText -NoNewline
+          Remove-Item -LiteralPath "$projectBin/contextmink.exe"
+          $repairSmoke = (& $binary --json setup-project $project --dry-run | Out-String) | ConvertFrom-Json
+          if (!($repairSmoke.actions | Where-Object { $_.path -eq ".contextmink.toml" -and $_.action -eq "preserve_repository_owned" })) {
+            throw "setup-project did not preserve repository-owned config"
+          }
+          if (!($repairSmoke.actions | Where-Object { $_.path -eq "tools/contextmink/bin/contextmink.exe" -and $_.action -eq "create" })) {
+            throw "setup-project did not plan missing binary repair"
+          }
+          & $binary --json setup-project $project | Out-Null
+          if (!(Test-Path "$projectBin/contextmink.exe")) { throw "setup-project did not restore missing binary" }
+          if (!(Select-String -Path "$project/.contextmink.toml" -SimpleMatch 'exclude_globs = ["generated/**"]')) {
+            throw "setup-project changed repository-owned config"
+          }
           Set-Content -Path "$project/nested/work/fixture.txt" -Value "fixture" -NoNewline
           $projectBinary = "$projectBin/contextmink.exe"
           $projectBridge = "$projectBin/contextmink-bridge.exe"

@@ -73,6 +73,31 @@ fn project_template_requires_explicit_policy_adaptation() {
     assert!(config.contains("Add only project-specific high-output paths"));
     assert!(guidance.contains("intended workspace root"));
     assert!(guidance.contains("& tools\\contextmink\\bin\\contextmink.exe"));
+    assert!(guidance.contains("When the target file is unknown"));
+    assert!(guidance.contains("including tracked submodules and Git-ignored"));
+    assert!(guidance.contains("Pass `--skip-nested-repos` to stay inside each"));
+}
+
+#[test]
+fn setup_guidance_preserves_repository_owned_configuration() {
+    for (name, contents) in [
+        ("README.md", include_str!("../README.md")),
+        ("SETUP.md", include_str!("../SETUP.md")),
+        ("docs/setup.md", include_str!("../docs/setup.md")),
+    ] {
+        assert!(
+            contents.contains("repository-owned"),
+            "{name} must identify configuration ownership"
+        );
+        assert!(
+            contents.contains("preserve"),
+            "{name} must explain configuration preservation"
+        );
+        assert!(
+            contents.contains("missing") || contents.contains("fresh clone"),
+            "{name} must explain fresh-clone binary repair"
+        );
+    }
 }
 
 #[test]
@@ -92,6 +117,8 @@ fn release_workflow_verifies_extracted_project_integration() {
         "integration-project",
         "--json setup-project",
         "contextmink.project_setup.v1",
+        "preserve_repository_owned",
+        "setup-repair-smoke",
         "contextmink.receipt.v2",
         "agent_integration.md",
         "scripts/contextmink --json guard-check",

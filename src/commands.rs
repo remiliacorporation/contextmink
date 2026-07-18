@@ -358,7 +358,7 @@ fn write_nested_repos_note(stdout: &mut impl Write, nested: &[String]) -> Result
     }
     writeln!(
         stdout,
-        "[contextmink] entered {} git-ignored nested repo(s): {listed}",
+        "[contextmink] entered {} nested Git repo(s): {listed}",
         nested.len()
     )?;
     Ok(())
