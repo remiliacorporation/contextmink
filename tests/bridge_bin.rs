@@ -56,7 +56,7 @@ fn forwarding_script(root: &Path) -> PathBuf {
 fn assert_bash_script_argv_round_trip(command_form: &str) {
     let root = temp_root(command_form.trim_start_matches('-'));
     let script = forwarding_script(&root);
-    let request = root.join("type-graph-request.json");
+    let request = root.join("query-type-graph-request.json");
     fs::write(
         &request,
         "{\"type\":\"/lua_5_1_1/_union_41\",\"include_uses\":true}\n",

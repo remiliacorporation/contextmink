@@ -126,13 +126,13 @@ fn windows_bash_candidates_are_git_for_windows_only() {
 fn git_bash_boundaries_exclude_only_caller_slash_arguments() {
     let argv = vec![
         "/lua_5_1_1/_union_41".to_owned(),
-        "@C:/requests/type-graph.json".to_owned(),
+        "@C:/requests/query-type-graph.json".to_owned(),
         "{\"type\":\"/lua_5_1_1/_union_41\"}".to_owned(),
         "plain".to_owned(),
     ];
     assert_eq!(
         msys2_arg_conversion_exclusions(&argv),
-        "/lua_5_1_1/_union_41;@C:/requests/type-graph.json;{\"type\":\"/lua_5_1_1/_union_41\"}"
+        "/lua_5_1_1/_union_41;@C:/requests/query-type-graph.json;{\"type\":\"/lua_5_1_1/_union_41\"}"
     );
 }
 
