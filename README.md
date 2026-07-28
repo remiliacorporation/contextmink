@@ -1,13 +1,109 @@
 # contextmink
 
-A transcript guard for agent-driven code work. Every command lists, searches,
-reads, or inspects with hard output caps and ends with a machine-readable
-receipt stating whether the result was complete. Agents get bounded evidence
-instead of flooded context; humans can read the same receipts to see what an
-agent saw.
+[![CI](https://github.com/remiliacorporation/contextmink/actions/workflows/ci.yml/badge.svg)](https://github.com/remiliacorporation/contextmink/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/remiliacorporation/contextmink)](https://github.com/remiliacorporation/contextmink/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Project-specific parsing, validation, indexing, and diagnostics belong in
-project-native tools, not here.
+**Give coding agents the evidence they need without spending the conversation
+on raw tool output.**
+
+An agent exploring a real repository has an awkward choice. Broad commands can
+dump thousands of paths, matches, log lines, JSON values, or database rows into
+its transcript. Aggressive truncation keeps the transcript usable, but can hide
+the one result that changes the answer. Once output is clipped, the agent often
+cannot tell whether it saw the whole result or only the beginning.
+
+Contextmink is a small, project-local transcript guard for that gap. Its commands
+enumerate, search, read, query, and capture with explicit limits. Every result
+ends with a machine-readable receipt that distinguishes:
+
+- a complete result from a bounded subset;
+- exact totals from lower bounds;
+- inspected evidence from omitted display payload;
+- a real no-match from "not found in the portion examined"; and
+- a successful child command from output that merely looked successful.
+
+The result is less transcript churn, fewer repeated probes, and a reviewable
+record of what the agent actually saw.
+
+## See the difference
+
+Suppose an agent needs to find a rendering path in a repository it has not seen
+before. A recursive search may return too much to retain, while a silently
+clipped search can support the wrong conclusion. Contextmink keeps the search
+bounded and makes the limitation part of the result:
+
+```text
+$ scripts/contextmink grep --pattern 'render_chunk' src tests --limit 8
+[contextmink] grep pattern="render_chunk"
+matching_files_total=11 matching_lines_total=37
+...
+selected receipt fields:
+{"schema":"contextmink.receipt.v2",
+ "result":{"shown":8,"total":11,"total_is_lower_bound":false},
+ "scope_complete":true,"output_truncated":true,"complete":false}
+```
+
+The agent can safely conclude that 11 files matched, while also knowing that
+only 8 file payloads were printed. If a scan budget had stopped content
+inspection early, `scope_complete` would instead be false and match totals would
+be marked as lower bounds. The receipt turns truncation from an invisible
+failure mode into usable evidence.
+
+## Where it earns its place
+
+Contextmink is useful anywhere an agent must inspect more material than should
+be pasted into a conversation:
+
+| Work | What Contextmink adds |
+| --- | --- |
+| Entering an unfamiliar repository | Bounded directory and file maps before opening source |
+| Searching a large codebase | Exact candidate counts, sampled matches, and honest scope caps |
+| Reading large or generated files | Declaration outlines and targeted line/character windows |
+| Inspecting JSON, JSONL, or SQLite | Shape discovery and projected rows without dumping whole datasets |
+| Running noisy builds and diagnostics | Head-and-tail capture, child exit truth, and descendant cleanup |
+| Working across nested repositories | Explicit disclosure of crossed Git roots or strict root isolation |
+| Driving Bash-first projects from Windows agents | Lossless argv relay through a native Git Bash bridge |
+| Protecting agent-operated repositories | A shared tripwire for known destructive shell commands |
+
+It works well in small repositories too: the commands are fast enough to become
+the default inspection vocabulary, so the same workflow continues to hold when
+the repository, logs, or evidence store grow.
+
+## A useful agent workflow
+
+Contextmink is designed around progressive retrieval rather than one enormous
+search:
+
+```bash
+# 1. Learn the shape without printing the tree.
+scripts/contextmink dirs crates --depth 2 --limit 40
+
+# 2. Enumerate or search a bounded candidate set.
+scripts/contextmink files crates --term render --ext rs --limit 20
+scripts/contextmink grep --pattern 'render_chunk' crates --ext rs --limit 8
+
+# 3. Map one relevant file, then read only the useful region.
+scripts/contextmink outline crates/render/src/lib.rs --contains render -i
+scripts/contextmink slice crates/render/src/lib.rs --range 120:190
+
+# 4. Project structured evidence instead of serializing all of it.
+scripts/contextmink json-select queue.jsonl --fields addr,name --limit 20
+scripts/contextmink sqlite evidence.sqlite --sql-file query.sql --limit 20
+
+# 5. Bound a command whose output cardinality is not yet known.
+scripts/contextmink capture --max-lines 40 -- some-tool --diagnose
+```
+
+Humans can read the normal output. Agents and automation can add `--json` and
+consume the same receipt contract directly. Project configuration supplies
+default excludes and optional destructive-path tripwires, keeping routine
+commands concise and repository-aware.
+
+Contextmink complements rather than replaces domain tools. Compilers, language
+servers, indexers, debuggers, and project-specific validators remain the
+authority for their domains. Contextmink makes the surrounding discovery and
+evidence transfer bounded, explicit, and consistent.
 
 ## Install
 

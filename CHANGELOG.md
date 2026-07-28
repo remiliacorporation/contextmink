@@ -6,7 +6,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-07-17
+## [0.8.0] - 2026-07-29
 
 ### Added
 
@@ -16,6 +16,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Changed
 
+- Reworked the public introduction around concrete agent workflows, completeness-aware evidence, and the repository, structured-data, command-capture, nested-repository, and Windows bridge use cases Contextmink serves.
 - Replaced the loose receipt envelope with typed `contextmink.receipt.v2`: one nested `result`, structured `caps`, separately derived `scope_complete` and `output_truncated`, and a single `complete` verdict shared by JSON, text, quiet, strict, and receipt-file paths.
 - Cut over public limit names to their actual objects: `--require-complete-scope`, `--max-files-counted`, `--max-matching-files`, `--max-sample-lines`, `--max-content-files`, and `--max-rows-scanned`. The replaced spellings are rejected.
 - Renamed grep result concepts to `matching_files` and `matching_lines`, kept candidate enumeration exact, and made `--quiet` suppress payload only without changing result counts or cap truth.
@@ -31,6 +32,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- Updated `anyhow` and `crossbeam-epoch` to releases that resolve RUSTSEC-2026-0190 and RUSTSEC-2026-0204 in the shipped lockfile.
 - End-anchored capped tail windows, rejected zero/inverted slice bounds, and made empty/past-EOF receipt counts exact.
 - Rejected more than one executable SQLite statement instead of silently ignoring a tail statement; kept comments and empty separators valid.
 - Unified JSON/text/quiet receipt construction for files, dirs, grep, JSON, SQLite, outline, slice, and capture; scope and output caps can no longer disagree by rendering mode.
