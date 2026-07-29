@@ -48,7 +48,10 @@ fn unknown_keys_fail_fast() {
 #[test]
 fn duplicate_keys_fail_fast() {
     let error = parse_config("profile = \"a\"\nprofile = \"b\"\n").unwrap_err();
-    assert!(error.to_string().contains("duplicate key `profile`"));
+    assert!(
+        error.to_string().contains("duplicate key `profile`"),
+        "{error:#}"
+    );
 
     let error = parse_config(
         "destructive_guard_delete_fragments = [\"a\"]\ndestructive_guard_delete_fragments = [\"b\"]\n",
@@ -57,14 +60,15 @@ fn duplicate_keys_fail_fast() {
     assert!(
         error
             .to_string()
-            .contains("duplicate key `destructive_guard_delete_fragments`")
+            .contains("duplicate key `destructive_guard_delete_fragments`"),
+        "{error:#}"
     );
 }
 
 #[test]
 fn unterminated_array_fails_fast() {
     let error = parse_config("exclude_globs = [\n  \"a/**\",\nprofile = \"x\"\n").unwrap_err();
-    assert!(error.to_string().contains("invalid array"));
+    assert!(error.to_string().contains("invalid array"), "{error:#}");
 }
 
 #[test]

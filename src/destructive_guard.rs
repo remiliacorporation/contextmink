@@ -456,13 +456,10 @@ fn command_program_index(tokens: &[String], dialect: ShellDialect) -> Option<usi
             // separate `do ...` command); cmd `for ... do CMD` keeps the body
             // in the same command, so resume scanning after its `do` token.
             "for" | "select" => {
-                match tokens[index..]
+                let offset = tokens[index..]
                     .iter()
-                    .position(|token| token.eq_ignore_ascii_case("do"))
-                {
-                    Some(offset) => index += offset + 1,
-                    None => return None,
-                }
+                    .position(|token| token.eq_ignore_ascii_case("do"))?;
+                index += offset + 1;
             }
             "env" => {
                 index += 1;

@@ -120,20 +120,42 @@ pub(crate) fn canonical_normalized(path: &Path) -> Option<String> {
 fn parse_config(text: &str) -> Result<ContextminkConfig> {
     let config: ContextminkConfig = toml::from_str(text).map_err(|error| {
         let detail = error.to_string();
-        let unknown_key_nudge = detail
+        let classification = detail
             .split_once("unknown field `")
             .and_then(|(_, tail)| tail.split_once('`'))
-            .map_or(String::new(), |(field, _)| {
-                format!("unknown key `{field}`; ")
-            });
+            .map(|(field, _)| format!("unknown key `{field}`; "))
+            .or_else(|| {
+                detail
+                    .contains("duplicate key")
+                    .then(|| error.span())
+                    .flatten()
+                    .and_then(|span| config_key_at_offset(text, span.start))
+                    .map(|key| format!("duplicate key `{key}`; "))
+            })
+            .or_else(|| detail.contains("in array").then(|| "invalid array; ".to_string()))
+            .unwrap_or_default();
         anyhow!(
-            "invalid contextmink TOML: {unknown_key_nudge}{detail}; accepted top-level keys: {ACCEPTED_CONFIG_KEYS}"
+            "invalid contextmink TOML: {classification}{detail}; accepted top-level keys: {ACCEPTED_CONFIG_KEYS}"
         )
     })?;
     if let Some(profile) = config.profile.as_deref() {
         validate_profile(profile)?;
     }
     Ok(config)
+}
+
+fn config_key_at_offset(text: &str, offset: usize) -> Option<&str> {
+    let line_start = text.get(..offset)?.rfind('\n').map_or(0, |index| index + 1);
+    let line_end = text
+        .get(offset..)?
+        .find('\n')
+        .map_or(text.len(), |index| offset + index);
+    let key = text.get(line_start..line_end)?.split_once('=')?.0.trim();
+    (!key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
+    .then_some(key)
 }
 
 fn validate_profile(profile: &str) -> Result<()> {

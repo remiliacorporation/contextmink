@@ -52,8 +52,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.92.0 --profile minimal
-          cargo +1.92.0 check --locked
+          rustup toolchain install 1.95.0 --profile minimal
+          cargo +1.95.0 check --locked
 
   build:
     needs: verify-source

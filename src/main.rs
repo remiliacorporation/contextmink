@@ -43,6 +43,28 @@ use sqlite::{command_sqlite, command_sqlite_schema};
 use text::{TermMode, TextMatcher, collect_terms};
 
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    {
+        // The derived clap command graph is intentionally broad. Rust's
+        // default Windows main-thread stack is small enough that debug builds
+        // can exhaust it while materializing the parser before any command is
+        // dispatched. Keep the command surface explicit and give only the
+        // application thread the stack it demonstrably needs.
+        std::thread::Builder::new()
+            .name("contextmink-main".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(run_application)
+            .map_err(|error| anyhow!("failed to start contextmink application thread: {error}"))?
+            .join()
+            .map_err(|_| anyhow!("contextmink application thread panicked"))?
+    }
+    #[cfg(not(windows))]
+    {
+        run_application()
+    }
+}
+
+fn run_application() -> Result<()> {
     output::mark_command_start();
     let cli = Cli::parse();
     if let Command::SetupProject {

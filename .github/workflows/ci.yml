@@ -42,8 +42,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.92
-        uses: dtolnay/rust-toolchain@1.92.0
+      - name: Install Rust 1.95
+        uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Check minimum supported Rust version
         run: cargo check --locked

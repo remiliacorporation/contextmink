@@ -112,7 +112,7 @@ fn release_workflow_verifies_extracted_project_integration() {
         "cargo test --locked --all-targets --all-features",
         "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
         "CARGO_TARGET_DIR: target/package-check",
-        "cargo +1.92.0 check --locked",
+        "cargo +1.95.0 check --locked",
         "needs: [verify-source, build]",
         "integration-project",
         "--json setup-project",

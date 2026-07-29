@@ -12,7 +12,7 @@ replacement for project-native tools.
 
 - For standalone use, download the release archive for your platform and put
   `contextmink` on `PATH`, or run it from the unpacked directory.
-- Rust 1.92 or newer and Cargo are needed only for source builds or vendored
+- Rust 1.95 or newer and Cargo are needed only for source builds or vendored
   integrations that build the local `tools/contextmink` copy. `contextmink`
   uses Rust edition 2024.
 - A POSIX-compatible shell is needed only for the optional `scripts/contextmink`

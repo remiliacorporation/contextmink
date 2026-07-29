@@ -119,7 +119,7 @@ Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
 SQLite bundled. The binary runs directly from PowerShell, cmd, WSL, or any
 POSIX shell.
 
-To build from source instead: `cargo build --release` (Rust 1.92 or newer,
+To build from source instead: `cargo build --release` (Rust 1.95 or newer,
 edition 2024).
 
 ## Add to a project
