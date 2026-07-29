@@ -48,7 +48,7 @@ fn capture_supervision_job_terminates_child_when_dropped() {
         .args(["/c", "ping", "-n", "30", "127.0.0.1", ">NUL"])
         .spawn()
         .expect("spawn supervised fixture");
-    let supervisor = supervise_captured_child(&mut child).expect("supervise fixture child");
+    let supervisor = supervise(&mut child).expect("supervise fixture child");
     drop(supervisor);
     for _ in 0..20 {
         if child.try_wait().expect("poll supervised child").is_some() {
@@ -77,7 +77,7 @@ fn capture_supervision_job_contains_descendants_before_resume() {
     .expect("prepare suspended supervision fixture");
     let mut child = spawn_captured_child(prepared.command, "powershell.exe", "native")
         .expect("spawn suspended supervision fixture");
-    let supervisor = supervise_captured_child(&mut child).expect("assign and resume fixture");
+    let supervisor = supervise(&mut child).expect("assign and resume fixture");
     let mut descendant_pid = String::new();
     std::io::BufReader::new(child.stdout.take().expect("fixture stdout"))
         .read_line(&mut descendant_pid)
@@ -127,7 +127,7 @@ fn capture_supervision_watchdog_terminates_process_group_when_dropped() {
         .expect("prepare supervised fixture");
     let mut child =
         spawn_captured_child(prepared.command, "sh", "native").expect("spawn supervised fixture");
-    let supervisor = supervise_captured_child(&mut child).expect("supervise fixture child");
+    let supervisor = supervise(&mut child).expect("supervise fixture child");
     let mut descendant_pid = String::new();
     std::io::BufReader::new(child.stdout.take().expect("fixture stdout"))
         .read_line(&mut descendant_pid)

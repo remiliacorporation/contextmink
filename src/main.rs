@@ -17,6 +17,7 @@ mod json_tools;
 mod outline;
 mod output;
 mod process_boundary;
+mod process_supervision;
 mod sqlite;
 mod text;
 

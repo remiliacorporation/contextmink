@@ -30,6 +30,9 @@ mod config;
 mod destructive_guard;
 #[path = "../process_boundary.rs"]
 mod process_boundary;
+#[cfg(windows)]
+#[path = "../process_supervision.rs"]
+mod process_supervision;
 
 use process_boundary::{prepare_command, resolve_project_root};
 
@@ -255,27 +258,61 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             prepared.execution_mode, prepared.effective_argv
         );
     }
-    let status = prepared.command.status().map_err(|error| {
-        let code = if error.kind() == std::io::ErrorKind::NotFound {
-            EXIT_NO_BASH
-        } else {
-            EXIT_SPAWN_FAILED
-        };
-        let hint = if prepared.execution_mode == "native" {
-            "; if this path names a Bash script without a shebang, use --script explicitly"
-        } else {
-            ""
-        };
-        fail(
-            code,
-            format!(
-                "failed to spawn {program:?} in {} mode: {error}{hint}",
-                prepared.execution_mode
-            ),
-        )
-    })?;
+    #[cfg(windows)]
+    let status = {
+        process_supervision::configure(&mut prepared.command);
+        let mut child = prepared
+            .command
+            .spawn()
+            .map_err(|error| spawn_error(program, prepared.execution_mode, error))?;
+        let supervisor = process_supervision::supervise(&mut child).map_err(|error| {
+            fail(
+                EXIT_SPAWN_FAILED,
+                format!(
+                    "failed to supervise {program:?} in {} mode: {error:#}",
+                    prepared.execution_mode
+                ),
+            )
+        })?;
+        let status = child.wait().map_err(|error| {
+            fail(
+                EXIT_SPAWN_FAILED,
+                format!(
+                    "failed to wait for {program:?} in {} mode: {error}",
+                    prepared.execution_mode
+                ),
+            )
+        })?;
+        drop(supervisor);
+        status
+    };
+    #[cfg(not(windows))]
+    let status = prepared
+        .command
+        .status()
+        .map_err(|error| spawn_error(program, prepared.execution_mode, error))?;
 
     Ok(exit_code(status))
+}
+
+fn spawn_error(program: &str, execution_mode: &str, error: std::io::Error) -> BridgeError {
+    let code = if error.kind() == std::io::ErrorKind::NotFound {
+        EXIT_NO_BASH
+    } else {
+        EXIT_SPAWN_FAILED
+    };
+    let hint = if execution_mode == "native" {
+        "; if this path names a Bash script without a shebang, use --script explicitly"
+    } else {
+        ""
+    };
+    fail(
+        code,
+        format!(
+            "failed to spawn {program:?} in {} mode: {error}{hint}",
+            execution_mode
+        ),
+    )
 }
 
 fn load_destructive_guard_config(

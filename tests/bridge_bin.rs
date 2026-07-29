@@ -188,6 +188,54 @@ fn direct_spawn_runs_child_and_propagates_exit_code() {
     assert_eq!(output.status.code(), Some(1));
 }
 
+#[cfg(windows)]
+#[test]
+fn terminating_bridge_terminates_its_child_process_tree() {
+    use std::io::BufRead as _;
+
+    let script = "$p=Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 30' -PassThru; [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Wait-Process -Id $p.Id";
+    let mut bridge = Command::new(bridge_exe())
+        .args(["--", "powershell.exe", "-NoProfile", "-Command", script])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn bridge supervision fixture");
+    let mut descendant_pid = String::new();
+    std::io::BufReader::new(bridge.stdout.take().expect("fixture stdout"))
+        .read_line(&mut descendant_pid)
+        .expect("read descendant pid");
+    let descendant_pid = descendant_pid
+        .trim()
+        .parse::<u32>()
+        .expect("parse descendant pid");
+
+    bridge.kill().expect("terminate bridge fixture");
+    bridge.wait().expect("reap bridge fixture");
+    for _ in 0..40 {
+        if !windows_process_is_running(descendant_pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("bridge descendant survived bridge termination");
+}
+
+#[cfg(windows)]
+fn windows_process_is_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+
+    const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+    let process = unsafe { OpenProcess(SYNCHRONIZE_ACCESS, 0, pid) };
+    if process.is_null() {
+        return false;
+    }
+    let wait = unsafe { WaitForSingleObject(process, 0) };
+    unsafe {
+        CloseHandle(process);
+    }
+    wait == 258
+}
+
 #[test]
 fn slash_bearing_arguments_reach_native_children_verbatim() {
     let root = temp_root("msys-free");
