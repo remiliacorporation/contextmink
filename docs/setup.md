@@ -1,4 +1,4 @@
-# Setting Up contextmink In A Repository
+# Setting Up contextmink in a Repository
 
 This guide is for adding `contextmink` to an existing repository.
 
@@ -61,8 +61,20 @@ LICENSE-VPL
 The Windows archive also carries `contextmink-bridge.exe` (see the bridge
 section below); `manifest.json` records its name in a `bridge_binary` field.
 
-Verify the adjacent `.sha256` checksum when the archive was downloaded through
-automation or mirrored storage.
+Verify the adjacent `.sha256` checksum after downloading an archive.
+
+```bash
+sha256sum -c contextmink-<version>-<platform>.<archive-ext>.sha256
+```
+
+On PowerShell:
+
+```powershell
+$archive = "contextmink-<version>-windows-x86_64.zip"
+$expected = ((Get-Content "$archive.sha256" -Raw).Trim() -split '\s+')[0]
+$actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "contextmink archive checksum mismatch" }
+```
 
 ## Standalone Binary Install
 
@@ -221,9 +233,9 @@ payload JSON on stdin and exits 2 only for a recognized destructive command.
 An explicit or discovered policy that cannot be loaded also exits 2; an
 unparseable hook-event payload still allows with a diagnostic so harness schema
 drift does not disable all shell use. The evaluator is a tripwire, not a shell
-interpreter: shell-variable expansion, sourced scripts, repository-configured
-Git aliases, and brace-generated command spellings beyond its bounded static
-expansion remain outside its threat model.
+interpreter: literal POSIX assignments such as `c=clean; git $c` are resolved,
+but computed expansion, sourced scripts, repository-configured Git aliases, and
+runtime `eval` remain outside its threat model.
 
 Generate the settings fragment instead of hand-writing it:
 
@@ -283,15 +295,15 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [ch
 ```
 
 `--print-argv` shows exactly what survived the PowerShell boundary;
-`--argfile <file>` (one argument per line) is the file-based alternative;
+`--argfile <file>` (UTF-8, one argument per line) is the file-based alternative;
 `--cwd` and `--login` share the same process-boundary policy. Relative paths
 resolve from `CONTEXTMINK_BRIDGE_ROOT`; otherwise caller-side
 `.contextmink.toml`/`.git` discovery wins before executable-side discovery.
 This supports both globally installed and project-local bridges while keeping
 a vendored contextmink checkout anchored to the project it serves. In direct
 mode a path-like program (`./gradlew`, `bin/tool`) resolves against `--cwd`,
-  matching POSIX exec semantics. A file whose first line begins `#!` enters Git
-  Bash deterministically; a Bash script without a shebang requires
+matching POSIX exec semantics. A file whose first line begins `#!` enters Git
+Bash deterministically; a Bash script without a shebang requires
 explicit `--script`, whose path resolves from the bridge root instead of
 `--cwd`. Bare names (`git`) use PATH. Destructive argv matching the safety
 deny-list is refused before spawn; `contextmink-bridge --help` prints the
@@ -427,8 +439,8 @@ host mechanics the templates do not:
   `--glob '*.<ext>'` there.
 - The `scripts/contextmink` launcher shields slash-leading JSON Pointer
   selectors and slash-bearing `--pattern` / `--prefix` / `--contains` /
-  `--path-contains` / `--term` values from MSYS path rewriting on Git Bash,
-  while leaving normal file paths to the shell.
+  `files --path-contains` / `grep-terms --term` values from MSYS path rewriting
+  on Git Bash, while leaving normal file paths to the shell.
 - Bridge and `capture` share deterministic script classification. Files whose
   first line begins `#!` enter the Bash boundary before spawn; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Receipts
@@ -445,6 +457,7 @@ tools/contextmink/src/
 tools/contextmink/tests/
 tools/contextmink/Cargo.toml
 tools/contextmink/Cargo.lock
+tools/contextmink/rust-toolchain.toml
 tools/contextmink/README.md
 tools/contextmink/SETUP.md
 tools/contextmink/CHANGELOG.md

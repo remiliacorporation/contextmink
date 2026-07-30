@@ -14,7 +14,9 @@ more output than the transcript should carry.
   `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...`
   when a PowerShell-hosted Windows session needs the Bash launcher.
 - When the target file is unknown, start with `dirs` to orient in the tree,
-  then use `files` or `grep` for candidate discovery. Prefer
+  then use `files` or `grep` for candidate discovery. Narrow file discovery
+  with repeated `--path-contains` values and `--ext` before raising display
+  limits. Prefer
   `files --ext json` (or `--ext jsonl`)
   (comma-separated lists work: `--ext rs,toml`) across Windows-to-Bash
   boundaries because wildcard globs can expand before contextmink receives
@@ -27,6 +29,9 @@ more output than the transcript should carry.
   `cat` / `head` file windows. Keep its default caps (120-line window,
   220-line ceiling); narrow an oversized read with `outline` or
   `grep --context` instead of raising `--max-lines`.
+  Built-in outline matching is a disclosed navigation heuristic over
+  comment/string-masked text; use explicit prefix or regex matching when the
+  desired anchor is not a declaration shape.
 - Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
   for literal tokens or phrases (AND by default; pass `--any` for OR). Load
   phrases with `--term-file` and cap with `--limit` /
@@ -39,17 +44,21 @@ more output than the transcript should carry.
   `--where FIELD=VALUE` / `--where-contains FIELD=TEXT` row filters;
   `--keys` first when the row shape is unknown), `sqlite-schema`, and
   `sqlite --sql-file` for bounded reads instead of opening whole large
-  files, reports, or databases. `sqlite` binds JSON/JSONL worklists as
+  files, reports, or databases. JSON object keys must be unique, every
+  non-empty physical JSONL line is one value, and `--max-document-bytes`
+  bounds a materialized JSON document or one streamed JSONL record.
+  `sqlite` binds JSON/JSONL worklists as
   named parameters (`--jsonl-param w=file.jsonl` with `json_each(:w)`) and
   registers `hexint(x)` for joining `0x...` hex strings against integer
   columns.
 - Prefer a domain command's native compact/projection/limit flags first. Use
   `capture -- <command> ...` only when output size is uncertain and no
   native bound exists; read `child_exit_code`, `child_exit_zero`, and
-  `exit_expected` in the
-  receipt. Direct capture recognizes files whose first line begins `#!`; use
+  `exit_expected` in the receipt. Direct capture recognizes files whose first
+  line begins `#!`; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Truncated
-  captures keep both the head and the tail of the output.
+  captures keep both the head and the tail of each separately bounded stream;
+  they do not invent stdout/stderr chronology.
 - Configured excludes keep broad scans quiet. Pass an explicit file or
   subdirectory when an excluded tree is the target. Use `--with-excluded` to
   include files matched by contextmink exclude globs, and `--with-git-ignored`
@@ -60,8 +69,8 @@ more output than the transcript should carry.
   explicit root; pass a nested repository explicitly when it is the target.
 - Read the `contextmink.receipt.v2` envelope structurally. `scope_complete:
   false` means totals cover only a bounded subset; `output_truncated: true`
-  means the scope was inspected but payload was omitted. Inspect `caps[]` for
-  the `boundary`, `dimension`, and `limit`, and use `result.unit`,
+  means the scope was inspected but payload was omitted or shortened. Inspect
+  `caps[]` for the `boundary`, `dimension`, and `limit`, and use `result.unit`,
   `result.shown`, `result.total`, and `result.total_is_lower_bound` together.
   Use `--fail-if-truncated` when complete displayed output is required or
   `--require-complete-scope` when bounded evidence is unacceptable. Candidate

@@ -215,13 +215,16 @@ below is the short map.
   character-mode flags are mutually exclusive rather than silently ignored.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
   `encoding` and `total_lines`.
-- `json-find` — locate JSON values by key, path, or summarized value.
+- `json-find` — locate JSON values by key, path, or summarized value. It uses
+  the same strict JSON/JSONL input contract and materialization bound as
+  `json-select`.
 - `json-select` — project JSON or JSONL rows with `--fields` (bare key,
   JSON Pointer, or comma-separated list). `--where FIELD=VALUE` and
   `--where-contains FIELD=TEXT` filter rows; `--keys` reports the union of
   row keys with presence counts and value types for one-call shape
-  discovery; `*.jsonl` streams without loading; every non-empty physical JSONL
-  line is exactly one value across every command; fields null in every
+  discovery; UTF-8 `*.jsonl` streams record by record, while BOM-tagged UTF-16
+  stays within the explicit materialization bound; every non-empty physical
+  JSONL line is exactly one value across every command; fields null in every
   scanned row are flagged in `all_null_fields`.
   JSON object keys must be unique, integer spelling is preserved beyond
   64-bit ranges, and `--max-document-bytes` bounds materialized JSON documents

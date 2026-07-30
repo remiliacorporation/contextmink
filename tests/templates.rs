@@ -41,12 +41,14 @@ fn public_guidance_uses_current_cli_forms() {
         ),
     ];
     let retired_examples = [
-        "files --path",
+        "files --path ",
+        "files --path`",
         "dirs --path",
         "grep contextmink --path",
         "sqlite --path",
         "sqlite-schema --path",
         "files --max ",
+        "files --term",
         "--require-complete-scan",
         "--max-scan-files",
         "--max-count-files",
@@ -74,6 +76,9 @@ fn project_template_requires_explicit_policy_adaptation() {
     assert!(guidance.contains("intended workspace root"));
     assert!(guidance.contains("& tools\\contextmink\\bin\\contextmink.exe"));
     assert!(guidance.contains("When the target file is unknown"));
+    assert!(guidance.contains("repeated `--path-contains` values"));
+    assert!(guidance.contains("`--max-document-bytes`"));
+    assert!(guidance.contains("do not invent stdout/stderr chronology"));
     assert!(guidance.contains("including tracked submodules and Git-ignored"));
     assert!(guidance.contains("Pass `--skip-nested-repos` to stay inside each"));
 }

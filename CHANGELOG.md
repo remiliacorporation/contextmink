@@ -6,7 +6,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-07-30
+## [0.8.0] - 2026-07-31
 
 ### Added
 
