@@ -56,6 +56,26 @@ fn nul_bytes_without_utf16_bom_stay_binary() {
 }
 
 #[test]
+fn normalizes_crlf_and_cr_only_line_endings() {
+    match decode_bytes(b"one\r\ntwo\rthree") {
+        FileText::Text { text, .. } => assert_eq!(text, "one\ntwo\nthree"),
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+#[test]
+fn utf32_boms_are_rejected_explicitly() {
+    assert!(matches!(
+        decode_bytes(&[0xFF, 0xFE, 0x00, 0x00, b'a', 0, 0, 0]),
+        FileText::UnsupportedEncoding("utf32le")
+    ));
+    assert!(matches!(
+        decode_bytes(&[0x00, 0x00, 0xFE, 0xFF, 0, 0, 0, b'a']),
+        FileText::UnsupportedEncoding("utf32be")
+    ));
+}
+
+#[test]
 fn encoding_suspects_prove_double_encoding_by_round_trip() {
     // Mojibake is generated here, never written as literal bytes, so the
     // fixture cannot itself be "repaired" and the em-dash/arrow/é each

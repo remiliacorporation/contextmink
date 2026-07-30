@@ -13,6 +13,7 @@ The release workflow extracts the section for the requested version and fails if
 - Added `setup-project` for agent-owned repository integration: dry-run preflight, platform-specific project-local artifacts, real profile generation, idempotent `.gitignore` coverage, a locally installed agent-integration reference, explicit release-managed replacement, and refusal to overwrite repository-owned configuration or agent guidance.
 - Added deterministic grep content admission with `--max-content-files` and optional `--max-content-bytes`, including structured scope caps and admitted-file/byte telemetry.
 - Added `php` and `wgsl` outline languages: PHP's case-insensitive declarations and attribute-prefixed classes/functions, plus attributed WGSL functions, types, constants, overrides, and module resource bindings. Extensionless PHP scripts also resolve from a `php` shebang.
+- Added explicit JSON materialization/record bounds, duplicate-object-key rejection, arbitrary-precision integer preservation, and a SQLite read-only authorizer.
 
 ### Changed
 
@@ -29,6 +30,8 @@ The release workflow extracts the section for the requested version and fails if
 - Gated public release publication on locked formatting, tests, Clippy, package verification, the minimum Rust version, and a `master`-branch dispatch.
 - Made `setup-project` validate and preserve existing repository-owned configuration while still reporting and replacing release-managed artifact drift; fresh clones can now restore ignored host binaries without deleting tracked policy.
 - Made nested-repository disclosure and `--skip-nested-repos` cover tracked submodules and Git-ignored sibling repositories under one public contract.
+- Made file enumeration deduplicate physical identity, renamed the path filter to `--path-contains`, replaced the ambiguous `candidate_files` cap name with path/content-specific dimensions, and made `guard-check` human-readable unless `--json` is requested.
+- Made outline matcher provenance explicit and applied language-aware comment/string masking (including Rust raw strings, JavaScript template literals, and Python triple-quoted bodies), inactive-preprocessor suppression, Setext headings, `env -S` shebangs, one-line JavaScript methods, and boundary-aware XML attributes.
 
 ### Fixed
 
@@ -36,7 +39,7 @@ The release workflow extracts the section for the requested version and fails if
 - Kept the stdout capture receipt available when `--receipt-out` fails, made unexpected child status take precedence over strict truncation, and closed child stdin to keep capture non-interactive.
 - Made heterogeneous JSON Pointer shape mismatches null non-matches instead of panics, and stopped heuristically rewriting literal selector data that happens to contain `/Git/`.
 - Allowed high-cardinality benign brace expansions instead of blocking them as destructive, detected invoked inline `git -c alias.<name>=...` aliases that resolve to blocked commands, and made discovered malformed hook policies fail closed.
-- Resolved bare-filename configuration policy roots deterministically across platforms, made character slices complete requested windows, rejected ignored cross-mode slice flags, and confined `files --term` matching to the requested scan scope.
+- Resolved bare-filename configuration policy roots deterministically across platforms, made character slices complete requested windows, rejected ignored cross-mode slice flags, and confined `files --path-contains` matching to the requested scan scope.
 - Rejected `--preserve-descendants` outside Windows, bounded bridge transcript-warning reads by bytes as well as lines, and made the argv relay reject malformed base64 padding and trailing bits.
 - Updated `anyhow` and `crossbeam-epoch` to releases that resolve RUSTSEC-2026-0190 and RUSTSEC-2026-0204 in the shipped lockfile.
 - End-anchored capped tail windows, rejected zero/inverted slice bounds, and made empty/past-EOF receipt counts exact.
@@ -54,6 +57,9 @@ The release workflow extracts the section for the requested version and fails if
 - Annotated intentional best-effort supervision cleanup so ignored results remain visible to the fail-fast audit contract.
 - Cut release archive capture smokes over to `child_exit_code`, `child_exit_zero`, and `exit_expected`, rejected the removed generic fields there, and isolated package verification from ordinary build fingerprints.
 - Made `sqlite` validation failures preserve SQLite's own diagnostic and native byte offset before statement cleanup.
+- Unified all JSONL consumers on one-value-per-physical-line semantics, preserved integers beyond 64-bit ranges, and rejected duplicate keys rather than silently rewriting structured data.
+- Normalized CR-only text, rejected UTF-32 explicitly, bounded capture argv fields, removed capture tail-buffer churn, exposed nested-repository I/O failures, and resolved pathless child programs without inspecting caller-cwd lookalikes.
+- Propagated literal POSIX shell assignments across commands so simple variable indirection cannot hide a blocked command; genuinely dynamic evaluation remains outside static hook analysis.
 
 ### Removed
 

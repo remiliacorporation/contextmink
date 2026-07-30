@@ -12,6 +12,7 @@ use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::encoding::read_required_text;
 use crate::files::display_path;
+use crate::json_input::{parse_json_text, parse_jsonl_text};
 use crate::json_tools::contains_any;
 use crate::output::{
     ClampedText, Receipt, ReceiptCap, ReceiptResult, clamp_text, clamp_text_with_status,
@@ -390,7 +391,7 @@ fn load_sqlite_json_param(
         .with_context(|| format!("failed to read sqlite parameter {}", path.display()))?;
     let (value, values) = match format {
         "json" => {
-            let value: Value = serde_json::from_str(&text)
+            let value = parse_json_text(&path, &text)
                 .map_err(|error| json_param_parse_error(&path, &text, error))?;
             let values = value.as_array().map(Vec::len);
             (
@@ -414,11 +415,8 @@ fn load_sqlite_json_param(
 /// A `--json-param` file that fails as a single JSON document but parses as
 /// multiple JSONL values is almost certainly a JSONL worklist bound with the
 /// wrong flag; teach the fix instead of surfacing a bare serde error.
-fn json_param_parse_error(path: &Path, text: &str, error: serde_json::Error) -> anyhow::Error {
-    let jsonl_values = serde_json::Deserializer::from_str(text)
-        .into_iter::<Value>()
-        .take_while(|row| row.is_ok())
-        .count();
+fn json_param_parse_error(path: &Path, text: &str, error: anyhow::Error) -> anyhow::Error {
+    let jsonl_values = parse_jsonl_text(path, text).map_or(0, |rows| rows.len());
     if jsonl_values > 1 {
         return anyhow!(
             "{} is not a single JSON document but parses as {} JSONL values; bind it with --jsonl-param instead",
@@ -426,21 +424,11 @@ fn json_param_parse_error(path: &Path, text: &str, error: serde_json::Error) -> 
             jsonl_values
         );
     }
-    anyhow::Error::new(error).context(format!("failed to parse JSON parameter {}", path.display()))
+    error.context(format!("failed to parse JSON parameter {}", path.display()))
 }
 
 fn jsonl_to_json_array_text(path: &Path, text: &str) -> Result<(String, Option<usize>)> {
-    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
-    let mut rows = Vec::new();
-    for (index, row) in stream.enumerate() {
-        rows.push(row.with_context(|| {
-            format!(
-                "failed to parse JSONL value {} in {}",
-                index + 1,
-                path.display()
-            )
-        })?);
-    }
+    let rows = parse_jsonl_text(path, text)?;
     // A lone top-level array is a plain JSON array file: wrapping it would
     // bind [[...]] and json_each would silently see one row instead of N.
     if let [Value::Array(inner)] = rows.as_slice() {
@@ -964,6 +952,33 @@ fn open_sqlite_readonly(db: &Path) -> Result<Connection> {
     conn.execute_batch("PRAGMA query_only = ON")
         .context("failed to enable sqlite query_only mode")?;
     register_hexint(&conn)?;
+    conn.authorizer(Some(|context: rusqlite::hooks::AuthContext<'_>| {
+        use rusqlite::hooks::{AuthAction, Authorization};
+        match context.action {
+            AuthAction::Select
+            | AuthAction::Read { .. }
+            | AuthAction::Function { .. }
+            | AuthAction::Recursive
+            | AuthAction::Pragma {
+                pragma_value: None, ..
+            } => Authorization::Allow,
+            AuthAction::Pragma { pragma_name, .. }
+                if matches!(
+                    pragma_name.to_ascii_lowercase().as_str(),
+                    "table_info"
+                        | "table_xinfo"
+                        | "index_list"
+                        | "index_xinfo"
+                        | "foreign_key_list"
+                        | "table_list"
+                ) =>
+            {
+                Authorization::Allow
+            }
+            _ => Authorization::Deny,
+        }
+    }))
+    .context("failed to install sqlite read-only authorizer")?;
     Ok(conn)
 }
 
@@ -1013,17 +1028,26 @@ fn register_hexint(conn: &Connection) -> Result<()> {
 }
 
 fn sqlite_value_summary(value: ValueRef<'_>, max_chars: usize) -> ClampedText {
-    let full = match value {
-        ValueRef::Null => "null".to_owned(),
-        ValueRef::Integer(value) => value.to_string(),
-        ValueRef::Real(value) => value.to_string(),
-        ValueRef::Text(value) => {
-            let value = String::from_utf8_lossy(value);
-            format!("{value:?}")
+    match value {
+        ValueRef::Null => clamp_text_with_status("null", max_chars),
+        ValueRef::Integer(value) => clamp_text_with_status(&value.to_string(), max_chars),
+        ValueRef::Real(value) => clamp_text_with_status(&value.to_string(), max_chars),
+        ValueRef::Text(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) => {
+                let inner = clamp_text_with_status(text, max_chars.saturating_sub(2));
+                let mut rendered = clamp_text_with_status(&format!("{:?}", inner.text), max_chars);
+                rendered.truncated |= inner.truncated;
+                rendered
+            }
+            Err(_) => clamp_text_with_status(
+                &format!("<invalid-utf8-text:{} bytes>", bytes.len()),
+                max_chars,
+            ),
+        },
+        ValueRef::Blob(value) => {
+            clamp_text_with_status(&format!("<blob:{} bytes>", value.len()), max_chars)
         }
-        ValueRef::Blob(value) => format!("<blob:{} bytes>", value.len()),
-    };
-    clamp_text_with_status(&full, max_chars)
+    }
 }
 
 #[cfg(test)]

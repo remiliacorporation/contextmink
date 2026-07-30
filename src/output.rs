@@ -127,6 +127,10 @@ impl TextClamp {
         self.truncated |= truncated;
     }
 
+    pub(crate) fn was_truncated(&self) -> bool {
+        self.truncated
+    }
+
     pub(crate) fn add_receipt_cap(&self, receipt: &mut Receipt) {
         if self.truncated {
             receipt.add_cap(ReceiptCap::output("line_characters", Some(self.max_chars)));

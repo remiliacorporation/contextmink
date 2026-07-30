@@ -63,7 +63,11 @@ pub(crate) fn prepare_command(
         return Err(format!("script not found: {}", resolved_path.display()));
     }
 
-    let shebang = if resolved_path.is_file() {
+    let program_is_path = explicit_script
+        || Path::new(program).is_absolute()
+        || Path::new(program).has_root()
+        || program.chars().any(std::path::is_separator);
+    let shebang = if program_is_path && resolved_path.is_file() {
         file_has_shebang(resolved_path)?
     } else {
         false

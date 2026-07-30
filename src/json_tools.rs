@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -7,8 +7,10 @@ use serde_json::{Value, json};
 
 use crate::cli::Cli;
 use crate::config::ContextConfig;
-use crate::encoding::read_required_text;
 use crate::files::display_path;
+use crate::json_input::{
+    parse_json_text, parse_jsonl_text, read_bounded_json_text, visit_jsonl_file,
+};
 use crate::output::{
     ClampedText, Receipt, ReceiptCap, ReceiptResult, clamp_text_with_status, emit_json_checked,
     write_receipt_checked,
@@ -80,6 +82,7 @@ pub(crate) fn command_json_find(
     value_contains: &[String],
     max: usize,
     max_value_chars: usize,
+    max_document_bytes: u64,
 ) -> Result<()> {
     if max == 0 {
         return Err(anyhow!("json-find --limit must be greater than zero"));
@@ -107,40 +110,55 @@ pub(crate) fn command_json_find(
         .map(Regex::new)
         .transpose()
         .context("invalid path regex")?;
-    let document = read_required_text(file)
-        .with_context(|| format!("failed to read {}", file.display()))?
-        .0;
-    let (document, input_format) = parse_json_or_jsonl(&document)?;
     let mut rows = Vec::new();
     let mut value_characters_truncated = false;
     let mut total_matches = 0usize;
-    walk_json("$", None, &document, &mut |path, key, value| {
-        if let Some(key_re) = &key_re
-            && !key.is_some_and(|key| key_re.is_match(key))
-        {
-            return;
-        }
-        if !key_contains.is_empty() && !key.is_some_and(|key| contains_any(key, key_contains)) {
-            return;
-        }
-        if let Some(path_re) = &path_re
-            && !path_re.is_match(path)
-        {
-            return;
-        }
-        if !path_contains.is_empty() && !contains_any(path, path_contains) {
-            return;
-        }
-        if !value_contains.is_empty() && !contains_any(&json_search_text(value), value_contains) {
-            return;
-        }
-        total_matches += 1;
-        if rows.len() < max {
-            let summary = value_summary(value, max_value_chars);
-            value_characters_truncated |= summary.truncated;
-            rows.push((path.to_owned(), summary.text));
-        }
-    });
+    let mut inspect_value = |root_path: &str, document: &Value| {
+        walk_json(root_path, None, document, &mut |path, key, value| {
+            if let Some(key_re) = &key_re
+                && !key.is_some_and(|key| key_re.is_match(key))
+            {
+                return;
+            }
+            if !key_contains.is_empty() && !key.is_some_and(|key| contains_any(key, key_contains)) {
+                return;
+            }
+            if let Some(path_re) = &path_re
+                && !path_re.is_match(path)
+            {
+                return;
+            }
+            if !path_contains.is_empty() && !contains_any(path, path_contains) {
+                return;
+            }
+            if !value_contains.is_empty() && !contains_any(&json_search_text(value), value_contains)
+            {
+                return;
+            }
+            total_matches += 1;
+            if rows.len() < max {
+                let summary = value_summary(value, max_value_chars);
+                value_characters_truncated |= summary.truncated;
+                rows.push((path.to_owned(), summary.text));
+            }
+        });
+    };
+    let is_jsonl_named = file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"));
+    let input_format = if is_jsonl_named {
+        visit_jsonl_file(file, max_document_bytes, |index, row| {
+            inspect_value(&format!("$[{index}]"), &row);
+            Ok(())
+        })?;
+        "jsonl"
+    } else {
+        let text = read_bounded_json_text(file, max_document_bytes)?.0;
+        let (document, format) = parse_json_or_jsonl(file, &text, max_document_bytes)?;
+        inspect_value("$", &document);
+        format
+    };
     let shown = rows.len();
     let truncated = shown < total_matches;
     let mut receipt = Receipt::new(
@@ -191,29 +209,26 @@ pub(crate) fn command_json_find(
     }
 }
 
-fn parse_json_or_jsonl(text: &str) -> Result<(Value, &'static str)> {
-    match serde_json::from_str::<Value>(text) {
+fn parse_json_or_jsonl(
+    path: &Path,
+    text: &str,
+    max_document_bytes: u64,
+) -> Result<(Value, &'static str)> {
+    if text.len() as u64 > max_document_bytes {
+        return Err(anyhow!(
+            "{} is {} decoded bytes, above --max-document-bytes {max_document_bytes}; use a .jsonl extension for streaming or raise the explicit materialization bound",
+            path.display(),
+            text.len()
+        ));
+    }
+    match parse_json_text(path, text) {
         Ok(value) => Ok((value, "json")),
         Err(json_error) => {
             let whole_document_error = json_error.to_string();
-            let mut rows = Vec::new();
-            let mut saw_line = false;
-            for (index, line) in text.lines().enumerate() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                saw_line = true;
-                let value: Value = serde_json::from_str(trimmed).with_context(|| {
-                    format!(
-                        "failed to parse JSON (whole document: {whole_document_error}); \
-                             failed to parse JSONL line {}",
-                        index + 1
-                    )
-                })?;
-                rows.push(value);
-            }
-            if saw_line {
+            let rows = parse_jsonl_text(path, text).with_context(|| {
+                format!("failed to parse JSON document ({whole_document_error})")
+            })?;
+            if !rows.is_empty() {
                 Ok((Value::Array(rows), "jsonl"))
             } else {
                 Err(json_error).context("failed to parse JSON")
@@ -234,6 +249,7 @@ pub(crate) fn command_json_select(
     keys: bool,
     max: usize,
     max_value_chars: usize,
+    max_document_bytes: u64,
 ) -> Result<()> {
     if max == 0 {
         return Err(anyhow!("json-select --limit must be greater than zero"));
@@ -275,14 +291,7 @@ pub(crate) fn command_json_select(
     let mut rows_matched = 0usize;
     let input_format;
     if is_jsonl_named && array.is_none() {
-        let mut consume_row = |index: usize, row: serde_json::Result<Value>| -> Result<()> {
-            let row = row.with_context(|| {
-                format!(
-                    "failed to parse JSONL value {} in {}",
-                    index + 1,
-                    file.display()
-                )
-            })?;
+        let mut consume_row = |_index: usize, row: Value| -> Result<()> {
             rows_scanned += 1;
             audit_fields(&row, &audited_fields, &mut field_seen_non_null)?;
             if !row_matches_predicates(&row, &predicates)? {
@@ -296,43 +305,11 @@ pub(crate) fn command_json_select(
             }
             Ok(())
         };
-        // Stream UTF-8 JSONL row-by-row. UTF-16 remains a decoded,
-        // materialized fallback so extension choice never changes correctness.
-        let handle = std::fs::File::open(file)
-            .with_context(|| format!("failed to open {}", file.display()))?;
-        let mut reader = io::BufReader::new(handle);
-        let prefix = reader
-            .fill_buf()
-            .with_context(|| format!("failed to inspect encoding for {}", file.display()))?;
-        let utf16 = prefix.starts_with(&[0xFF, 0xFE]) || prefix.starts_with(&[0xFE, 0xFF]);
-        if prefix.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            reader.consume(3);
-        }
-        if utf16 {
-            drop(reader);
-            let text = read_required_text(file)
-                .with_context(|| format!("failed to read {}", file.display()))?
-                .0;
-            for (index, row) in serde_json::Deserializer::from_str(&text)
-                .into_iter::<Value>()
-                .enumerate()
-            {
-                consume_row(index, row)?;
-            }
-        } else {
-            for (index, row) in serde_json::Deserializer::from_reader(reader)
-                .into_iter::<Value>()
-                .enumerate()
-            {
-                consume_row(index, row)?;
-            }
-        }
+        visit_jsonl_file(file, max_document_bytes, &mut consume_row)?;
         input_format = "jsonl";
     } else {
-        let text = read_required_text(file)
-            .with_context(|| format!("failed to read {}", file.display()))?
-            .0;
-        let (document, parsed_format) = parse_json_or_jsonl(&text)?;
+        let text = read_bounded_json_text(file, max_document_bytes)?.0;
+        let (document, parsed_format) = parse_json_or_jsonl(file, &text, max_document_bytes)?;
         input_format = parsed_format;
         let rows: Vec<&Value> = if let Some(pointer) = array.as_deref() {
             let selected = json_select_field(&document, pointer)?

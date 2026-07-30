@@ -80,7 +80,7 @@ search:
 scripts/contextmink dirs crates --depth 2 --limit 40
 
 # 2. Enumerate or search a bounded candidate set.
-scripts/contextmink files crates --term render --ext rs --limit 20
+scripts/contextmink files crates --path-contains render --ext rs --limit 20
 scripts/contextmink grep --pattern 'render_chunk' crates --ext rs --limit 8
 
 # 3. Map one relevant file, then read only the useful region.
@@ -175,9 +175,11 @@ below is the short map.
 
 - `dirs` — directory overview with recursive file counts, `--depth` levels
   deep. Orientation before `files` or `grep`.
-- `files` — list candidate files. `--glob`, `--term`, and `--ext` filter;
+- `files` — list candidate files. `--glob`, `--path-contains`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
-  Enumeration is exact; `--limit` caps only retained/displayed paths.
+  Enumeration deduplicates physical file identity (including hard links,
+  symlinks, junctions, case aliases, and overlapping roots); `--limit` caps
+  only retained/displayed paths.
   `--quiet` suppresses the path payload, sets `result.shown` to zero, and keeps
   exact totals and scope caps. Deliberate quiet suppression is not output
   truncation.
@@ -198,7 +200,12 @@ below is the short map.
   elements via a depth-tracking element-stack parse — named/id'd containers
   at any depth plus shallow unnamed sections, never self-closing leaves).
   Built-in heuristics cover common source/config formats; shebang detection
-  handles extensionless scripts.
+  handles extensionless scripts, including `/usr/bin/env -S`. Language-aware
+  masking removes C-like comments/strings, Rust raw strings, JavaScript
+  template literals, and Python triple-quoted bodies before classification;
+  C/C++/C# also suppress compile-time `#if 0` sections. Receipts label built-in
+  matching as `matcher: "heuristic"` and explicit prefix/regex matching
+  separately.
   `--lang` overrides detection, `--prefix <text>` matches literal line
   starts, `--pattern <regex>` covers anything else, `--contains` filters
   rows.
@@ -213,15 +220,22 @@ below is the short map.
   JSON Pointer, or comma-separated list). `--where FIELD=VALUE` and
   `--where-contains FIELD=TEXT` filter rows; `--keys` reports the union of
   row keys with presence counts and value types for one-call shape
-  discovery; `*.jsonl` streams without loading; fields null in every
+  discovery; `*.jsonl` streams without loading; every non-empty physical JSONL
+  line is exactly one value across every command; fields null in every
   scanned row are flagged in `all_null_fields`.
+  JSON object keys must be unique, integer spelling is preserved beyond
+  64-bit ranges, and `--max-document-bytes` bounds materialized JSON documents
+  and individual streamed records.
   Selector arguments are data and are never rewritten heuristically; use the
   canonical launcher or native bridge at an MSYS boundary.
 - `sqlite` — read-only query against the positional DB file from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
   strings to INTEGER for indexed joins against integer address columns),
-  and a `--timeout-secs` watchdog (default 60).
+  and a `--timeout-secs` watchdog (default 60). A SQLite authorizer permits
+  only reads during preparation and execution, so `ATTACH`, `DETACH`, mutating
+  pragmas, and future write-shaped statements are rejected independently of
+  the read-only file open.
 - `setup-project` — install a project-local release and print the remaining
   agent-owned configuration and guidance work. Supports `--dry-run` and
   explicit `--replace-managed` release upgrades.
@@ -237,7 +251,9 @@ below is the short map.
   watchdog. Direct mode recognizes files whose first line begins `#!`; use
   `capture --script -- <path> ...` for an intentional Bash script without a
   shebang. Receipts disclose the deterministic `execution_mode` and effective
-  argv. Captured commands must not deliberately escape containment by
+  argv. Receipt argv fields use the same character bound as captured lines,
+  so a hostile argument cannot turn the transcript guard into a transcript
+  dump. Captured commands must not deliberately escape containment by
   daemonizing into a new session or process group.
 - `hook-snippet` — print a Claude `.claude/settings.json` fragment that
   registers `hook-guard` with shell-safe command strings.
@@ -246,21 +262,21 @@ below is the short map.
   command.
 - `guard-check --command <shell-text> [--shell posix|powershell|cmd]` (or
   `guard-check -- <argv...>`) —
-  explain the guard decision as JSON without spawning the input. Use this for
-  policy probes and regression reports instead of constructing a disposable
-  hook payload.
+  explain the guard decision without spawning the input. Default output is a
+  readable decision line; add `--json` for `contextmink.guard_check.v1`.
 
 Global flags: `--json` emits one JSON object for machine consumption;
 `--fail-if-truncated` exits nonzero on capped output;
 `--require-complete-scope` exits nonzero when scope caps made totals lower
-bounds.
+bounds. Receipt strictness flags fail immediately on commands that do not emit
+`contextmink.receipt.v2`; they are never silently ignored.
 
 ## Examples
 
 ```bash
 scripts/contextmink dirs crates --depth 2 --limit 40
 scripts/contextmink files specs --ext json --limit 20
-scripts/contextmink files crates --term render --term tests --limit 20
+scripts/contextmink files crates --path-contains render --path-contains tests --limit 20
 scripts/contextmink files vendor --with-git-ignored --limit 20
 scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
@@ -290,6 +306,10 @@ subset; `output_truncated: true` means emitted payload was omitted or shortened,
 including per-line/per-value character clipping. Character limits include the
 ellipsis itself. `complete` is true only when both conditions are clear. The
 strict flags emit the receipt first, then exit nonzero.
+Failures that prevent inspection from starting (invalid flags, unreadable
+inputs, malformed JSON/SQL) exit nonzero with a stderr diagnostic and do not
+claim a receipt. Automation must check the process status before parsing
+stdout.
 
 | field | meaning |
 | --- | --- |
@@ -329,13 +349,18 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
 
 - Encoding is BOM-driven: UTF-16LE/BE files (the PowerShell `Out-File`
   default) are decoded and searched, a UTF-8 BOM is stripped before JSON
-  parsing, and files with NUL bytes and no UTF-16 BOM are skipped as binary.
+  parsing, CRLF and CR-only line endings are normalized, and files with NUL
+  bytes and no UTF-16 BOM are skipped as binary. UTF-32 BOMs fail with an
+  explicit conversion instruction instead of being misread as UTF-16.
 - `slice`, `outline`, and retained `capture` output receipts flag
   `encoding_suspects` when the decoded text carries proof-grade mojibake (a
   character run whose CP1252 bytes re-decode as valid UTF-8 — the garble an
   em-dash becomes when UTF-8 is re-read as CP1252), U+FFFD replacement
   characters, or raw C1 controls. The field is omitted when nothing is found,
   and it never fails a command — it discloses.
+- Capture retains stdout and stderr as separately bounded streams. It does not
+  invent a cross-stream chronology that the operating-system pipes cannot
+  prove.
 - `contextmink-bridge` and `capture` refuse known destructive argv
   before spawn. The evaluator preserves shell quoting and command boundaries,
   resolves Git's actual subcommand, recursively inspects real shell payloads
@@ -350,10 +375,11 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   configured protected-path fragments apply only inside their owning project.
   Finite wrappers such as `env -S`, PowerShell encoded-command flags, and
   `find -delete`/`-exec` and an invoked `git -c alias.<name>=... <name>` are
-  parsed. Shell-variable expansion, sourced scripts, repository-configured Git
-  aliases, and brace-generated command spellings beyond the bounded static
-  expansion remain outside this evaluator; arbitrary indirection can always
-  move behavior beyond a command-string tripwire.
+  parsed. Literal POSIX assignments are propagated across command boundaries,
+  so `c=clean; git $c` is denied. Computed expansion, sourced scripts,
+  repository-configured Git aliases, and runtime `eval` remain outside this
+  evaluator; arbitrary dynamic behavior cannot be proven from a pre-execution
+  command string.
 - `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
   it reads the hook event JSON from stdin, extracts the command string at
   `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
@@ -377,11 +403,12 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   ignore rules, and disclose every crossed root in `nested_repos_entered`.
   Pass `--skip-nested-repos` to keep a broad scan inside each explicit root.
   Passing a nested repository as an explicit root still scans it normally.
+  Repository-discovery I/O failures are hard errors, never silent omissions.
   Repositories below an ignored plain directory beyond the bounded discovery
   depth need an explicit root.
 - Outline is navigational, not a compiler-grade parser. Most languages use
-  line-shape heuristics; XML uses a lightweight element-stack parse. False
-  positives are possible and indentation conveys nesting.
+  disclosed line-shape heuristics over comment/string-masked text; XML uses a
+  lightweight element-stack parse. Indentation conveys nesting.
 
 ## Windows
 

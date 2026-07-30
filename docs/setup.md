@@ -427,8 +427,8 @@ host mechanics the templates do not:
   `--glob '*.<ext>'` there.
 - The `scripts/contextmink` launcher shields slash-leading JSON Pointer
   selectors and slash-bearing `--pattern` / `--prefix` / `--contains` /
-  `--term` values from MSYS path rewriting on Git Bash, while leaving normal
-  file paths to the shell.
+  `--path-contains` / `--term` values from MSYS path rewriting on Git Bash,
+  while leaving normal file paths to the shell.
 - Bridge and `capture` share deterministic script classification. Files whose
   first line begins `#!` enter the Bash boundary before spawn; use
   `capture --script -- <script> ...` for a no-shebang Bash script. Receipts

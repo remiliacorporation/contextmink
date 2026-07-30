@@ -37,7 +37,9 @@ mod process_supervision;
 use process_boundary::{prepare_command, resolve_project_root};
 
 const EXIT_USAGE: i32 = 64;
+const EXIT_DATA: i32 = 65;
 const EXIT_MISSING_PATH: i32 = 66;
+const EXIT_IO: i32 = 74;
 const EXIT_SPAWN_FAILED: i32 = 126;
 const EXIT_NO_BASH: i32 = 127;
 
@@ -92,7 +94,8 @@ fn usage() -> String {
      it.\n\
      \n\
      Exit codes:\n\
-     64 usage, 66 missing path, 126 spawn failure, 127 no bash; otherwise the\n\
+     64 usage, 65 invalid data, 66 missing path, 74 I/O failure,\n\
+     126 spawn failure, 127 command/bash not found; otherwise the\n\
      child's exit code.\n\
      \n\
      Purpose-built for Windows hosts (PowerShell argv mangling, MSYS\n\
@@ -386,10 +389,24 @@ fn assemble_argv(
                 ));
             };
             let file = resolve_from_root(root, file);
-            let text = std::fs::read_to_string(&file).map_err(|error| {
+            let bytes = std::fs::read(&file).map_err(|error| {
+                let code = if error.kind() == std::io::ErrorKind::NotFound {
+                    EXIT_MISSING_PATH
+                } else {
+                    EXIT_IO
+                };
                 fail(
-                    EXIT_MISSING_PATH,
+                    code,
                     format!("failed to read argfile {}: {error}", file.display()),
+                )
+            })?;
+            let text = String::from_utf8(bytes).map_err(|_| {
+                fail(
+                    EXIT_DATA,
+                    format!(
+                        "argfile {} is not valid UTF-8; encode one argument per line as UTF-8",
+                        file.display()
+                    ),
                 )
             })?;
             let text = text.strip_prefix('\u{feff}').unwrap_or(&text);

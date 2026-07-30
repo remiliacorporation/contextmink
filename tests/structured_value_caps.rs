@@ -150,7 +150,7 @@ fn sqlite_value_cap_is_disclosed_in_json_payload() {
         value["rows"][0]["fields"]["value"]
             .as_str()
             .unwrap()
-            .ends_with("...")
+            .ends_with("...\"")
     );
     assert!(has_output_cap(&value, "value_characters", 10));
     assert_eq!(value["output_truncated"], true);

@@ -21,6 +21,7 @@ pub(crate) enum FileText {
         bytes: u64,
     },
     SkippedBinary,
+    UnsupportedEncoding(&'static str),
 }
 
 #[derive(Debug)]
@@ -28,6 +29,7 @@ pub(crate) enum VisitedFileText {
     Text { encoding: &'static str },
     SkippedLarge { bytes: u64 },
     SkippedBinary,
+    UnsupportedEncoding(&'static str),
 }
 
 /// Read a file as text, honoring a byte cap and decoding by BOM.
@@ -79,6 +81,9 @@ pub(crate) fn visit_file_lines(
             }
             FileText::SkippedLarge { bytes } => Ok(VisitedFileText::SkippedLarge { bytes }),
             FileText::SkippedBinary => Ok(VisitedFileText::SkippedBinary),
+            FileText::UnsupportedEncoding(encoding) => {
+                Ok(VisitedFileText::UnsupportedEncoding(encoding))
+            }
         };
     }
     if prefix.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -87,22 +92,45 @@ pub(crate) fn visit_file_lines(
     let mut raw_line = Vec::new();
     let mut total_lines = 0usize;
     loop {
-        raw_line.clear();
-        let bytes = reader
-            .read_until(b'\n', &mut raw_line)
+        let available = reader
+            .fill_buf()
             .with_context(|| format!("failed to read {}", path.display()))?;
-        if bytes == 0 {
+        if available.is_empty() {
             break;
         }
-        if raw_line.contains(&0) {
+        if let Some(end) = available
+            .iter()
+            .position(|byte| matches!(byte, b'\n' | b'\r'))
+        {
+            raw_line.extend_from_slice(&available[..end]);
+            let delimiter = available[end];
+            reader.consume(end + 1);
+            if delimiter == b'\r'
+                && reader
+                    .fill_buf()
+                    .with_context(|| format!("failed to read {}", path.display()))?
+                    .first()
+                    == Some(&b'\n')
+            {
+                reader.consume(1);
+            }
+            if raw_line.contains(&0) {
+                return Ok(VisitedFileText::SkippedBinary);
+            }
+            total_lines += 1;
+            let line = String::from_utf8_lossy(&raw_line);
+            visit(total_lines, &line);
+            raw_line.clear();
+            continue;
+        }
+        if available.contains(&0) {
             return Ok(VisitedFileText::SkippedBinary);
         }
-        if raw_line.last() == Some(&b'\n') {
-            raw_line.pop();
-            if raw_line.last() == Some(&b'\r') {
-                raw_line.pop();
-            }
-        }
+        raw_line.extend_from_slice(available);
+        let consumed = available.len();
+        reader.consume(consumed);
+    }
+    if !raw_line.is_empty() {
         total_lines += 1;
         let line = String::from_utf8_lossy(&raw_line);
         visit(total_lines, &line);
@@ -116,15 +144,21 @@ pub(crate) fn decode_bytes(bytes: &[u8]) -> FileText {
 }
 
 fn decode_owned_bytes(mut bytes: Vec<u8>) -> FileText {
+    if bytes.starts_with(&[0xFF, 0xFE, 0x00, 0x00]) {
+        return FileText::UnsupportedEncoding("utf32le");
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0xFE, 0xFF]) {
+        return FileText::UnsupportedEncoding("utf32be");
+    }
     if bytes.starts_with(&[0xFF, 0xFE]) {
         return FileText::Text {
-            text: decode_utf16(&bytes[2..], u16::from_le_bytes),
+            text: normalize_newlines(decode_utf16(&bytes[2..], u16::from_le_bytes)),
             encoding: "utf16le",
         };
     }
     if bytes.starts_with(&[0xFE, 0xFF]) {
         return FileText::Text {
-            text: decode_utf16(&bytes[2..], u16::from_be_bytes),
+            text: normalize_newlines(decode_utf16(&bytes[2..], u16::from_be_bytes)),
             encoding: "utf16be",
         };
     }
@@ -139,9 +173,16 @@ fn decode_owned_bytes(mut bytes: Vec<u8>) -> FileText {
         Err(error) => String::from_utf8_lossy(&error.into_bytes()).into_owned(),
     };
     FileText::Text {
-        text,
+        text: normalize_newlines(text),
         encoding: "utf8",
     }
+}
+
+fn normalize_newlines(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
+    }
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 fn decode_utf16(bytes: &[u8], combine: fn([u8; 2]) -> u16) -> String {
@@ -408,6 +449,10 @@ pub(crate) fn read_required_text(path: &Path) -> Result<(String, &'static str)> 
         FileText::Text { text, encoding } => Ok((text, encoding)),
         FileText::SkippedBinary => Err(anyhow::anyhow!(
             "{} contains NUL bytes and does not decode as text",
+            path.display()
+        )),
+        FileText::UnsupportedEncoding(encoding) => Err(anyhow::anyhow!(
+            "{} uses unsupported {encoding}; convert it to UTF-8 or UTF-16",
             path.display()
         )),
         FileText::SkippedLarge { .. } => unreachable!("size cap is u64::MAX"),

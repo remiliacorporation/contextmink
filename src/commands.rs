@@ -159,10 +159,7 @@ pub(crate) fn command_files(
     // `max_selected_files`, so the result total remains exact. The retained output
     // is capped, not the scope that was counted.
     if collected.selection_capped && !quiet {
-        receipt.add_cap(ReceiptCap::output(
-            "candidate_files",
-            Some(max_selected_files),
-        ));
+        receipt.add_cap(ReceiptCap::output("paths", Some(max_selected_files)));
     }
     if !quiet && shown < files.len() {
         receipt.add_cap(ReceiptCap::output("files", Some(max)));
@@ -294,10 +291,7 @@ pub(crate) fn command_dirs(
         ReceiptResult::new("dirs", total_dirs, collected.selection_capped, shown),
     );
     if collected.selection_capped {
-        receipt.add_cap(ReceiptCap::scope(
-            "candidate_files",
-            Some(max_files_counted),
-        ));
+        receipt.add_cap(ReceiptCap::scope("files_counted", Some(max_files_counted)));
     }
     if shown < total_dirs {
         receipt.add_cap(ReceiptCap::output("dirs", Some(max)));
@@ -575,7 +569,7 @@ pub(crate) fn command_grep_with_matcher(
     );
     if candidate_file_scope_capped {
         receipt.add_cap(ReceiptCap::scope(
-            "candidate_files",
+            "content_files",
             Some(caps.max_content_files),
         ));
     }
@@ -952,6 +946,12 @@ pub(crate) fn command_slice(
         crate::encoding::VisitedFileText::SkippedBinary => {
             return Err(anyhow!(
                 "{} contains NUL bytes and does not decode as text",
+                file.display()
+            ));
+        }
+        crate::encoding::VisitedFileText::UnsupportedEncoding(encoding) => {
+            return Err(anyhow!(
+                "{} uses unsupported {encoding}; convert it to UTF-8 or UTF-16",
                 file.display()
             ));
         }

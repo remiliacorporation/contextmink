@@ -82,6 +82,38 @@ fn rust_classifier_matches_declaration_shapes() {
 }
 
 #[test]
+fn rust_document_classifier_masks_comments_and_raw_strings() {
+    let source = r###"
+/*
+pub fn hidden_in_comment() {}
+*/
+const EXAMPLE: &str = r#"
+pub struct HiddenInRawString;
+"#;
+pub fn visible() {}
+"###;
+    assert_eq!(document_hits("rust", source), vec![5, 8]);
+}
+
+#[test]
+fn python_document_classifier_masks_triple_quoted_content() {
+    let source = r#"
+"""Module text.
+def hidden_in_docstring():
+    pass
+"""
+class Visible:
+    '''Class text.
+    async def hidden_method(self):
+        pass
+    '''
+    async def visible_method(self):
+        pass
+"#;
+    assert_eq!(document_hits("python", source), vec![6, 11]);
+}
+
+#[test]
 fn python_lua_shell_and_markdown_classifiers_match_declaration_shapes() {
     assert_matches(
         "python",
@@ -463,6 +495,22 @@ fn xml_outline_handles_multiline_tags_cdata_and_truncation() {
 }
 
 #[test]
+fn xml_attribute_names_are_not_inferred_from_attribute_values() {
+    let document = concat!(
+        "<Root>\n",
+        "  <Deep>\n",
+        "    <Layer>\n",
+        "      <Leaf description=\"example name='not-an-attribute'\">\n",
+        "        <Value>1</Value>\n",
+        "      </Leaf>\n",
+        "    </Layer>\n",
+        "  </Deep>\n",
+        "</Root>\n",
+    );
+    assert_eq!(document_hits("xml", document), vec![1, 2, 3]);
+}
+
+#[test]
 fn c_outline_maps_section_banners() {
     // Large annotated headers often use section banners as the only
     // navigable structure between declarations.
@@ -623,6 +671,26 @@ fn markdown_outline_obeys_fence_closing_and_indentation_rules() {
 }
 
 #[test]
+fn markdown_outline_includes_setext_headings() {
+    let doc = "Agent Workflow\n==============\n\nOrdinary text\n\nSecond\n------\n";
+    assert_eq!(document_hits("markdown", doc), vec![1, 6]);
+}
+
+#[test]
+fn c_like_document_masking_excludes_comments_strings_and_inactive_code() {
+    let c =
+        "/*\nint commented_out(void);\n*/\n#if 0\nint inactive(void);\n#endif\nint real(void);\n";
+    assert_eq!(document_hits("c", c), vec![7]);
+
+    let csharp = "var rows = new[] {\n    new MenuItem(\"Open\"),\n};\n/*\npublic void Hidden() {}\n*/\npublic void Real() {}\n";
+    assert_eq!(document_hits("csharp", csharp), vec![7]);
+
+    let javascript =
+        "const text = `\nfunction hidden() {}\n`;\nclass Real {}\nmethod() { return call(); }\n";
+    assert_eq!(document_hits("javascript", javascript), vec![4, 5]);
+}
+
+#[test]
 fn json_classifier_maps_container_keys_only() {
     assert_matches(
         "json",
@@ -694,6 +762,16 @@ fn resolve_matcher_detects_shebang_for_extensionless_scripts() {
     let (name, _) =
         resolve_matcher(Path::new("hook"), "#!/usr/bin/env node", None, None, None).unwrap();
     assert_eq!(name, "javascript");
+
+    let (name, _) = resolve_matcher(
+        Path::new("worker"),
+        "#!/usr/bin/env -S python3 -u",
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(name, "python");
 
     let (name, matcher) = resolve_matcher(
         Path::new("bin/tool"),

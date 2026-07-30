@@ -37,7 +37,7 @@ pub(crate) enum Command {
         )]
         globs: Vec<String>,
         #[arg(
-            long = "term",
+            long = "path-contains",
             value_name = "TEXT",
             help = "Only include paths containing this literal text; repeat for all required terms"
         )]
@@ -461,6 +461,12 @@ pub(crate) enum Command {
             help = "Maximum characters per summarized value"
         )]
         max_value_chars: usize,
+        #[arg(
+            long,
+            default_value_t = crate::json_input::DEFAULT_MAX_JSON_DOCUMENT_BYTES,
+            help = "Maximum bytes materialized for one JSON document or retained for one JSONL record"
+        )]
+        max_document_bytes: u64,
     },
     /// Project JSON root or array rows to bounded field summaries.
     #[command(name = "json-select")]
@@ -504,6 +510,12 @@ pub(crate) enum Command {
             help = "Maximum characters per projected value"
         )]
         max_value_chars: usize,
+        #[arg(
+            long,
+            default_value_t = crate::json_input::DEFAULT_MAX_JSON_DOCUMENT_BYTES,
+            help = "Maximum bytes materialized for one JSON document or retained for one JSONL record"
+        )]
+        max_document_bytes: u64,
     },
     /// Run a read-only SQLite query with bounded row output.
     Sqlite {

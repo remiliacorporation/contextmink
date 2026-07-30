@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::output::{
-    Receipt, ReceiptCap, ReceiptResult, clamp_text, emit_json, fail_after_receipt, write_receipt,
+    Receipt, ReceiptCap, ReceiptResult, TextClamp, clamp_text, emit_json, fail_after_receipt,
+    write_receipt,
 };
 use crate::process_boundary::prepare_command;
 use crate::process_supervision::{configure as configure_supervised_command, supervise};
@@ -153,8 +154,30 @@ pub(crate) fn command_capture(
     if stdout.char_truncated || stderr.char_truncated {
         receipt.add_cap(ReceiptCap::output("line_characters", Some(max_line_chars)));
     }
-    receipt.insert("argv", json!(argv));
-    receipt.insert("effective_argv", json!(effective_argv));
+    let mut argument_clamp = TextClamp::new(max_line_chars);
+    receipt.insert(
+        "argv",
+        json!(
+            argv.iter()
+                .map(|argument| argument_clamp.clamp(argument))
+                .collect::<Vec<_>>()
+        ),
+    );
+    receipt.insert(
+        "effective_argv",
+        json!(
+            effective_argv
+                .iter()
+                .map(|argument| argument_clamp.clamp(argument))
+                .collect::<Vec<_>>()
+        ),
+    );
+    if argument_clamp.was_truncated() {
+        receipt.add_cap(ReceiptCap::output(
+            "argument_characters",
+            Some(max_line_chars),
+        ));
+    }
     receipt.insert("execution_mode", json!(execution_mode));
     receipt.insert("child_exit_code", json!(status.code()));
     receipt.insert("child_exit_zero", json!(status.success()));
@@ -366,7 +389,7 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
     let head_budget = max_bytes.div_ceil(2);
     let tail_budget = max_bytes / 2;
     let mut head = Vec::with_capacity(head_budget.min(8192));
-    let mut tail: Vec<u8> = Vec::new();
+    let mut tail = VecDeque::new();
     let mut tail_start = 0usize;
     let mut total_bytes = 0usize;
     let mut newline_count = 0usize;
@@ -399,11 +422,12 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
                 tail_start = overflow_start;
             }
             if tail_budget > 0 {
-                tail.extend_from_slice(overflow);
-                if tail.len() > tail_budget {
-                    let drop = tail.len() - tail_budget;
-                    tail.drain(..drop);
-                    tail_start += drop;
+                for byte in overflow {
+                    tail.push_back(*byte);
+                    if tail.len() > tail_budget {
+                        tail.pop_front();
+                        tail_start += 1;
+                    }
                 }
             }
         }
@@ -413,7 +437,7 @@ fn read_captured_stream<R: Read>(mut reader: R, max_bytes: usize) -> io::Result<
     let total_lines = newline_count + usize::from(saw_any && !last_was_newline);
     Ok(RawCapturedStream {
         head,
-        tail,
+        tail: tail.into_iter().collect(),
         tail_start,
         total_bytes,
         total_lines,

@@ -330,6 +330,17 @@ fn invoked_inline_git_alias_cannot_hide_clean() {
 }
 
 #[test]
+fn literal_posix_variable_indirection_cannot_hide_git_clean() {
+    denied(&["bash", "-lc", "c=clean; git $c -fdx"]);
+    denied(&[
+        "bash",
+        "-lc",
+        "command_name=clean; git ${command_name} -fdx",
+    ]);
+    allowed(&["bash", "-lc", "c=status; git $c --short"]);
+}
+
+#[test]
 fn execution_wrappers_do_not_hide_git_clean() {
     denied(&["command", "git", "clean", "-fdX"]);
     denied(&["sudo", "-u", "builder", "git", "clean", "-fdX"]);

@@ -38,6 +38,7 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
         vec!["contextmink", "--strict-complete", "files"],
         vec!["contextmink", "--require-complete-scan", "files"],
         vec!["contextmink", "files", "--name-contains", "src"],
+        vec!["contextmink", "files", "--term", "src"],
         vec!["contextmink", "files", "--extension", "rs"],
         vec!["contextmink", "files", "--max", "1"],
         vec!["contextmink", "dirs", "--max", "1"],

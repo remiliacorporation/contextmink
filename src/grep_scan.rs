@@ -130,6 +130,7 @@ pub(crate) fn scan_file(
             return Ok(FileScan::SkippedLarge { path, bytes });
         }
         VisitedFileText::SkippedBinary => return Ok(FileScan::SkippedBinary { path }),
+        VisitedFileText::UnsupportedEncoding(_) => return Ok(FileScan::SkippedBinary { path }),
     }
     if matching_lines == 0 {
         return Ok(FileScan::NoMatch);

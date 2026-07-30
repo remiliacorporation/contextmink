@@ -13,6 +13,7 @@ mod files;
 mod grep_scan;
 mod hook_guard;
 mod hook_snippet;
+mod json_input;
 mod json_tools;
 mod outline;
 mod output;
@@ -68,6 +69,7 @@ fn main() -> Result<()> {
 fn run_application() -> Result<()> {
     output::mark_command_start();
     let cli = Cli::parse();
+    validate_global_flags(&cli)?;
     if let Command::SetupProject {
         project_root,
         dry_run,
@@ -339,6 +341,7 @@ fn run_application() -> Result<()> {
             value_contains,
             limit,
             max_value_chars,
+            max_document_bytes,
         } => command_json_find(
             &cli,
             &config,
@@ -350,6 +353,7 @@ fn run_application() -> Result<()> {
             value_contains,
             *limit,
             *max_value_chars,
+            *max_document_bytes,
         ),
         Command::JsonSelect {
             file,
@@ -360,6 +364,7 @@ fn run_application() -> Result<()> {
             where_contains,
             limit,
             max_value_chars,
+            max_document_bytes,
         } => command_json_select(
             &cli,
             &config,
@@ -371,6 +376,7 @@ fn run_application() -> Result<()> {
             *keys,
             *limit,
             *max_value_chars,
+            *max_document_bytes,
         ),
         Command::Sqlite {
             path,
@@ -477,14 +483,31 @@ fn run_application() -> Result<()> {
                 }
                 DenyDecision::Deny { message } => ("deny", Some(message)),
             };
-            output::emit_json(serde_json::json!({
+            let report = serde_json::json!({
                 "schema": "contextmink.guard_check.v1",
                 "input_kind": input_kind,
                 "shell": command.as_ref().map(|_| shell.unwrap_or(ShellDialect::Posix).cli_name()),
                 "decision": outcome,
                 "message": message,
                 "executed": false,
-            }))
+            });
+            if cli.json {
+                output::emit_json(report)
+            } else {
+                let mut stdout = io::stdout();
+                writeln!(
+                    stdout,
+                    "decision={outcome} input_kind={input_kind} shell={} executed=false",
+                    command
+                        .as_ref()
+                        .map(|_| shell.unwrap_or(ShellDialect::Posix).cli_name())
+                        .unwrap_or("argv")
+                )?;
+                if let Some(message) = report["message"].as_str() {
+                    writeln!(stdout, "{message}")?;
+                }
+                Ok(())
+            }
         }
         Command::HookSnippet {
             binary,
@@ -500,6 +523,26 @@ fn run_application() -> Result<()> {
             command_field,
         ),
     }
+}
+
+fn validate_global_flags(cli: &Cli) -> Result<()> {
+    let strictness_requested = cli.fail_if_truncated || cli.require_complete_scope;
+    if strictness_requested
+        && matches!(
+            &cli.command,
+            Command::HookGuard { .. } | Command::GuardCheck { .. } | Command::HookSnippet { .. }
+        )
+    {
+        return Err(anyhow!(
+            "receipt strictness flags apply only to commands that emit contextmink.receipt.v2"
+        ));
+    }
+    if cli.json && matches!(&cli.command, Command::HookGuard { .. }) {
+        return Err(anyhow!(
+            "hook-guard uses the agent hook protocol; --json does not apply"
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn paths_or_current_dir(paths: &[PathBuf]) -> Vec<PathBuf> {

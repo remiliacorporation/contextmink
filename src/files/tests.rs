@@ -210,6 +210,25 @@ fn overlapping_roots_keep_exact_deduplicated_totals() {
     assert_eq!(collected.files, vec![source.join("lib.rs")]);
 }
 
+#[test]
+fn physical_file_aliases_keep_one_deterministic_path() {
+    let fixture = Fixture::new("physical-aliases");
+    let first = fixture.root.join("a.json");
+    let alias = fixture.root.join("b.json");
+    fs::write(&first, "{}\n").expect("source must be writable");
+    fs::hard_link(&first, &alias).expect("hard-link fixture must be creatable");
+
+    let collected = collect_files(
+        &[alias, first.clone()],
+        &config(&fixture.root, &[]),
+        &options(&[]),
+    )
+    .expect("physical aliases must be collected");
+
+    assert_eq!(collected.total_seen, 1);
+    assert_eq!(collected.files, vec![first]);
+}
+
 #[cfg(unix)]
 #[test]
 fn posix_backslashes_remain_filename_characters() {

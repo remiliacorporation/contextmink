@@ -140,6 +140,20 @@ fn print_argv_reports_exact_arguments_for_every_channel() {
 }
 
 #[test]
+fn argfile_distinguishes_invalid_encoding_from_a_missing_path() {
+    let root = temp_root("argfile-invalid-encoding");
+    let argfile = root.join("args.txt");
+    fs::write(&argfile, [0xFF, 0xFE, b'p', 0]).unwrap();
+    let output = run_bridge(&["--print-argv", "--argfile", &forward_slashes(&argfile)]);
+    assert_eq!(output.status.code(), Some(65));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not valid UTF-8"));
+
+    let missing = root.join("missing.txt");
+    let output = run_bridge(&["--print-argv", "--argfile", &forward_slashes(&missing)]);
+    assert_eq!(output.status.code(), Some(66));
+}
+
+#[test]
 fn argv_b64_trailing_empty_argument_survives_round_trip() {
     // The documented encoder (`$argv -join [char]0`) emits no trailing NUL,
     // so a trailing empty argument is genuine and must not be dropped.

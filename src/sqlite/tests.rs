@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn sqlite_value_summary_reports_character_truncation_for_every_value_kind() {
     let text = sqlite_value_summary(ValueRef::Text(b"abcdefghijklmnopqrstuvwxyz"), 10);
-    assert_eq!(text.text, "\"abcdef...");
+    assert_eq!(text.text, "\"abcde...\"");
     assert!(text.truncated);
 
     let integer = sqlite_value_summary(ValueRef::Integer(123), 2);

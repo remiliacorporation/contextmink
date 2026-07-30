@@ -16,6 +16,7 @@
 
 use crate::config::DestructiveGuardConfig;
 use clap::ValueEnum;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum ShellDialect {
@@ -280,7 +281,17 @@ fn deny_shell_payload(
     configured_rules_active: bool,
 ) -> Option<String> {
     let parsed = parse_shell_payload(payload, dialect);
-    for command in parsed.commands {
+    let mut literal_variables: BTreeMap<String, String> = BTreeMap::new();
+    for mut command in parsed.commands {
+        if dialect == ShellDialect::Posix {
+            for token in &mut command {
+                if let Some(name) = posix_variable_reference(token)
+                    && let Some(value) = literal_variables.get(name)
+                {
+                    *token = value.clone();
+                }
+            }
+        }
         let expanded_commands = match expand_literal_braces(&command) {
             Ok(expanded_commands) => expanded_commands,
             Err(()) => {
@@ -299,6 +310,18 @@ fn deny_shell_payload(
                 return Some(message);
             }
         }
+        if dialect == ShellDialect::Posix && command.iter().all(|token| shell_assignment(token)) {
+            for token in &command {
+                let (name, value) = token
+                    .split_once('=')
+                    .expect("shell_assignment accepted this token");
+                if literal_shell_value(value) {
+                    literal_variables.insert(name.to_owned(), value.to_owned());
+                } else {
+                    literal_variables.remove(name);
+                }
+            }
+        }
     }
     for substitution in parsed.substitutions {
         if let Some(message) = deny_shell_payload(
@@ -312,6 +335,23 @@ fn deny_shell_payload(
         }
     }
     None
+}
+
+fn posix_variable_reference(token: &str) -> Option<&str> {
+    token
+        .strip_prefix("${")
+        .and_then(|name| name.strip_suffix('}'))
+        .or_else(|| token.strip_prefix('$'))
+        .filter(|name| {
+            !name.is_empty()
+                && name.chars().enumerate().all(|(index, ch)| {
+                    ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+                })
+        })
+}
+
+fn literal_shell_value(value: &str) -> bool {
+    !value.contains(['$', '`', '(', ')', ';', '&', '|', '<', '>'])
 }
 
 /// GNU/BSD env split-string payloads are opaque to ordinary argv scanning.

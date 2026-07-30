@@ -53,6 +53,150 @@ fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
     serde_json::from_str(&run_contextmink(root, args)).unwrap()
 }
 
+#[test]
+fn non_receipt_commands_reject_irrelevant_global_flags() {
+    let root = fixture_root("non-receipt-flags");
+    let strict = run_contextmink_raw(
+        &root,
+        &[
+            "--fail-if-truncated",
+            "guard-check",
+            "--command",
+            "git status",
+        ],
+    );
+    assert!(!strict.status.success());
+    assert!(
+        String::from_utf8_lossy(&strict.stderr)
+            .contains("strictness flags apply only to commands that emit")
+    );
+
+    let hook_json = run_contextmink_raw(&root, &["--json", "hook-guard"]);
+    assert!(!hook_json.status.success());
+    assert!(String::from_utf8_lossy(&hook_json.stderr).contains("hook protocol"));
+}
+
+#[test]
+fn guard_check_is_readable_by_default_and_structured_on_request() {
+    let root = fixture_root("guard-check-rendering");
+    let human = run_contextmink(&root, &["guard-check", "--command", "git status"]);
+    assert!(human.starts_with("decision=allow input_kind=shell_command"));
+
+    let json = parse_json_output(&root, &["--json", "guard-check", "--command", "git status"]);
+    assert_eq!(json["decision"], "allow");
+}
+
+#[test]
+fn structured_data_commands_share_strict_jsonl_and_numeric_contracts() {
+    let root = fixture_root("structured-contracts");
+    fs::write(
+        root.join("multiline.jsonl"),
+        "{\n  \"id\": 1\n}\n{\"id\":2}\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["json-select", "multiline.jsonl", "--fields", "id"],
+        vec!["json-find", "multiline.jsonl", "--key-contains", "id"],
+    ] {
+        let output = run_contextmink_raw(&root, &args);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("physical line"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fs::write(
+        root.join("numbers.json"),
+        r#"{"large":184467440737095516160}"#,
+    )
+    .unwrap();
+    let exact = parse_json_output(
+        &root,
+        &["--json", "json-select", "numbers.json", "--fields", "large"],
+    );
+    assert_eq!(exact["rows"][0]["fields"]["large"], "184467440737095516160");
+
+    fs::write(root.join("duplicate.json"), r#"{"id":1,"id":2}"#).unwrap();
+    let duplicate =
+        run_contextmink_raw(&root, &["json-select", "duplicate.json", "--fields", "id"]);
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("duplicate JSON object key"));
+}
+
+#[test]
+fn json_materialization_and_sqlite_authorization_fail_before_unsafe_work() {
+    let root = fixture_root("structured-bounds");
+    fs::write(
+        root.join("large.json"),
+        format!(r#"{{"value":"{}"}}"#, "x".repeat(128)),
+    )
+    .unwrap();
+    let bounded = run_contextmink_raw(
+        &root,
+        &[
+            "json-select",
+            "large.json",
+            "--fields",
+            "value",
+            "--max-document-bytes",
+            "32",
+        ],
+    );
+    assert!(!bounded.status.success());
+    assert!(String::from_utf8_lossy(&bounded.stderr).contains("--max-document-bytes 32"));
+
+    rusqlite::Connection::open(root.join("main.sqlite")).unwrap();
+    rusqlite::Connection::open(root.join("other.sqlite")).unwrap();
+    let attach = run_contextmink_raw(
+        &root,
+        &[
+            "sqlite",
+            "main.sqlite",
+            "--sql",
+            "ATTACH DATABASE 'other.sqlite' AS other",
+        ],
+    );
+    assert!(!attach.status.success());
+    assert!(
+        String::from_utf8_lossy(&attach.stderr)
+            .to_ascii_lowercase()
+            .contains("not authorized")
+    );
+
+    let schema = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "sqlite",
+            "main.sqlite",
+            "--sql",
+            "PRAGMA table_info(sqlite_schema)",
+        ],
+    );
+    assert_eq!(schema["columns"][1], "name");
+}
+
+#[test]
+fn universal_lines_and_outline_matcher_disclosure_are_agent_visible() {
+    let root = fixture_root("universal-lines");
+    fs::write(root.join("cr.txt"), b"one\rtwo\rthree").unwrap();
+    let slice = parse_json_output(&root, &["--json", "slice", "cr.txt", "--range", "1:3"]);
+    assert_eq!(slice["total_lines"], 3);
+    assert_eq!(slice["lines"][1]["text"], "two");
+
+    fs::write(
+        root.join("sample.c"),
+        "/*\nint hidden(void);\n*/\nint visible(void);\n",
+    )
+    .unwrap();
+    let outline = parse_json_output(&root, &["--json", "outline", "sample.c"]);
+    assert_eq!(outline["matcher"], "heuristic");
+    assert_eq!(outline["items"].as_array().unwrap().len(), 1);
+    assert_eq!(outline["items"][0]["line"], 4);
+}
+
 fn assert_envelope(value: &Value, command: &str, unit: &str) {
     assert_eq!(value["schema"], "contextmink.receipt.v2");
     assert_eq!(value["tool"], "contextmink");
@@ -316,7 +460,12 @@ fn guard_check_explains_commands_without_spawning_them() {
     let root = fixture_root("guard-check");
     let denied = parse_json_output(
         &root,
-        &["guard-check", "--command", "git status && git clean -fdX"],
+        &[
+            "--json",
+            "guard-check",
+            "--command",
+            "git status && git clean -fdX",
+        ],
     );
     assert_eq!(denied["schema"], "contextmink.guard_check.v1");
     assert_eq!(denied["decision"], "deny");
@@ -326,6 +475,7 @@ fn guard_check_explains_commands_without_spawning_them() {
     let allowed = parse_json_output(
         &root,
         &[
+            "--json",
             "guard-check",
             "--command",
             "git commit -m 'fix git clean parser'",
@@ -337,6 +487,7 @@ fn guard_check_explains_commands_without_spawning_them() {
     let powershell = parse_json_output(
         &root,
         &[
+            "--json",
             "guard-check",
             "--command",
             r#"git commit -m "fix `git clean` parser""#,
@@ -347,7 +498,10 @@ fn guard_check_explains_commands_without_spawning_them() {
     assert_eq!(powershell["decision"], "allow");
     assert_eq!(powershell["shell"], "powershell");
 
-    let wrapped = parse_json_output(&root, &["guard-check", "--command", "exec git clean -fdX"]);
+    let wrapped = parse_json_output(
+        &root,
+        &["--json", "guard-check", "--command", "exec git clean -fdX"],
+    );
     assert_eq!(wrapped["decision"], "deny");
 }
 
@@ -359,7 +513,7 @@ fn json_commands_share_receipt_envelope() {
     assert_envelope(&files, "files", "files");
     assert_eq!(files["output_truncated"], true);
     assert_eq!(files["complete"], false);
-    assert!(has_cap(&files, "output", "candidate_files"));
+    assert!(has_cap(&files, "output", "paths"));
 
     let slice = parse_json_output(&root, &["--json", "slice", "sample.txt", "--range", "1:2"]);
     assert_envelope(&slice, "slice", "lines");
@@ -392,7 +546,15 @@ fn files_filters_by_literal_path_terms() {
     let files = parse_json_output(
         &root,
         &[
-            "--json", "files", ".", "--term", "render", "--term", "cgx", "--limit", "10",
+            "--json",
+            "files",
+            ".",
+            "--path-contains",
+            "render",
+            "--path-contains",
+            "cgx",
+            "--limit",
+            "10",
         ],
     );
 
@@ -1370,7 +1532,7 @@ fn files_display_cap_preserves_exact_scope() {
     assert_eq!(files["output_truncated"], true);
     assert_eq!(files["scope_complete"], true);
     assert_eq!(files["complete"], false);
-    assert!(has_cap(&files, "output", "candidate_files"));
+    assert!(has_cap(&files, "output", "paths"));
     // Enumeration completes before the cap applies: the total is exact and
     // the surviving subset is the sorted prefix.
     assert_eq!(result(&files)["total_is_lower_bound"], false);
@@ -1416,7 +1578,7 @@ fn files_glob_matches_basename_inside_explicit_roots() {
 }
 
 #[test]
-fn files_term_matches_literal_decomp_ledger_name() {
+fn files_path_contains_matches_literal_decomp_ledger_name() {
     let root = fixture_root("files-term-ledger-name");
     fs::create_dir_all(
         root.join("decompilation_outputs")
@@ -1447,7 +1609,7 @@ fn files_term_matches_literal_decomp_ledger_name() {
             "--json",
             "files",
             "decompilation_outputs",
-            "--term",
+            "--path-contains",
             "rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl",
             "--limit",
             "20",
@@ -1464,11 +1626,17 @@ fn files_term_matches_literal_decomp_ledger_name() {
 }
 
 #[test]
-fn files_term_does_not_match_an_ancestor_outside_the_scan_root() {
+fn files_path_contains_does_not_match_an_ancestor_outside_the_scan_root() {
     let root = fixture_root("files-ancestor-only-term");
     let files = parse_json_output(
         &root,
-        &["--json", "files", ".", "--term", "files-ancestor-only-term"],
+        &[
+            "--json",
+            "files",
+            ".",
+            "--path-contains",
+            "files-ancestor-only-term",
+        ],
     );
 
     assert_eq!(result(&files)["shown"], 0);
@@ -1476,7 +1644,7 @@ fn files_term_does_not_match_an_ancestor_outside_the_scan_root() {
 }
 
 #[test]
-fn files_term_composes_with_repeated_terms_and_extension_filter() {
+fn files_path_contains_composes_with_repeated_values_and_extension_filter() {
     let root = fixture_root("files-term-composed");
     fs::create_dir_all(root.join("queue")).unwrap();
     fs::write(root.join("queue").join("rename_alpha_target.jsonl"), "{}\n").unwrap();
@@ -1486,8 +1654,17 @@ fn files_term_composes_with_repeated_terms_and_extension_filter() {
     let files = parse_json_output(
         &root,
         &[
-            "--json", "files", "queue", "--term", "alpha", "--term", "target", "--ext", "jsonl",
-            "--limit", "5",
+            "--json",
+            "files",
+            "queue",
+            "--path-contains",
+            "alpha",
+            "--path-contains",
+            "target",
+            "--ext",
+            "jsonl",
+            "--limit",
+            "5",
         ],
     );
 
@@ -1793,7 +1970,7 @@ fn grep_content_file_cap_marks_no_match_as_scanned_subset_only() {
     assert_eq!(result(&grep)["shown"], 0);
     assert_eq!(grep["scope_complete"], false);
     assert_eq!(grep["complete"], false);
-    assert!(has_cap(&grep, "scope", "candidate_files"));
+    assert!(has_cap(&grep, "scope", "content_files"));
     assert_eq!(grep["candidate_files_selected"], 1);
     // The candidate total is exact even though content scanning was capped.
     assert_eq!(result(&grep)["total_is_lower_bound"], true);
@@ -2021,7 +2198,7 @@ fn grep_marks_match_totals_lower_bound_when_content_file_scope_is_capped() {
     assert_eq!(result(&json)["total_is_lower_bound"], true);
     assert_eq!(json["matching_lines_total"], 1);
     assert_eq!(json["matching_lines_total_is_lower_bound"], true);
-    assert!(has_cap(&json, "scope", "candidate_files"));
+    assert!(has_cap(&json, "scope", "content_files"));
     assert_eq!(json["scope_complete"], false);
 }
 
@@ -3148,7 +3325,7 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
     );
     assert_envelope(&json, "grep", "matching_files");
     assert_eq!(json["quiet"], true);
-    assert!(has_cap(&json, "scope", "candidate_files"));
+    assert!(has_cap(&json, "scope", "content_files"));
     assert_eq!(json["no_match_scope"], "scanned_subset");
     assert_eq!(result(&json)["total_is_lower_bound"], true);
 

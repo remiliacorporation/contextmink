@@ -63,7 +63,6 @@ pub(crate) fn collect_files(
     let explicit_excluded_roots = explicit_excluded_roots(paths, config, options.with_excluded);
     let mut state = CollectState {
         files: Vec::new(),
-        seen: HashSet::new(),
         nested_repos_entered: Vec::new(),
     };
     for root in paths {
@@ -79,7 +78,7 @@ pub(crate) fn collect_files(
                 options.with_excluded,
                 &explicit_excluded_roots,
             ) {
-                state.push_file(root.to_path_buf());
+                state.files.push(root.to_path_buf());
             }
             continue;
         }
@@ -101,7 +100,14 @@ pub(crate) fn collect_files(
     // exact and a capped list is the sorted prefix, deterministic no matter
     // how walk order interleaved.
     state.files.sort();
-    state.files.dedup();
+    let mut identities = HashSet::new();
+    let mut deduplicated = Vec::with_capacity(state.files.len());
+    for path in state.files {
+        if identities.insert(file_identity(&path)?) {
+            deduplicated.push(path);
+        }
+    }
+    state.files = deduplicated;
     state.nested_repos_entered.sort();
     state.nested_repos_entered.dedup();
     let total_seen = state.files.len();
@@ -177,17 +183,7 @@ impl PolicyMapper {
 
 struct CollectState {
     files: Vec<PathBuf>,
-    seen: HashSet<PathBuf>,
     nested_repos_entered: Vec<String>,
-}
-
-impl CollectState {
-    fn push_file(&mut self, candidate: PathBuf) {
-        let identity = lexical_file_identity(&candidate);
-        if self.seen.insert(identity) {
-            self.files.push(candidate);
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,7 +346,7 @@ fn walk_root(
         return Err(error.into());
     }
     for file in files {
-        state.push_file(file);
+        state.files.push(file);
     }
     // Ignored-repository supplement: a directory pruned by Git ignore rules
     // that is itself a repository root is still part of the caller's broad
@@ -366,7 +362,7 @@ fn walk_root(
         config,
         options.with_excluded,
         explicit_excluded_roots,
-    );
+    )?;
     nested_roots.sort();
     for nested_root in nested_roots {
         state.nested_repos_entered.push(display_path(&nested_root));
@@ -392,7 +388,7 @@ fn collect_pruned_repo_roots_for_visited_dirs(
     config: &ContextConfig,
     with_excluded: bool,
     explicit_excluded_roots: &[String],
-) -> Vec<PathBuf> {
+) -> Result<Vec<PathBuf>> {
     let dirs = visited_dirs
         .iter()
         .map(PathBuf::as_path)
@@ -412,9 +408,9 @@ fn collect_pruned_repo_roots_for_visited_dirs(
                 with_excluded,
                 explicit_excluded_roots,
                 &mut output,
-            );
+            )?;
         }
-        return output;
+        return Ok(output);
     }
 
     let chunk_size = dirs.len().div_ceil(worker_count);
@@ -433,16 +429,17 @@ fn collect_pruned_repo_roots_for_visited_dirs(
                             with_excluded,
                             explicit_excluded_roots,
                             &mut output,
-                        );
+                        )?;
                     }
-                    output
+                    Ok::<_, anyhow::Error>(output)
                 })
             })
             .collect::<Vec<_>>();
-        workers
-            .into_iter()
-            .flat_map(|worker| worker.join().expect("nested-repo probe worker panicked"))
-            .collect()
+        let mut output = Vec::new();
+        for worker in workers {
+            output.extend(worker.join().expect("nested-repo probe worker panicked")?);
+        }
+        Ok(output)
     })
 }
 
@@ -458,7 +455,7 @@ fn collect_pruned_repo_roots(
     with_excluded: bool,
     explicit_excluded_roots: &[String],
     output: &mut Vec<PathBuf>,
-) {
+) -> Result<()> {
     probe_children_for_repos(
         dir,
         mapper,
@@ -468,7 +465,7 @@ fn collect_pruned_repo_roots(
         explicit_excluded_roots,
         NESTED_REPO_PROBE_DEPTH,
         output,
-    );
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -481,13 +478,26 @@ fn probe_children_for_repos(
     explicit_excluded_roots: &[String],
     remaining_probe_depth: usize,
     output: &mut Vec<PathBuf>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+) -> Result<()> {
+    let entries = fs::read_dir(dir).with_context(|| {
+        format!(
+            "failed to inspect nested repositories under {}",
+            dir.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to inspect a nested-repository candidate under {}",
+                dir.display()
+            )
+        })?;
         let path = entry.path();
-        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        if !entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", path.display()))?
+            .is_dir()
+        {
             continue;
         }
         if visited_dirs.contains(&path) {
@@ -520,9 +530,10 @@ fn probe_children_for_repos(
                 explicit_excluded_roots,
                 remaining_probe_depth - 1,
                 output,
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 fn explicit_excluded_roots(
@@ -679,7 +690,7 @@ fn normalize_path_terms(path_terms: &[String]) -> Result<Vec<String>> {
         .map(|term| {
             let term = normalize_user_path_fragment(term.trim());
             if term.is_empty() {
-                Err(anyhow!("files --term entries must not be empty"))
+                Err(anyhow!("files --path-contains entries must not be empty"))
             } else {
                 Ok(term)
             }
@@ -725,20 +736,83 @@ fn normalize_user_path_fragment(fragment: &str) -> String {
     }
 }
 
-/// Deduplication uses lexical absolute paths: overlapping root spellings of
-/// the same entry collapse without resolving symlinks or adding a metadata
-/// syscall per file. Windows identities are ASCII case-folded to match its
-/// normal case-insensitive path namespace; POSIX identities retain native
-/// `OsStr` bytes, including literal backslashes.
-fn lexical_file_identity(path: &Path) -> PathBuf {
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum FileIdentity {
+    #[cfg(unix)]
+    Unix { device: u64, inode: u64 },
+    #[cfg(windows)]
+    Windows { volume: u32, index: u64 },
+    #[cfg(not(any(unix, windows)))]
+    Canonical(PathBuf),
+}
+
+/// Identify the underlying file rather than its spelling. This collapses
+/// overlapping roots, symlinks/junctions, hard links, case aliases, and drive
+/// aliases without retaining one open handle per candidate.
+fn file_identity(path: &Path) -> Result<FileIdentity> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata =
+            fs::metadata(path).with_context(|| format!("failed to identify {}", path.display()))?;
+        return Ok(FileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        });
+    }
     #[cfg(windows)]
     {
-        PathBuf::from(normalize_path(&absolute).to_ascii_lowercase())
+        use std::os::windows::ffi::OsStrExt as _;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+            OPEN_EXISTING,
+        };
+
+        let wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to open {} for identity", path.display()));
+        }
+        let mut information = BY_HANDLE_FILE_INFORMATION::default();
+        let succeeded = unsafe { GetFileInformationByHandle(handle, &mut information) };
+        let information_error = (succeeded == 0).then(std::io::Error::last_os_error);
+        let close_succeeded = unsafe { CloseHandle(handle) };
+        if close_succeeded == 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("failed to close identity handle for {}", path.display())
+            });
+        }
+        if let Some(error) = information_error {
+            return Err(error).with_context(|| format!("failed to identify {}", path.display()));
+        }
+        Ok(FileIdentity::Windows {
+            volume: information.dwVolumeSerialNumber,
+            index: (u64::from(information.nFileIndexHigh) << 32)
+                | u64::from(information.nFileIndexLow),
+        })
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(unix, windows)))]
     {
-        absolute
+        let canonical = fs::canonicalize(path)
+            .with_context(|| format!("failed to canonicalize {}", path.display()))?;
+        Ok(FileIdentity::Canonical(canonical))
     }
 }
 

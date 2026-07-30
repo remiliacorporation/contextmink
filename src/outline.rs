@@ -41,22 +41,22 @@ const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
     OutlineLanguage {
         name: "rust",
         extensions: &["rs"],
-        classify: LanguageRule::Line(rust_declaration),
+        classify: LanguageRule::Document(rust_document_outline),
     },
     OutlineLanguage {
         name: "python",
         extensions: &["py", "pyi"],
-        classify: LanguageRule::Line(python_declaration),
+        classify: LanguageRule::Document(python_document_outline),
     },
     OutlineLanguage {
         name: "javascript",
         extensions: &["js", "jsx", "mjs", "cjs"],
-        classify: LanguageRule::Line(js_ts_declaration),
+        classify: LanguageRule::Document(javascript_document_outline),
     },
     OutlineLanguage {
         name: "typescript",
         extensions: &["ts", "tsx", "mts", "cts"],
-        classify: LanguageRule::Line(js_ts_declaration),
+        classify: LanguageRule::Document(javascript_document_outline),
     },
     OutlineLanguage {
         name: "go",
@@ -76,17 +76,17 @@ const OUTLINE_LANGUAGES: &[OutlineLanguage] = &[
     OutlineLanguage {
         name: "java",
         extensions: &["java"],
-        classify: LanguageRule::Line(java_declaration),
+        classify: LanguageRule::Document(java_document_outline),
     },
     OutlineLanguage {
         name: "csharp",
         extensions: &["cs"],
-        classify: LanguageRule::Line(csharp_declaration),
+        classify: LanguageRule::Document(csharp_document_outline),
     },
     OutlineLanguage {
         name: "kotlin",
         extensions: &["kt", "kts"],
-        classify: LanguageRule::Line(kotlin_declaration),
+        classify: LanguageRule::Document(kotlin_document_outline),
     },
     OutlineLanguage {
         name: "shell",
@@ -251,6 +251,10 @@ fn rust_declaration(line: &str) -> bool {
         }
         if let Some(after) = strip_keyword(rest, "extern") {
             let after = after.trim_start();
+            if starts_any_keyword(after, RUST_DECLARATION_KEYWORDS) {
+                rest = after;
+                continue;
+            }
             let Some(quoted) = after.strip_prefix('"') else {
                 return false;
             };
@@ -365,13 +369,31 @@ fn js_method_shape(rest: &str, line: &str) -> bool {
     if !after.starts_with('(') {
         return false;
     }
-    let trailer = line.trim_end().trim_end_matches('}').trim_end();
-    if !trailer.ends_with('{') {
+    let Some(open) = line.find('(') else {
         return false;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in line[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
     }
-    let opens = line.matches('(').count();
-    let closes = line.matches(')').count();
-    opens == closes
+    close.is_some_and(|close| {
+        let after = line[close..].trim_start();
+        after.starts_with('{')
+            || after
+                .find('{')
+                .is_some_and(|brace| after[..brace].trim().starts_with(':'))
+    })
 }
 
 /// `name [: annotation] = [async] (` / `= function` / `= param =>`.
@@ -465,14 +487,262 @@ const C_STATEMENT_KEYWORDS: &[&str] = &[
 /// declarations in `// === Section ===` banner comments, which need
 /// neighbor-line context to recognize.
 fn c_document_outline(text: &str) -> Vec<usize> {
-    let lines: Vec<&str> = text.lines().collect();
+    c_like_document_outline(text, c_family_declaration, true, true)
+}
+
+fn javascript_document_outline(text: &str) -> Vec<usize> {
+    c_like_document_outline(text, js_ts_declaration, false, false)
+}
+
+fn java_document_outline(text: &str) -> Vec<usize> {
+    c_like_document_outline(text, java_declaration, false, false)
+}
+
+fn csharp_document_outline(text: &str) -> Vec<usize> {
+    c_like_document_outline(text, csharp_declaration, true, false)
+}
+
+fn kotlin_document_outline(text: &str) -> Vec<usize> {
+    c_like_document_outline(text, kotlin_declaration, false, false)
+}
+
+fn python_document_outline(text: &str) -> Vec<usize> {
     let mut hits = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        if c_family_declaration(line) || c_banner_title(&lines, index) {
+    let mut multiline_quote: Option<&str> = None;
+    for (index, line) in text.lines().enumerate() {
+        if let Some(delimiter) = multiline_quote {
+            if line.contains(delimiter) {
+                multiline_quote = None;
+            }
+            continue;
+        }
+        if let Some((delimiter, open_end)) = python_triple_quote(line) {
+            if !line[open_end..].contains(delimiter) {
+                multiline_quote = Some(delimiter);
+            }
+            continue;
+        }
+        if python_declaration(line) {
             hits.push(index);
         }
     }
     hits
+}
+
+fn python_triple_quote(line: &str) -> Option<(&'static str, usize)> {
+    let bytes = line.as_bytes();
+    let mut index = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'#' {
+            return None;
+        }
+        if (byte == b'\'' || byte == b'"')
+            && bytes.get(index + 1) == Some(&byte)
+            && bytes.get(index + 2) == Some(&byte)
+        {
+            let delimiter = if byte == b'\'' { "'''" } else { "\"\"\"" };
+            return Some((delimiter, index + 3));
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn rust_document_outline(text: &str) -> Vec<usize> {
+    let mut hits = Vec::new();
+    let mut state = CLikeMaskState::default();
+    let mut raw_terminator: Option<String> = None;
+    for (index, line) in text.lines().enumerate() {
+        if let Some(terminator) = raw_terminator.as_deref() {
+            if line.contains(terminator) {
+                raw_terminator = None;
+            }
+            continue;
+        }
+        if let Some((open, content_start, terminator)) = rust_raw_string(line)
+            && !line[content_start..].contains(&terminator)
+        {
+            raw_terminator = Some(terminator);
+            let masked = mask_c_like_line(&line[..open], &mut state);
+            if rust_declaration(&masked) {
+                hits.push(index);
+            }
+            continue;
+        }
+        let masked = mask_c_like_line(line, &mut state);
+        if rust_declaration(&masked) {
+            hits.push(index);
+        }
+    }
+    hits
+}
+
+fn rust_raw_string(line: &str) -> Option<(usize, usize, String)> {
+    let bytes = line.as_bytes();
+    for start in 0..bytes.len() {
+        if bytes[start] != b'r'
+            || start
+                .checked_sub(1)
+                .and_then(|index| bytes.get(index))
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            continue;
+        }
+        let mut cursor = start + 1;
+        while bytes.get(cursor) == Some(&b'#') {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'"') {
+            continue;
+        }
+        let hashes = cursor - start - 1;
+        return Some((start, cursor + 1, format!("\"{}", "#".repeat(hashes))));
+    }
+    None
+}
+
+#[derive(Default)]
+struct CLikeMaskState {
+    block_comment: bool,
+    multiline_quote: Option<char>,
+    preprocessor_inactive: Vec<bool>,
+}
+
+fn c_like_document_outline(
+    text: &str,
+    classify: Classifier,
+    honor_inactive_preprocessor: bool,
+    include_comment_banners: bool,
+) -> Vec<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut hits = Vec::new();
+    let mut state = CLikeMaskState::default();
+    for (index, line) in lines.iter().enumerate() {
+        if honor_inactive_preprocessor && update_preprocessor_state(line, &mut state) {
+            continue;
+        }
+        let masked = mask_c_like_line(line, &mut state);
+        let inactive = state.preprocessor_inactive.iter().any(|inactive| *inactive);
+        if (!inactive && classify(&masked))
+            || (include_comment_banners && c_banner_title(&lines, index))
+        {
+            hits.push(index);
+        }
+    }
+    hits
+}
+
+fn update_preprocessor_state(line: &str, state: &mut CLikeMaskState) -> bool {
+    let trimmed = line.trim_start();
+    let Some(directive) = trimmed.strip_prefix('#').map(str::trim_start) else {
+        return false;
+    };
+    if let Some(condition) = directive.strip_prefix("if").map(str::trim_start) {
+        let parent_inactive = state.preprocessor_inactive.iter().any(|inactive| *inactive);
+        state
+            .preprocessor_inactive
+            .push(parent_inactive || condition == "0");
+    } else if directive.starts_with("else") {
+        let parent_inactive = state
+            .preprocessor_inactive
+            .iter()
+            .take(state.preprocessor_inactive.len().saturating_sub(1))
+            .any(|inactive| *inactive);
+        if let Some(current) = state.preprocessor_inactive.last_mut()
+            && !parent_inactive
+        {
+            *current = !*current;
+        }
+    } else if let Some(condition) = directive.strip_prefix("elif").map(str::trim_start) {
+        let parent_inactive = state
+            .preprocessor_inactive
+            .iter()
+            .take(state.preprocessor_inactive.len().saturating_sub(1))
+            .any(|inactive| *inactive);
+        if let Some(current) = state.preprocessor_inactive.last_mut() {
+            *current = parent_inactive || condition == "0";
+        }
+    } else if directive.starts_with("endif") {
+        state.preprocessor_inactive.pop();
+    } else {
+        return false;
+    }
+    true
+}
+
+fn mask_c_like_line(line: &str, state: &mut CLikeMaskState) -> String {
+    let chars = line.chars().collect::<Vec<_>>();
+    let mut masked = String::with_capacity(line.len());
+    let mut index = 0usize;
+    let mut quote = state.multiline_quote.take();
+    let mut escaped = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        let next = chars.get(index + 1).copied();
+        if state.block_comment {
+            masked.push(' ');
+            if ch == '*' && next == Some('/') {
+                masked.push(' ');
+                index += 2;
+                state.block_comment = false;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(open) = quote {
+            masked.push(' ');
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if ch == '/' && next == Some('/') {
+            masked.extend(std::iter::repeat_n(' ', chars.len() - index));
+            break;
+        }
+        if ch == '/' && next == Some('*') {
+            masked.push(' ');
+            masked.push(' ');
+            state.block_comment = true;
+            index += 2;
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            masked.push(' ');
+            quote = Some(ch);
+            index += 1;
+            continue;
+        }
+        masked.push(ch);
+        index += 1;
+    }
+    if quote == Some('`') || (quote.is_some() && line.trim_end().ends_with('\\')) {
+        state.multiline_quote = quote;
+    }
+    masked
 }
 
 const C_BANNER_FENCE_CHARS: &[char] = &['=', '-', '*', '#'];
@@ -662,7 +932,6 @@ const CSHARP_MODIFIERS: &[&str] = &[
     "async",
     "unsafe",
     "extern",
-    "new",
 ];
 
 fn csharp_declaration(line: &str) -> bool {
@@ -1012,7 +1281,8 @@ fn markdown_fence(line: &str) -> Option<(char, usize, &str)> {
 fn markdown_document_outline(text: &str) -> Vec<usize> {
     let mut hits = Vec::new();
     let mut fence: Option<(char, usize)> = None;
-    for (index, line) in text.lines().enumerate() {
+    let lines = text.lines().collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
         if let Some((open, open_run)) = fence {
             if let Some((marker, run, tail)) = markdown_fence(line)
                 && marker == open
@@ -1031,6 +1301,15 @@ fn markdown_document_outline(text: &str) -> Vec<usize> {
         }
         if markdown_declaration(line) {
             hits.push(index);
+        } else if index > 0
+            && !lines[index - 1].trim().is_empty()
+            && markdown_indented_content(line).is_some_and(|content| {
+                let marker = content.trim_end();
+                marker.len() >= 3
+                    && (marker.chars().all(|ch| ch == '=') || marker.chars().all(|ch| ch == '-'))
+            })
+        {
+            hits.push(index - 1);
         }
     }
     hits
@@ -1252,22 +1531,46 @@ fn xml_scan_tag(rest: &str) -> (usize, bool) {
 /// preceded by whitespace or a namespace `:` — so `filename="..."` does not
 /// count.
 fn xml_has_name_or_id_attribute(rest: &str) -> bool {
-    let lower = rest.to_ascii_lowercase();
-    ["name=\"", "id=\"", "name='", "id='"].iter().any(|needle| {
-        let mut start = 0;
-        while let Some(pos) = lower[start..].find(needle) {
-            let at = start + pos;
-            if lower[..at]
-                .chars()
-                .next_back()
-                .is_some_and(|ch| ch.is_whitespace() || ch == ':')
-            {
-                return true;
-            }
-            start = at + 1;
+    let mut cursor = rest.trim_start_matches('<');
+    let element_end = cursor
+        .find(|ch: char| ch.is_whitespace() || matches!(ch, '>' | '/'))
+        .unwrap_or(cursor.len());
+    cursor = &cursor[element_end..];
+    while !cursor.is_empty() {
+        cursor = cursor.trim_start();
+        if cursor.starts_with('>') || cursor.starts_with('/') {
+            break;
         }
-        false
-    })
+        let name_end = cursor
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '=' | '>' | '/'))
+            .unwrap_or(cursor.len());
+        if name_end == 0 {
+            cursor = &cursor[1..];
+            continue;
+        }
+        let name = &cursor[..name_end];
+        cursor = cursor[name_end..].trim_start();
+        if !cursor.starts_with('=') {
+            continue;
+        }
+        cursor = cursor[1..].trim_start();
+        let local_name = name.rsplit(':').next().unwrap_or(name);
+        if local_name.eq_ignore_ascii_case("name") || local_name.eq_ignore_ascii_case("id") {
+            return true;
+        }
+        if let Some(quote @ ('"' | '\'')) = cursor.chars().next() {
+            cursor = &cursor[quote.len_utf8()..];
+            cursor = cursor
+                .find(quote)
+                .map_or("", |end| &cursor[end + quote.len_utf8()..]);
+        } else {
+            let end = cursor
+                .find(|ch: char| ch.is_whitespace() || matches!(ch, '>' | '/'))
+                .unwrap_or(cursor.len());
+            cursor = &cursor[end..];
+        }
+    }
+    false
 }
 
 /// MediaWiki section headings: `= Title =` through `====== Title ======`,
@@ -1301,6 +1604,14 @@ impl OutlineMatcher {
             Self::Pattern(regex) => regex.is_match(line),
         }
     }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Builtin(_) | Self::Document(_) => "heuristic",
+            Self::Prefix(_) => "literal_prefix",
+            Self::Pattern(_) => "regex",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1319,6 +1630,9 @@ fn shebang_language(first_line: &str) -> Option<&'static str> {
     let mut interpreter = tokens.next()?;
     if interpreter.rsplit('/').next() == Some("env") {
         interpreter = tokens.next()?;
+        if interpreter == "-S" {
+            interpreter = tokens.next()?;
+        }
     }
     let base = interpreter.rsplit('/').next().unwrap_or(interpreter);
     let stem: String = base
@@ -1430,6 +1744,7 @@ pub(crate) fn command_outline(
     let (text, encoding) = crate::encoding::read_required_text(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
     let (language, matcher) = resolve_matcher(file, &text, lang, prefix, pattern)?;
+    let matcher_kind = matcher.kind();
     let lowered_contains = contains
         .iter()
         .map(|needle| {
@@ -1483,6 +1798,7 @@ pub(crate) fn command_outline(
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("path", json!(display_path(file)));
     receipt.insert("language", json!(language));
+    receipt.insert("matcher", json!(matcher_kind));
     receipt.insert("encoding", json!(encoding));
     receipt.insert("total_lines", json!(total_lines));
     receipt.insert("declaration_lines_total", json!(declaration_lines_total));
