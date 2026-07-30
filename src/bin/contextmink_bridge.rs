@@ -61,6 +61,10 @@ fn usage() -> String {
      \x20                 current directory).\n\
      \x20 --login         Run the command through a Git Bash login shell\n\
      \x20                 (argv-safe; no command text is shell-reparsed).\n\
+     \x20 --preserve-descendants\n\
+     \x20                 Do not place the child in the Windows kill-on-close\n\
+     \x20                 supervision job. Use only when a successful command\n\
+     \x20                 intentionally launches a persistent GUI or service.\n\
      \x20 --print-argv    Print the assembled argv one entry per line and exit.\n\
      \x20 --print-root    Print the resolved bridge root (CONTEXTMINK_BRIDGE_ROOT,\n\
      \x20                 else the policy/.git anchor described under --cwd) and\n\
@@ -126,6 +130,7 @@ fn run(args: Vec<String>) -> Result<i32, BridgeError> {
 fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     let mut cwd: Option<String> = None;
     let mut login = false;
+    let mut preserve_descendants = false;
     let mut print_argv = false;
     let mut iter = args.into_iter().peekable();
     let mut command_form: Option<(String, Vec<String>)> = None;
@@ -139,6 +144,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 );
             }
             "--login" => login = true,
+            "--preserve-descendants" => preserve_descendants = true,
             "--print-argv" => print_argv = true,
             "--print-root" => {
                 // Disclose the resolved root before any command form is
@@ -260,32 +266,41 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     }
     #[cfg(windows)]
     let status = {
-        process_supervision::configure(&mut prepared.command);
-        let mut child = prepared
-            .command
-            .spawn()
-            .map_err(|error| spawn_error(program, prepared.execution_mode, error))?;
-        let supervisor = process_supervision::supervise(&mut child).map_err(|error| {
-            fail(
-                EXIT_SPAWN_FAILED,
-                format!(
-                    "failed to supervise {program:?} in {} mode: {error:#}",
-                    prepared.execution_mode
-                ),
-            )
-        })?;
-        let status = child.wait().map_err(|error| {
-            fail(
-                EXIT_SPAWN_FAILED,
-                format!(
-                    "failed to wait for {program:?} in {} mode: {error}",
-                    prepared.execution_mode
-                ),
-            )
-        })?;
-        drop(supervisor);
-        status
+        if preserve_descendants {
+            prepared
+                .command
+                .status()
+                .map_err(|error| spawn_error(program, prepared.execution_mode, error))?
+        } else {
+            process_supervision::configure(&mut prepared.command);
+            let mut child = prepared
+                .command
+                .spawn()
+                .map_err(|error| spawn_error(program, prepared.execution_mode, error))?;
+            let supervisor = process_supervision::supervise(&mut child).map_err(|error| {
+                fail(
+                    EXIT_SPAWN_FAILED,
+                    format!(
+                        "failed to supervise {program:?} in {} mode: {error:#}",
+                        prepared.execution_mode
+                    ),
+                )
+            })?;
+            let status = child.wait().map_err(|error| {
+                fail(
+                    EXIT_SPAWN_FAILED,
+                    format!(
+                        "failed to wait for {program:?} in {} mode: {error}",
+                        prepared.execution_mode
+                    ),
+                )
+            })?;
+            drop(supervisor);
+            status
+        }
     };
+    #[cfg(not(windows))]
+    let _ = preserve_descendants;
     #[cfg(not(windows))]
     let status = prepared
         .command

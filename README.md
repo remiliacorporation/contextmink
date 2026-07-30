@@ -385,7 +385,9 @@ repositories whose scripts are Bash-first while the agent runs in PowerShell:
   path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Files whose
   first line begins `#!` enter Git Bash deterministically;
   `--script <path>` explicitly selects a Bash script and resolves it from the
-  bridge root. Every bridge-owned Git
+  bridge root. `--preserve-descendants` is the explicit exception for a
+  successful child that intentionally launches a persistent GUI or service;
+  ordinary commands remain kill-on-close supervised. Every bridge-owned Git
   Bash boundary hex-relays startup argv before decoding it and installs scoped
   MSYS conversion exclusions for the caller's slash-bearing values, so a
   quoted `"$@"` forwarded to a native child preserves leading-slash selectors,

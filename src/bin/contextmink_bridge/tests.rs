@@ -39,6 +39,23 @@ fn temp_tree(name: &str) -> PathBuf {
 }
 
 #[test]
+fn bridge_accepts_explicit_descendant_preservation_before_command_form() {
+    let root = temp_tree("preserve-descendants");
+    let exit_code = super::run_with_root(
+        vec![
+            "--preserve-descendants".to_owned(),
+            "--print-argv".to_owned(),
+            "--".to_owned(),
+            "echo".to_owned(),
+            "ready".to_owned(),
+        ],
+        root,
+    )
+    .unwrap();
+    assert_eq!(exit_code, 0);
+}
+
+#[test]
 fn root_resolution_prefers_policy_root_over_nested_vendored_git() {
     // Workspace layout: <ws>/.contextmink.toml with a vendored contextmink
     // checkout (its own .git) at <ws>/tools/contextmink and the bridge binary
