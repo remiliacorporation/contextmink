@@ -306,7 +306,7 @@ fn powershell_here_string_terminator(line: &str) -> Option<&'static str> {
     None
 }
 
-const MAX_BRACE_EXPANSIONS: usize = 32;
+const MAX_BRACE_EXPANSIONS: usize = 4096;
 
 pub(super) fn expand_literal_braces(tokens: &[String]) -> Result<Vec<Vec<String>>, ()> {
     let mut variants = vec![Vec::new()];

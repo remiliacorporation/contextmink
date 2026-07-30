@@ -131,9 +131,9 @@ fn run_application() -> Result<()> {
     }
     let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
         Ok(config) => config,
-        Err(error) if matches!(cli.command, Command::HookGuard { .. }) && cli.config.is_some() => {
+        Err(error) if matches!(cli.command, Command::HookGuard { .. }) => {
             eprintln!(
-                "contextmink hook-guard: explicitly configured policy could not be loaded: {error:#}"
+                "contextmink hook-guard: destructive-command policy could not be loaded: {error:#}"
             );
             std::process::exit(2);
         }

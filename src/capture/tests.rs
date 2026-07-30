@@ -34,6 +34,44 @@ fn byte_budget_is_the_total_retained_per_stream() {
 }
 
 #[test]
+fn byte_only_head_reports_omitted_source_lines() {
+    let raw = read_captured_stream(std::io::Cursor::new(b"a\nb\nc\n"), 1).unwrap();
+
+    let rendered = render_captured_stream(raw, 10, 120);
+
+    assert!(rendered.byte_truncated);
+    assert_eq!(rendered.shown_lines, 1);
+    assert_eq!(rendered.total_lines, 3);
+    assert_eq!(rendered.omitted_lines, 2);
+    assert!(rendered.display_text.contains("omitted 2 line(s)"));
+    assert!(captured_stream_truncated(&rendered));
+}
+
+#[test]
+fn contiguous_head_tail_bytes_decode_as_one_stream() {
+    let bytes = "alpha\ncross🙂line\nomega\n".as_bytes();
+    let emoji = bytes
+        .windows("🙂".len())
+        .position(|window| window == "🙂".as_bytes())
+        .unwrap();
+    let split = emoji + 2;
+    let raw = RawCapturedStream {
+        head: bytes[..split].to_vec(),
+        tail: bytes[split..].to_vec(),
+        tail_start: split,
+        total_bytes: bytes.len(),
+        total_lines: 3,
+    };
+
+    let rendered = render_captured_stream(raw, 10, 120);
+
+    assert_eq!(rendered.display_text, "alpha\ncross🙂line\nomega");
+    assert_eq!(rendered.shown_lines, 3);
+    assert_eq!(rendered.omitted_lines, 0);
+    assert!(!captured_stream_truncated(&rendered));
+}
+
+#[test]
 fn line_budget_is_shared_across_stdout_and_stderr() {
     assert_eq!(capture_line_budgets(5, 10, 10), (2, 3));
     assert_eq!(capture_line_budgets(5, 1, 10), (1, 4));

@@ -368,11 +368,24 @@ pub(crate) enum Command {
             help = "Maximum characters per source-line text field"
         )]
         max_line_chars: usize,
-        #[arg(long, help = "Zero-based character offset for character-window mode")]
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "range",
+                "start",
+                "end",
+                "tail",
+                "lines",
+                "max_lines",
+                "max_line_chars"
+            ],
+            help = "Zero-based character offset for character-window mode"
+        )]
         char_start: Option<usize>,
         #[arg(
             long,
             default_value_t = 4000,
+            requires = "char_start",
             help = "Character count for character-window mode"
         )]
         chars: usize,
@@ -607,7 +620,7 @@ pub(crate) enum Command {
         )]
         replace_managed: bool,
     },
-    /// Execute argv directly and print bounded stdout/stderr summaries.
+    /// Execute argv non-interactively and print bounded stdout/stderr summaries.
     Capture {
         #[arg(
             long,
@@ -648,7 +661,7 @@ pub(crate) enum Command {
             required = true,
             trailing_var_arg = true,
             allow_hyphen_values = true,
-            help = "Command argv to execute directly"
+            help = "Non-interactive command argv to execute directly (child stdin is closed)"
         )]
         argv: Vec<String>,
     },

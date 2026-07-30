@@ -218,6 +218,12 @@ It preserves quoting and command boundaries, resolves Git's actual subcommand,
 binds protected-path rules to deletion operands, and parses Bash and PowerShell
 escaping according to the matcher that invoked it. It reads Claude's hook
 payload JSON on stdin and exits 2 only for a recognized destructive command.
+An explicit or discovered policy that cannot be loaded also exits 2; an
+unparseable hook-event payload still allows with a diagnostic so harness schema
+drift does not disable all shell use. The evaluator is a tripwire, not a shell
+interpreter: shell-variable expansion, sourced scripts, repository-configured
+Git aliases, and brace-generated command spellings beyond its bounded static
+expansion remain outside its threat model.
 
 Generate the settings fragment instead of hand-writing it:
 

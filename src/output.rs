@@ -272,7 +272,7 @@ pub(crate) fn emit_json_checked(cli: &Cli, receipt: Receipt) -> Result<()> {
     fail_after_receipt(cli, scope_complete, output_truncated)
 }
 
-fn write_receipt(receipt: Receipt) -> Result<()> {
+pub(crate) fn write_receipt(receipt: Receipt) -> Result<()> {
     let mut stdout = io::stdout();
     writeln!(stdout, "{RECEIPT_PREFIX}{}", receipt.into_value())?;
     Ok(())
@@ -285,7 +285,11 @@ pub(crate) fn write_receipt_checked(cli: &Cli, receipt: Receipt) -> Result<()> {
     fail_after_receipt(cli, scope_complete, output_truncated)
 }
 
-fn fail_after_receipt(cli: &Cli, scope_complete: bool, output_truncated: bool) -> Result<()> {
+pub(crate) fn fail_after_receipt(
+    cli: &Cli,
+    scope_complete: bool,
+    output_truncated: bool,
+) -> Result<()> {
     if cli.require_complete_scope && !scope_complete {
         return Err(anyhow!(
             "contextmink scope was incomplete (--require-complete-scope)"

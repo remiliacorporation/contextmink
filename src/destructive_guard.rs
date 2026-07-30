@@ -173,6 +173,12 @@ fn deny_command(
     let args = &tokens[program_index + 1..];
 
     if stem == "git"
+        && let Some(message) =
+            deny_invoked_inline_git_alias(args, config, depth, configured_rules_active)
+    {
+        return Some(message);
+    }
+    if stem == "git"
         && let Some((subcommand_index, subcommand)) = git_subcommand(args)
     {
         if subcommand.eq_ignore_ascii_case("clean") {
@@ -278,10 +284,12 @@ fn deny_shell_payload(
         let expanded_commands = match expand_literal_braces(&command) {
             Ok(expanded_commands) => expanded_commands,
             Err(()) => {
-                return Some(
-                    "destructive-command inspection exceeded the literal brace expansion limit"
-                        .to_owned(),
-                );
+                if let Some(message) =
+                    deny_command(&command, config, depth, dialect, configured_rules_active)
+                {
+                    return Some(message);
+                }
+                continue;
             }
         };
         for expanded in expanded_commands {
@@ -784,6 +792,58 @@ fn git_subcommand(args: &[String]) -> Option<(usize, &str)> {
     }
     args.get(index)
         .map(|subcommand| (index, subcommand.as_str()))
+}
+
+fn deny_invoked_inline_git_alias(
+    args: &[String],
+    config: &DestructiveGuardConfig,
+    depth: usize,
+    configured_rules_active: bool,
+) -> Option<String> {
+    let (subcommand_index, invoked) = git_subcommand(args)?;
+    let mut index = 0usize;
+    while index < subcommand_index {
+        if args[index] != "-c" {
+            index += if git_global_option_takes_value(&args[index]) {
+                2
+            } else {
+                1
+            };
+            continue;
+        }
+        let Some(setting) = args.get(index + 1) else {
+            break;
+        };
+        let Some((key, value)) = setting.split_once('=') else {
+            index += 2;
+            continue;
+        };
+        let Some(prefix) = key.get(..6) else {
+            index += 2;
+            continue;
+        };
+        if !prefix.eq_ignore_ascii_case("alias.") || !key[6..].eq_ignore_ascii_case(invoked) {
+            index += 2;
+            continue;
+        }
+        let payload = value
+            .strip_prefix('!')
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("git {value}"));
+        if let Some(message) = deny_shell_payload(
+            &payload,
+            config,
+            depth + 1,
+            ShellDialect::Posix,
+            configured_rules_active,
+        ) {
+            return Some(format!(
+                "invoked inline Git alias {invoked:?} resolves to a blocked command: {message}"
+            ));
+        }
+        index += 2;
+    }
+    None
 }
 
 fn git_global_option_takes_value(token: &str) -> bool {

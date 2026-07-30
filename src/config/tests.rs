@@ -78,6 +78,15 @@ fn comments_inside_strings_are_preserved() {
 }
 
 #[test]
+fn bare_config_filename_resolves_the_current_directory_as_policy_root() {
+    let expected = canonical_normalized(Path::new(".")).unwrap();
+    assert_eq!(
+        selected_config_policy_root(Path::new(".contextmink.toml")).unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn real_toml_escaping_is_supported() {
     let config =
         parse_config("profile = \"demo\\tworkspace\"\nexclude_globs = ['literal\\\\path/**']\n")

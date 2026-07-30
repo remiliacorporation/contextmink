@@ -5,7 +5,8 @@ use super::process_boundary::{
     msys2_arg_conversion_exclusions, resolve_program, resolve_project_root, windows_bash_candidates,
 };
 use super::{
-    DUMP_WARN_LINES, assemble_argv, decode_base64, reader_exceeds_line_limit, sed_window_span,
+    DUMP_WARN_BYTES, DUMP_WARN_LINES, assemble_argv, decode_base64, reader_exceeds_line_limit,
+    sed_window_span,
 };
 
 fn encode_base64(bytes: &[u8]) -> String {
@@ -39,6 +40,7 @@ fn temp_tree(name: &str) -> PathBuf {
 }
 
 #[test]
+#[cfg(windows)]
 fn bridge_accepts_explicit_descendant_preservation_before_command_form() {
     let root = temp_tree("preserve-descendants");
     let exit_code = super::run_with_root(
@@ -53,6 +55,23 @@ fn bridge_accepts_explicit_descendant_preservation_before_command_form() {
     )
     .unwrap();
     assert_eq!(exit_code, 0);
+}
+
+#[test]
+#[cfg(not(windows))]
+fn bridge_rejects_descendant_preservation_outside_windows() {
+    let error = super::run_with_root(
+        vec![
+            "--preserve-descendants".to_owned(),
+            "--".to_owned(),
+            "echo".to_owned(),
+            "ready".to_owned(),
+        ],
+        temp_tree("reject-preserve-descendants"),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, super::EXIT_USAGE);
+    assert!(error.message.contains("only on Windows"));
 }
 
 #[test]
@@ -98,6 +117,10 @@ fn base64_decodes_standard_urlsafe_and_padded_forms() {
     );
     assert_eq!(decode_base64("").unwrap(), b"");
     assert!(decode_base64("a!b").unwrap_err().contains("0x21"));
+    assert!(decode_base64("A").is_err());
+    assert!(decode_base64("AB").is_err());
+    assert!(decode_base64("AA=A").is_err());
+    assert!(decode_base64("AAAA=").is_err());
 
     let argv = "printf\0%s\0he said \"hi\"\0^// PART";
     let token = encode_base64(argv.as_bytes());
@@ -179,19 +202,27 @@ fn dump_warning_line_probe_is_bounded_and_handles_trailing_newlines() {
     let exactly_at_limit = "line\n".repeat(DUMP_WARN_LINES);
     assert!(!reader_exceeds_line_limit(
         std::io::Cursor::new(exactly_at_limit),
-        DUMP_WARN_LINES
+        DUMP_WARN_LINES,
+        DUMP_WARN_BYTES,
     ));
 
     let unterminated_line_after_limit = format!("{}tail", "line\n".repeat(DUMP_WARN_LINES));
     assert!(reader_exceeds_line_limit(
         std::io::Cursor::new(unterminated_line_after_limit),
-        DUMP_WARN_LINES
+        DUMP_WARN_LINES,
+        DUMP_WARN_BYTES,
     ));
 
     let over_limit = "line\n".repeat(DUMP_WARN_LINES + 1);
     assert!(reader_exceeds_line_limit(
         std::io::Cursor::new(over_limit),
-        DUMP_WARN_LINES
+        DUMP_WARN_LINES,
+        DUMP_WARN_BYTES,
+    ));
+    assert!(reader_exceeds_line_limit(
+        std::io::Cursor::new(vec![b'x'; DUMP_WARN_BYTES + 1]),
+        DUMP_WARN_LINES,
+        DUMP_WARN_BYTES,
     ));
 }
 

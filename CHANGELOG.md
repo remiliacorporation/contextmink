@@ -6,7 +6,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-07-29
+## [0.8.0] - 2026-07-30
 
 ### Added
 
@@ -32,6 +32,12 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- Decoded contiguous capture head/tail byte segments as one stream, preserving seam-crossing lines and UTF-8 code points; capture now asserts every omitted line has a declared byte or line boundary.
+- Kept the stdout capture receipt available when `--receipt-out` fails, made unexpected child status take precedence over strict truncation, and closed child stdin to keep capture non-interactive.
+- Made heterogeneous JSON Pointer shape mismatches null non-matches instead of panics, and stopped heuristically rewriting literal selector data that happens to contain `/Git/`.
+- Allowed high-cardinality benign brace expansions instead of blocking them as destructive, detected invoked inline `git -c alias.<name>=...` aliases that resolve to blocked commands, and made discovered malformed hook policies fail closed.
+- Resolved bare-filename configuration policy roots deterministically across platforms, made character slices complete requested windows, rejected ignored cross-mode slice flags, and confined `files --term` matching to the requested scan scope.
+- Rejected `--preserve-descendants` outside Windows, bounded bridge transcript-warning reads by bytes as well as lines, and made the argv relay reject malformed base64 padding and trailing bits.
 - Updated `anyhow` and `crossbeam-epoch` to releases that resolve RUSTSEC-2026-0190 and RUSTSEC-2026-0204 in the shipped lockfile.
 - End-anchored capped tail windows, rejected zero/inverted slice bounds, and made empty/past-EOF receipt counts exact.
 - Rejected more than one executable SQLite statement instead of silently ignoring a tail statement; kept comments and empty separators valid.

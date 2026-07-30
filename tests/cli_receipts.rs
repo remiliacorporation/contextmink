@@ -284,7 +284,30 @@ fn explicitly_missing_hook_policy_fails_closed() {
     assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("explicitly configured policy could not be loaded")
+            .contains("destructive-command policy could not be loaded")
+    );
+}
+
+#[test]
+fn malformed_discovered_hook_policy_fails_closed() {
+    let root = fixture_root("malformed-discovered-hook-policy");
+    fs::write(root.join(".contextmink.toml"), "profile = [\n").unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "hook-guard",
+            "--expected-root",
+            root.to_str().unwrap(),
+            "--shell",
+            "posix",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("destructive-command policy could not be loaded")
     );
 }
 
@@ -825,6 +848,49 @@ fn capture_keeps_head_and_tail_when_line_capped() {
 }
 
 #[test]
+fn capture_contiguous_byte_segments_preserve_every_line() {
+    let root = fixture_root("capture-contiguous-byte-segments");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+    let source = (0..400)
+        .map(|index| format!("LINE{index:04} {}\n", "x".repeat(31)))
+        .collect::<String>();
+    fs::write(root.join("many-lines.txt"), source).unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "2000",
+            "--max-line-chars",
+            "2000",
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "many-lines.txt",
+            "--range",
+            "1:400",
+            "--max-lines",
+            "1000",
+            "--max-line-chars",
+            "1000",
+        ],
+    );
+
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["output_truncated"], false);
+    assert_eq!(json["caps"], serde_json::json!([]));
+    assert_eq!(json["stdout"]["omitted_lines"], 0);
+    assert_eq!(json["stdout"]["shown_lines"], json["stdout"]["total_lines"]);
+    let text = json["stdout_text"].as_str().unwrap();
+    assert!(text.contains("LINE0000"));
+    assert!(text.contains("LINE0399"));
+    assert!(!text.contains("[contextmink] ... omitted"));
+}
+
+#[test]
 fn capture_json_applies_the_line_character_cap_to_payload_text() {
     let root = fixture_root("capture-line-characters");
     let bin = env!("CARGO_BIN_EXE_contextmink");
@@ -1090,6 +1156,35 @@ fn capture_propagates_unexpected_child_status_after_receipt() {
 }
 
 #[test]
+fn capture_child_exit_precedes_strict_truncation_status() {
+    let root = fixture_root("capture-child-exit-precedence");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "--fail-if-truncated",
+            "capture",
+            "--max-lines",
+            "1",
+            "--",
+            bin,
+            "--definitely-invalid",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["child_exit_code"], 2);
+    assert_eq!(json["output_truncated"], true);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("strictness error"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn capture_successful_child_keeps_outer_success() {
     let root = fixture_root("capture-success");
     let bin = env!("CARGO_BIN_EXE_contextmink");
@@ -1188,6 +1283,34 @@ fn capture_receipt_out_writes_full_json_receipt() {
     assert_eq!(json["exit_expected"], true);
     assert_eq!(json["child_exit_zero"], true);
     assert!(json["stdout_text"].as_str().unwrap().contains("alpha beta"));
+}
+
+#[test]
+fn capture_sidecar_failure_still_emits_the_stdout_receipt() {
+    let root = fixture_root("capture-sidecar-failure");
+    let bin = env!("CARGO_BIN_EXE_contextmink");
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--receipt-out",
+            root.to_str().unwrap(),
+            "--",
+            bin,
+            "--no-config",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:1",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_envelope(&json, "capture", "lines");
+    assert_eq!(json["child_exit_code"], 0);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed to write"));
 }
 
 #[test]
@@ -1338,6 +1461,18 @@ fn files_term_matches_literal_decomp_ledger_name() {
         files["files"][0],
         "decompilation_outputs/ledgers/rename/rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl"
     );
+}
+
+#[test]
+fn files_term_does_not_match_an_ancestor_outside_the_scan_root() {
+    let root = fixture_root("files-ancestor-only-term");
+    let files = parse_json_output(
+        &root,
+        &["--json", "files", ".", "--term", "files-ancestor-only-term"],
+    );
+
+    assert_eq!(result(&files)["shown"], 0);
+    assert_eq!(result(&files)["total"], 0);
 }
 
 #[test]
@@ -2019,37 +2154,53 @@ fn json_select_accepts_comma_separated_fields() {
 }
 
 #[test]
-fn json_select_tolerates_msys_converted_json_pointers() {
-    let root = fixture_root("json-select-msys-pointers");
+fn json_select_preserves_literal_slash_field_identity() {
+    let root = fixture_root("json-select-literal-slash-field");
+    fs::write(
+        root.join("literal.json"),
+        r#"{"tools/Git/hooks":5,"hooks":"decoy"}"#,
+    )
+    .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_contextmink"))
-        .current_dir(&root)
-        .env("MSYSTEM", "MINGW64")
-        .env("EXEPATH", r"C:\Program Files\Git\bin")
-        .args([
+    let json = parse_json_output(
+        &root,
+        &[
             "--json",
             "json-select",
-            "sidecar.json",
-            "--array",
-            "C:/Program Files/Git/textures",
+            "literal.json",
             "--fields",
-            "C:/Program Files/Git/path",
-            "--limit",
-            "1",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "contextmink failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+            "tools/Git/hooks",
+        ],
     );
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_envelope(&json, "json-select", "rows");
-    assert_eq!(json["array"], "/textures");
-    assert_eq!(json["fields"][0], "/path");
-    assert_eq!(json["rows"][0]["fields"]["/path"], "\"World|A.blp\"");
+
+    assert_eq!(json["fields"][0], "tools/Git/hooks");
+    assert_eq!(json["rows"][0]["fields"]["tools/Git/hooks"], "5");
+}
+
+#[test]
+fn json_select_shape_mismatch_is_a_null_non_match() {
+    let root = fixture_root("json-select-heterogeneous-shape");
+    fs::write(
+        root.join("heterogeneous.json"),
+        r#"[{"v":{"x":1}},{"v":[9]}]"#,
+    )
+    .unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "heterogeneous.json",
+            "--array",
+            "$",
+            "--fields",
+            "/v/x",
+        ],
+    );
+
+    assert_eq!(json["rows"][0]["fields"]["/v/x"], "1");
+    assert_eq!(json["rows"][1]["fields"]["/v/x"], "null");
 }
 
 #[test]
@@ -2441,6 +2592,53 @@ fn slice_past_eof_is_complete_when_every_available_line_is_shown() {
 }
 
 #[test]
+fn slice_character_window_is_a_complete_requested_selection() {
+    let root = fixture_root("slice-character-window");
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "slice",
+            "sample.txt",
+            "--char-start",
+            "1",
+            "--chars",
+            "5",
+        ],
+    );
+
+    assert_eq!(json["mode"], "chars");
+    assert_eq!(result(&json)["shown"], 5);
+    assert_eq!(json["text"], "lpha ");
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["output_truncated"], false);
+    assert_eq!(json["caps"], serde_json::json!([]));
+}
+
+#[test]
+fn slice_rejects_cross_mode_flags_instead_of_ignoring_them() {
+    let root = fixture_root("slice-cross-mode-flags");
+    let output = run_contextmink_raw(
+        &root,
+        &[
+            "slice",
+            "sample.txt",
+            "--char-start",
+            "0",
+            "--chars",
+            "5",
+            "--start",
+            "2",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+
+    let chars_without_mode = run_contextmink_raw(&root, &["slice", "sample.txt", "--chars", "5"]);
+    assert_eq!(chars_without_mode.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&chars_without_mode.stderr).contains("--char-start"));
+}
+#[test]
 fn grep_filters_by_extension_and_glob() {
     let root = fixture_root("grep-ext-glob");
     fs::write(root.join("code.rs"), "needle in rust\n").unwrap();
@@ -2785,6 +2983,40 @@ fn excludes_hold_for_absolute_scan_roots() {
             .as_str()
             .unwrap()
             .ends_with("artifacts/big.log")
+    );
+}
+
+#[test]
+fn bare_config_filename_keeps_excludes_for_absolute_scan_roots() {
+    let root = fixture_root("bare-config-policy-root");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test-profile\"\nexclude_globs = [\"artifacts/**\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("artifacts")).unwrap();
+    fs::write(root.join("artifacts").join("secret.txt"), "excluded\n").unwrap();
+    let absolute_root = root.to_string_lossy().replace('\\', "/");
+
+    let files = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "--config",
+            ".contextmink.toml",
+            "files",
+            &absolute_root,
+            "--limit",
+            "50",
+        ],
+    );
+
+    assert!(
+        files["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|path| !path.as_str().unwrap().contains("artifacts/"))
     );
 }
 

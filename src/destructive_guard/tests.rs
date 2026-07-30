@@ -317,6 +317,19 @@ fn ordinary_commands_stay_allowed() {
 }
 
 #[test]
+fn high_cardinality_benign_brace_expansions_stay_allowed() {
+    allowed(&["sh", "-c", "touch file{1..5000}"]);
+}
+
+#[test]
+fn invoked_inline_git_alias_cannot_hide_clean() {
+    let message = denied(&["sh", "-c", "git -c alias.wipe='clean -fdx' wipe"]);
+    assert!(message.contains("inline Git alias"));
+    assert!(message.contains("git clean"));
+    allowed(&["sh", "-c", "git -c alias.inspect='status --short' inspect"]);
+}
+
+#[test]
 fn execution_wrappers_do_not_hide_git_clean() {
     denied(&["command", "git", "clean", "-fdX"]);
     denied(&["sudo", "-u", "builder", "git", "clean", "-fdX"]);

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::output::{
-    Receipt, ReceiptCap, ReceiptResult, clamp_text, emit_json_checked, write_receipt_checked,
+    Receipt, ReceiptCap, ReceiptResult, clamp_text, emit_json, fail_after_receipt, write_receipt,
 };
 use crate::process_boundary::prepare_command;
 use crate::process_supervision::{configure as configure_supervised_command, supervise};
@@ -127,6 +127,14 @@ pub(crate) fn command_capture(
         capture_line_budgets(max_lines, stdout_raw.total_lines, stderr_raw.total_lines);
     let stdout = render_captured_stream(stdout_raw, stdout_lines, max_line_chars);
     let stderr = render_captured_stream(stderr_raw, stderr_lines, max_line_chars);
+    assert!(
+        stdout.omitted_lines == 0 || stdout.byte_truncated || stdout.line_truncated,
+        "capture omitted stdout lines without a byte or line retention boundary"
+    );
+    assert!(
+        stderr.omitted_lines == 0 || stderr.byte_truncated || stderr.line_truncated,
+        "capture omitted stderr lines without a byte or line retention boundary"
+    );
     let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let shown = stdout.shown_lines + stderr.shown_lines;
     let total = stdout.total_lines + stderr.total_lines;
@@ -179,14 +187,21 @@ pub(crate) fn command_capture(
     let mut full_receipt = receipt.clone();
     full_receipt.insert("stdout_text", json!(stdout.display_text));
     full_receipt.insert("stderr_text", json!(stderr.display_text));
-    if let Some(path) = receipt_out {
-        write_capture_receipt(path, &full_receipt.clone().into_value())?;
-    }
+    let sidecar_result =
+        receipt_out.map(|path| write_capture_receipt(path, &full_receipt.clone().into_value()));
+    let scope_complete = receipt.scope_complete();
+    let output_truncated = receipt.output_truncated();
 
     if cli.json {
-        emit_json_checked(cli, full_receipt)?;
-        propagate_unexpected_child_exit(exit_expected, &status)?;
-        return Ok(());
+        emit_json(full_receipt.into_value())?;
+        return finish_capture(
+            cli,
+            sidecar_result,
+            scope_complete,
+            output_truncated,
+            exit_expected,
+            &status,
+        );
     }
 
     let mut out = io::stdout();
@@ -231,8 +246,40 @@ pub(crate) fn command_capture(
     if !suspects.is_empty() {
         writeln!(out, "{}", suspects.human_note())?;
     }
-    write_receipt_checked(cli, receipt)?;
-    propagate_unexpected_child_exit(exit_expected, &status)
+    write_receipt(receipt)?;
+    finish_capture(
+        cli,
+        sidecar_result,
+        scope_complete,
+        output_truncated,
+        exit_expected,
+        &status,
+    )
+}
+
+fn finish_capture(
+    cli: &Cli,
+    sidecar_result: Option<Result<()>>,
+    scope_complete: bool,
+    output_truncated: bool,
+    exit_expected: bool,
+    status: &std::process::ExitStatus,
+) -> Result<()> {
+    let strict_result = fail_after_receipt(cli, scope_complete, output_truncated);
+    if !exit_expected {
+        if let Some(Err(error)) = sidecar_result.as_ref() {
+            eprintln!("contextmink capture sidecar error: {error:#}");
+        }
+        if let Err(error) = strict_result.as_ref() {
+            eprintln!("contextmink capture strictness error: {error:#}");
+        }
+        propagate_unexpected_child_exit(false, status)?;
+        unreachable!("unexpected child exit propagation terminates the process");
+    }
+    if let Some(result) = sidecar_result {
+        result?;
+    }
+    strict_result
 }
 
 /// The receipt carrying the child status has already been emitted. Every
@@ -300,7 +347,10 @@ fn spawn_captured_child(
     execution_mode: &str,
 ) -> Result<std::process::Child> {
     configure_supervised_command(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     command.spawn().with_context(|| {
         format!(
             "failed to spawn captured command {requested_program:?} in {execution_mode} mode; use `capture --script -- <script> ...` for a Bash script without a shebang"
@@ -399,35 +449,40 @@ fn render_captured_stream(
     let tail_contiguous = raw.tail.is_empty() || raw.tail_start == raw.head.len();
 
     let mut clamp_state = ClampState::default();
-    let (head_lines, head_partial_last) = decode_lines(&raw.head);
-    let mut head_lines = head_lines;
-    let mut tail_lines = Vec::new();
-    if !raw.tail.is_empty() {
-        let (lines, _) = decode_lines(&raw.tail);
-        if head_partial_last && !tail_contiguous && head_lines.is_empty() && !raw.head.is_empty() {
-            let head_fragment = String::from_utf8_lossy(&raw.head).to_string();
-            head_lines.push(head_fragment);
+    let (head_lines, tail_lines) = if tail_contiguous {
+        (decode_lines(retained_text.as_bytes()).0, Vec::new())
+    } else {
+        let (mut head_lines, head_partial_last) = decode_lines(&raw.head);
+        let tail_lines = decode_lines(&raw.tail).0;
+        if head_partial_last && head_lines.is_empty() && !raw.head.is_empty() {
+            head_lines.push(String::from_utf8_lossy(&raw.head).to_string());
         }
-        tail_lines = lines;
-    }
+        (head_lines, tail_lines)
+    };
     // A byte-retention gap can omit source lines without the line budget
     // binding; only retained display candidates participate in this cap.
-    let retained_line_count = if tail_contiguous {
-        decode_lines(retained_text.as_bytes()).0.len()
-    } else {
-        head_lines.len() + tail_lines.len()
-    };
+    let retained_line_count = head_lines.len() + tail_lines.len();
     let line_truncated = retained_line_count > max_lines;
 
     let (display_text, head_shown, tail_shown, omitted_lines) = if tail_lines.is_empty() {
         if head_lines.len() <= max_lines {
             let shown = head_lines.len();
-            let rendered = head_lines
+            let omitted = if byte_truncated {
+                raw.total_lines.saturating_sub(shown)
+            } else {
+                0
+            };
+            let mut parts = head_lines
                 .iter()
                 .map(|line| clamp_state.clamp(line, max_line_chars))
-                .collect::<Vec<_>>()
-                .join("\n");
-            (rendered, shown, 0usize, 0usize)
+                .collect::<Vec<_>>();
+            if omitted > 0 {
+                parts.push(clamp_state.clamp(
+                    &format!("[contextmink] ... omitted {omitted} line(s) ..."),
+                    max_line_chars,
+                ));
+            }
+            (parts.join("\n"), shown, 0usize, omitted)
         } else {
             // Everything fits in the head buffer but exceeds the line budget:
             // split the budget so the end of the output (summaries, error
@@ -568,7 +623,10 @@ fn decode_lines(bytes: &[u8]) -> (Vec<String>, bool) {
 }
 
 fn captured_stream_truncated(stream: &CapturedStream) -> bool {
-    stream.byte_truncated || stream.line_truncated || stream.char_truncated
+    stream.omitted_lines > 0
+        || stream.byte_truncated
+        || stream.line_truncated
+        || stream.char_truncated
 }
 
 fn captured_stream_json(stream: &CapturedStream) -> Value {

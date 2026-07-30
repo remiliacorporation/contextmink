@@ -44,6 +44,7 @@ const EXIT_NO_BASH: i32 = 127;
 /// Threshold tracks the contextmink slice window guidance in repository
 /// bounded-output instructions.
 const DUMP_WARN_LINES: usize = 150;
+const DUMP_WARN_BYTES: usize = 1024 * 1024;
 const SUPPRESS_ENV: &str = "CONTEXTMINK_BRIDGE_SUPPRESS_DUMP_WARNING";
 
 fn usage() -> String {
@@ -175,6 +176,13 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             }
         }
     }
+    #[cfg(not(windows))]
+    if preserve_descendants {
+        return Err(fail(
+            EXIT_USAGE,
+            "--preserve-descendants is supported only on Windows",
+        ));
+    }
 
     let target_cwd = match &cwd {
         Some(dir) => resolve_from_root(&root, dir),
@@ -299,8 +307,6 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             status
         }
     };
-    #[cfg(not(windows))]
-    let _ = preserve_descendants;
     #[cfg(not(windows))]
     let status = prepared
         .command
@@ -508,7 +514,11 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
                 let Ok(file) = std::fs::File::open(&path) else {
                     continue;
                 };
-                if reader_exceeds_line_limit(std::io::BufReader::new(file), DUMP_WARN_LINES) {
+                if reader_exceeds_line_limit(
+                    std::io::BufReader::new(file),
+                    DUMP_WARN_LINES,
+                    DUMP_WARN_BYTES,
+                ) {
                     eprintln!(
                         "contextmink-bridge: {program} on {arg} (more than {DUMP_WARN_LINES} lines) is a transcript dump; prefer contextmink outline/slice ({SUPPRESS_ENV}=1 silences)"
                     );
@@ -543,8 +553,9 @@ fn warn_content_dump(argv: &[String], target_cwd: &Path) {
     }
 }
 
-fn reader_exceeds_line_limit(mut reader: impl BufRead, max_lines: usize) -> bool {
+fn reader_exceeds_line_limit(mut reader: impl BufRead, max_lines: usize, max_bytes: usize) -> bool {
     let mut newline_count = 0usize;
+    let mut bytes_read = 0usize;
     loop {
         let Ok(buffer) = reader.fill_buf() else {
             return false;
@@ -553,6 +564,10 @@ fn reader_exceeds_line_limit(mut reader: impl BufRead, max_lines: usize) -> bool
             return false;
         }
         let consumed = buffer.len();
+        bytes_read = bytes_read.saturating_add(consumed);
+        if bytes_read > max_bytes {
+            return true;
+        }
         for byte in buffer {
             if *byte == b'\n' {
                 newline_count += 1;
@@ -582,7 +597,7 @@ fn sed_window_span(arg: &str) -> Option<usize> {
 }
 
 /// Standard base64 (also accepting URL-safe `-`/`_`), whitespace-tolerant,
-/// optional padding. Hand-rolled to keep the dependency surface at zero.
+/// optional trailing padding. Hand-rolled to keep the dependency surface at zero.
 fn decode_base64(token: &str) -> Result<Vec<u8>, String> {
     fn value_of(ch: u8) -> Result<u8, String> {
         match ch {
@@ -594,19 +609,38 @@ fn decode_base64(token: &str) -> Result<Vec<u8>, String> {
             other => Err(format!("invalid base64 byte 0x{other:02x}")),
         }
     }
-    let mut output = Vec::with_capacity(token.len() / 4 * 3);
+    let compact = token
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    let padding = compact
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    if padding > 2 || compact[..compact.len().saturating_sub(padding)].contains(&b'=') {
+        return Err("base64 padding must be one or two trailing '=' bytes".to_owned());
+    }
+    if padding > 0 && compact.len() % 4 != 0 {
+        return Err("padded base64 length must be a multiple of four".to_owned());
+    }
+    let data_len = compact.len().saturating_sub(padding);
+    if data_len % 4 == 1 || padding == 1 && data_len % 4 != 3 || padding == 2 && data_len % 4 != 2 {
+        return Err("invalid base64 quantum length or padding".to_owned());
+    }
+    let mut output = Vec::with_capacity(compact.len() / 4 * 3);
     let mut buffer = 0u32;
     let mut bits = 0u32;
-    for byte in token.bytes() {
-        if byte.is_ascii_whitespace() || byte == b'=' {
-            continue;
-        }
+    for byte in compact.into_iter().take(data_len) {
         buffer = (buffer << 6) | u32::from(value_of(byte)?);
         bits += 6;
         if bits >= 8 {
             bits -= 8;
             output.push((buffer >> bits) as u8);
         }
+    }
+    if bits > 0 && buffer & ((1u32 << bits) - 1) != 0 {
+        return Err("base64 has non-zero discarded trailing bits".to_owned());
     }
     Ok(output)
 }

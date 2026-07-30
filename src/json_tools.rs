@@ -42,7 +42,7 @@ pub(crate) fn parse_where_predicates(
                 return Err(anyhow!("{flag} requires a non-empty field name: {raw:?}"));
             }
             predicates.push(WherePredicate {
-                field: normalize_json_selector_arg(field),
+                field: field.to_owned(),
                 expected: expected.to_owned(),
                 contains: is_contains,
             });
@@ -243,7 +243,7 @@ pub(crate) fn command_json_select(
             "json-select --max-value-chars must be greater than zero"
         ));
     }
-    let array = array.map(normalize_json_selector_arg);
+    let array = array.map(str::to_owned);
     let fields = expand_json_select_fields(fields);
     if keys && !fields.is_empty() {
         return Err(anyhow!(
@@ -653,7 +653,7 @@ fn expand_json_select_fields(fields: &[String]) -> Vec<String> {
         .flat_map(|field| field.split(','))
         .map(str::trim)
         .filter(|field| !field.is_empty())
-        .map(normalize_json_selector_arg)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -677,48 +677,6 @@ fn row_matches_predicates(row: &Value, predicates: &[WherePredicate]) -> Result<
         }
     }
     Ok(true)
-}
-
-fn normalize_json_selector_arg(selector: &str) -> String {
-    msys_git_root()
-        .and_then(|git_root| normalize_msys_converted_json_selector(selector, &git_root))
-        .or_else(|| normalize_msys_drive_git_selector(selector))
-        .unwrap_or_else(|| selector.to_owned())
-}
-
-fn msys_git_root() -> Option<String> {
-    let exe_path = std::env::var_os("EXEPATH")?;
-    let exe_path = exe_path.to_string_lossy().replace('\\', "/");
-    let exe_path = exe_path.trim_end_matches('/');
-    Some(exe_path.strip_suffix("/bin").unwrap_or(exe_path).to_owned())
-}
-
-fn normalize_msys_converted_json_selector(selector: &str, git_root: &str) -> Option<String> {
-    if selector == "$" || selector.is_empty() || selector.starts_with('/') {
-        return None;
-    }
-    let normalized_selector = selector.replace('\\', "/");
-    let normalized_root = git_root.replace('\\', "/");
-    let rest = normalized_selector.strip_prefix(normalized_root.trim_end_matches('/'))?;
-    if rest.starts_with('/') && rest.len() > 1 {
-        Some(rest.to_owned())
-    } else {
-        None
-    }
-}
-
-fn normalize_msys_drive_git_selector(selector: &str) -> Option<String> {
-    if selector == "$" || selector.is_empty() || selector.starts_with('/') {
-        return None;
-    }
-    let normalized = selector.replace('\\', "/");
-    let git_marker = normalized.rfind("/Git/")?;
-    let rest = &normalized[git_marker + "/Git".len()..];
-    if rest.starts_with('/') && rest.len() > 1 {
-        Some(rest.to_owned())
-    } else {
-        None
-    }
 }
 
 fn json_select_row(
@@ -773,9 +731,9 @@ fn json_pointer_lookup<'a>(value: &'a Value, pointer: &str) -> Result<Option<&'a
                 current = next;
             }
             Value::Array(values) => {
-                let index = token
-                    .parse::<usize>()
-                    .with_context(|| format!("invalid JSON array index in pointer: {token}"))?;
+                let Ok(index) = token.parse::<usize>() else {
+                    return Ok(None);
+                };
                 let Some(next) = values.get(index) else {
                     return Ok(None);
                 };

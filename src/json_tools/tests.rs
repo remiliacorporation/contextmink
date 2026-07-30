@@ -46,18 +46,7 @@ fn value_summary_keeps_large_json_structural() {
 }
 
 #[test]
-fn normalizes_msys_converted_json_selector() {
-    assert_eq!(
-        normalize_json_selector_arg("C:/Program Files/Git/textures"),
-        "/textures"
-    );
-    assert_eq!(
-        normalize_msys_drive_git_selector("C:/Program Files/Git/textures"),
-        Some("/textures".to_owned())
-    );
-    assert_eq!(
-        normalize_msys_converted_json_selector("D:/Tools/Git/textures/0/path", "D:/Tools/Git"),
-        Some("/textures/0/path".to_owned())
-    );
-    assert_eq!(normalize_msys_drive_git_selector("/textures"), None);
+fn shape_mismatched_json_pointer_token_is_a_non_match() {
+    let row = json!({"v": [9]});
+    assert_eq!(json_pointer_lookup(&row, "/v/x").unwrap(), None);
 }

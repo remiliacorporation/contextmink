@@ -586,11 +586,8 @@ fn file_is_included(
             return false;
         }
     }
-    if !path_terms.is_empty() {
-        let displayed_path = normalize_path(path);
-        if !path_terms.iter().all(|term| displayed_path.contains(term)) {
-            return false;
-        }
+    if !path_terms.is_empty() && !path_terms.iter().all(|term| scan_path.contains(term)) {
+        return false;
     }
     if !extension_matcher.is_empty() {
         let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {

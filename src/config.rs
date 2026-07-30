@@ -67,7 +67,7 @@ pub(crate) fn load_context_config(
                 .with_context(|| format!("failed to read config {}", path.display()))?;
             raw = parse_config(&text)
                 .with_context(|| format!("failed to parse {}", path.display()))?;
-            policy_root = path.parent().and_then(canonical_normalized);
+            policy_root = Some(selected_config_policy_root(path)?);
         }
     }
     let mut builder = GlobSetBuilder::new();
@@ -93,6 +93,20 @@ pub(crate) fn load_context_config(
                 .unwrap_or_default(),
             delete_fragments: raw.destructive_guard_delete_fragments.unwrap_or_default(),
         },
+    })
+}
+
+fn selected_config_policy_root(path: &Path) -> Result<String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    canonical_normalized(parent).ok_or_else(|| {
+        anyhow!(
+            "failed to resolve policy root {} for selected config {}",
+            parent.display(),
+            path.display()
+        )
     })
 }
 

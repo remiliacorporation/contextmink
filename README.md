@@ -203,7 +203,9 @@ below is the short map.
   starts, `--pattern <regex>` covers anything else, `--contains` filters
   rows.
 - `slice` — bounded line window from one file: `--range START:END`,
-  `--tail N`, or a character window for very long single-line files.
+  `--tail N`, or `--char-start OFFSET --chars COUNT` for a complete requested
+  character window from a very long single-line file. Line-mode and
+  character-mode flags are mutually exclusive rather than silently ignored.
   Defaults to a 120-line window with a 220-line ceiling; receipts report
   `encoding` and `total_lines`.
 - `json-find` — locate JSON values by key, path, or summarized value.
@@ -213,6 +215,8 @@ below is the short map.
   row keys with presence counts and value types for one-call shape
   discovery; `*.jsonl` streams without loading; fields null in every
   scanned row are flagged in `all_null_fields`.
+  Selector arguments are data and are never rewritten heuristically; use the
+  canonical launcher or native bridge at an MSYS boundary.
 - `sqlite` — read-only query against the positional DB file from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
@@ -223,7 +227,8 @@ below is the short map.
   explicit `--replace-managed` release upgrades.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument.
-- `capture` — execute argv and print stdout/stderr within one combined line
+- `capture` — execute non-interactive argv with child stdin closed and print
+  stdout/stderr within one combined line
   budget and a per-stream byte budget, with the exit status. Truncation keeps
   both head and tail, since verdicts sit at
   the end of tool output. Terminating `capture` also reaps the command and its
@@ -315,7 +320,10 @@ files skipped as too large or binary. Capture receipts record the child's
 exit code or zero-code fact). After emitting the receipt, contextmink propagates every child status
 not declared by `--expect-exit`; a failed child therefore cannot become a
 successful outer workflow. Use `--receipt-out <file>` to write the full capture
-receipt, including the same bounded stdout/stderr text emitted in JSON mode.
+  receipt, including the same bounded stdout/stderr text emitted in JSON mode.
+  If the sidecar cannot be written, the stdout receipt is still emitted. An
+  unexpected child status remains the outer exit status even when strict
+  truncation also fails.
 
 ## Behavior notes
 
@@ -341,8 +349,11 @@ receipt, including the same bounded stdout/stderr text emitted in JSON mode.
   PowerShell denial are always active, independent of repository cwd;
   configured protected-path fragments apply only inside their owning project.
   Finite wrappers such as `env -S`, PowerShell encoded-command flags, and
-  `find -delete`/`-exec` are parsed, but arbitrary indirection can always move
-  behavior outside a static command-string evaluator.
+  `find -delete`/`-exec` and an invoked `git -c alias.<name>=... <name>` are
+  parsed. Shell-variable expansion, sourced scripts, repository-configured Git
+  aliases, and brace-generated command spellings beyond the bounded static
+  expansion remain outside this evaluator; arbitrary indirection can always
+  move behavior beyond a command-string tripwire.
 - `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
   it reads the hook event JSON from stdin, extracts the command string at
   `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
@@ -357,7 +368,8 @@ receipt, including the same bounded stdout/stderr text emitted in JSON mode.
   note instead of applying foreign config. Raw backslash
   paths such as `F:\repo\tools\contextmink.exe` are wrong inside a Bash hook:
   Bash treats the backslashes as escapes and tries to execute a collapsed path.
-  Unparseable payloads allow with a stderr note: the guard blocks recognized
+  A discovered or explicit policy that cannot be loaded fails closed with exit
+  2. Unparseable hook-event payloads allow with a stderr note: the guard blocks recognized
   destructive commands, it does not validate harness payloads (fail-closed
   payload handling turns any schema drift into a total shell outage).
 - Broad scans cross nested Git repository roots by default, including tracked

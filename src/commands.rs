@@ -875,7 +875,7 @@ pub(crate) fn command_slice(
                 "slice --char-start cannot be combined with --range or --tail"
             ));
         }
-        return command_slice_chars(cli, config, file, char_start, chars, max_line_chars);
+        return command_slice_chars(cli, config, file, char_start, chars);
     }
     let request = if let Some(tail) = tail {
         if range.is_some() || start != 1 || end.is_some() {
@@ -1023,7 +1023,6 @@ fn command_slice_chars(
     file: &Path,
     char_start: usize,
     chars: usize,
-    _max_line_chars: usize,
 ) -> Result<()> {
     if chars == 0 {
         return Err(anyhow!("slice --chars must be greater than zero"));
@@ -1037,15 +1036,11 @@ fn command_slice_chars(
         .take(chars)
         .collect::<String>();
     let shown = shown_text.chars().count();
-    let output_truncated = char_start.saturating_add(shown) < total_chars;
     let mut receipt = Receipt::new(
         "slice",
         config.profile.as_deref(),
         ReceiptResult::new("chars", total_chars, false, shown),
     );
-    if output_truncated {
-        receipt.add_cap(ReceiptCap::output("chars", Some(chars)));
-    }
     receipt.insert("path", json!(display_path(file)));
     receipt.insert("mode", json!("chars"));
     receipt.insert("encoding", json!(encoding));
