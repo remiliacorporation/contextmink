@@ -14,6 +14,8 @@ const MSYS2_ARG_CONV_EXCL_ENV: &str = "MSYS2_ARG_CONV_EXCL";
 // MSYS expands `@file` response arguments before Bash starts, which corrupts
 // structured argv intended for the child. Decode hex only after Bash is live.
 const BASH_ARGV_RELAY: &str = r#"set -euo pipefail
+execution_mode=$1
+shift
 decode_hex() {
     local hex=$1 out= byte
     while [[ -n $hex ]]; do
@@ -31,6 +33,9 @@ for encoded in "$@"; do
     decode_hex "$encoded"
     args+=("$REPLY")
 done
+if [[ $execution_mode == script ]]; then
+    exec "$BASH" "$program" "${args[@]}"
+fi
 exec "$program" "${args[@]}""#;
 
 pub(crate) struct PreparedCommand {
@@ -92,7 +97,7 @@ pub(crate) fn prepare_command(
         if login {
             command.arg("--login");
         }
-        append_bash_argv_relay(&mut command, &logical_argv);
+        append_bash_argv_relay(&mut command, &logical_argv, explicit_script);
 
         let mut effective_argv = Vec::with_capacity(logical_argv.len() + 1);
         effective_argv.push(bash.to_string_lossy().into_owned());
@@ -130,11 +135,12 @@ fn file_has_shebang(path: &Path) -> Result<bool, String> {
     Ok(bytes == prefix.len() && prefix == *b"#!")
 }
 
-fn append_bash_argv_relay(command: &mut Command, argv: &[String]) {
+fn append_bash_argv_relay(command: &mut Command, argv: &[String], explicit_script: bool) {
     command
         .arg("-c")
         .arg(BASH_ARGV_RELAY)
-        .arg("contextmink-process-boundary");
+        .arg("contextmink-process-boundary")
+        .arg(if explicit_script { "script" } else { "command" });
     command.args(argv.iter().map(|arg| hex_encode_arg(arg)));
 }
 

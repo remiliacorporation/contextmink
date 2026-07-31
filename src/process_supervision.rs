@@ -2,7 +2,9 @@ use std::process::{Child, Command};
 
 #[cfg(unix)]
 use anyhow::Context as _;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+#[cfg(windows)]
+use anyhow::anyhow;
 
 #[cfg(unix)]
 pub(crate) fn configure(command: &mut Command) {

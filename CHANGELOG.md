@@ -35,6 +35,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- Made explicit bridge and capture `--script` mode invoke the selected Bash interpreter instead of requiring the script file itself to be executable, matching the documented no-shebang contract on Linux and macOS as well as Windows.
 - Decoded contiguous capture head/tail byte segments as one stream, preserving seam-crossing lines and UTF-8 code points; capture now asserts every omitted line has a declared byte or line boundary.
 - Kept the stdout capture receipt available when `--receipt-out` fails, made unexpected child status take precedence over strict truncation, and closed child stdin to keep capture non-interactive.
 - Made heterogeneous JSON Pointer shape mismatches null non-matches instead of panics, and stopped heuristically rewriting literal selector data that happens to contain `/Git/`.
