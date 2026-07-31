@@ -755,10 +755,10 @@ fn file_identity(path: &Path) -> Result<FileIdentity> {
         use std::os::unix::fs::MetadataExt as _;
         let metadata =
             fs::metadata(path).with_context(|| format!("failed to identify {}", path.display()))?;
-        return Ok(FileIdentity::Unix {
+        Ok(FileIdentity::Unix {
             device: metadata.dev(),
             inode: metadata.ino(),
-        });
+        })
     }
     #[cfg(windows)]
     {
