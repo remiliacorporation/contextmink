@@ -517,7 +517,7 @@ pub(crate) enum Command {
         )]
         max_document_bytes: u64,
     },
-    /// Run a read-only SQLite query with bounded row output.
+    /// Run a read-only `SQLite` query with bounded row output.
     Sqlite {
         #[arg(value_name = "DB", help = "SQLite database file")]
         path: PathBuf,
@@ -568,7 +568,7 @@ pub(crate) enum Command {
         )]
         max_value_chars: usize,
     },
-    /// Summarize SQLite tables, columns, indexes, and foreign keys.
+    /// Summarize `SQLite` tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
     SqliteSchema {
         #[arg(value_name = "DB", help = "SQLite database file")]
@@ -677,7 +677,7 @@ pub(crate) enum Command {
         )]
         argv: Vec<String>,
     },
-    /// Evaluate an agent PreToolUse hook payload (JSON on stdin) against the
+    /// Evaluate an agent `PreToolUse` hook payload (JSON on stdin) against the
     /// destructive-command guard; exit 2 blocks the tool call.
     HookGuard {
         #[arg(

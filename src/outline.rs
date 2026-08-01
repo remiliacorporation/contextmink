@@ -1386,7 +1386,7 @@ fn json_declaration(line: &str) -> bool {
 
 /// Element-nesting budget for "shallow" unnamed XML containers: the root and
 /// its first two levels map document sections (`<page>`/`<revision>` in
-/// MediaWiki exports, `<PropertyGroup>` in MSBuild) regardless of indent
+/// `MediaWiki` exports, `<PropertyGroup>` in `MSBuild`) regardless of indent
 /// style or minification.
 const XML_SHALLOW_ELEMENT_DEPTH: usize = 2;
 
@@ -1573,7 +1573,7 @@ fn xml_has_name_or_id_attribute(rest: &str) -> bool {
     false
 }
 
-/// MediaWiki section headings: `= Title =` through `====== Title ======`,
+/// `MediaWiki` section headings: `= Title =` through `====== Title ======`,
 /// requiring the closing equals run and non-empty title text.
 fn wikitext_declaration(line: &str) -> bool {
     let trimmed = line.trim_end();

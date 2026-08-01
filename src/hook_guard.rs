@@ -1,4 +1,4 @@
-//! Agent-harness PreToolUse hook adapter over the destructive-command scan.
+//! Agent-harness `PreToolUse` hook adapter over the destructive-command scan.
 //!
 //! Reads one hook event JSON object from stdin (the shape Claude Code and
 //! compatible harnesses emit: `{"tool_input": {"command": "..."}}`), extracts

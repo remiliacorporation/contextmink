@@ -1,5 +1,6 @@
 /target/
 /dist/
+/state/
 /bin/contextmink
 /bin/contextmink.exe
 /bin/contextmink-bridge
