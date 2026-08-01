@@ -67,7 +67,7 @@ struct SqliteFileParam {
     path: PathBuf,
     format: &'static str,
     value: String,
-    /// Top-level value count when the bound document is an array (json_each
+    /// Top-level value count when the bound document is an array (`json_each`
     /// row cardinality); None for a non-array JSON document.
     values: Option<usize>,
     source_bytes: u64,
@@ -983,7 +983,7 @@ fn open_sqlite_readonly(db: &Path) -> Result<Connection> {
 }
 
 /// `hexint(x)`: parse a `0x`-prefixed hex string (or a plain decimal digit
-/// string) to INTEGER; integers pass through, NULL stays NULL. SQLite's own
+/// string) to INTEGER; integers pass through, NULL stays NULL. `SQLite`'s own
 /// CAST cannot parse hex, and inspection data often carries address-like
 /// identifiers as `0x...` strings while tables store integer columns. This
 /// bridges the two inside an indexed join instead of forcing scratch
