@@ -183,8 +183,7 @@ pub(crate) fn command_capture(
     receipt.insert("child_exit_zero", json!(status.success()));
     let exit_expected = status
         .code()
-        .map(|code| expected_exit_codes.contains(&code))
-        .unwrap_or(false);
+        .is_some_and(|code| expected_exit_codes.contains(&code));
     receipt.insert(
         "expected_exit_codes",
         json!(expected_exit_codes.iter().copied().collect::<Vec<_>>()),
@@ -234,8 +233,7 @@ pub(crate) fn command_capture(
         clamp_text(&format!("{argv:?}"), 500),
         status
             .code()
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "null".to_string()),
+            .map_or_else(|| "null".to_string(), |code| code.to_string()),
         status.success(),
         duration_ms
     )?;

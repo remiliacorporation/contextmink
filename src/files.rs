@@ -160,7 +160,7 @@ impl PolicyMapper {
     fn scan_path(&self, path: &Path) -> String {
         let relative = path.strip_prefix(&self.scan_root).unwrap_or(path);
         let selected = if relative.as_os_str().is_empty() && self.root_is_file {
-            path.file_name().map(Path::new).unwrap_or(path)
+            path.file_name().map_or(path, Path::new)
         } else {
             relative
         };

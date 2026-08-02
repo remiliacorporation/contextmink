@@ -868,8 +868,7 @@ fn deny_invoked_inline_git_alias(
         }
         let payload = value
             .strip_prefix('!')
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("git {value}"));
+            .map_or_else(|| format!("git {value}"), str::to_owned);
         if let Some(message) = deny_shell_payload(
             &payload,
             config,

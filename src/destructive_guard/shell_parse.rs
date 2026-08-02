@@ -428,7 +428,7 @@ fn brace_sequence_alternatives(body: &str) -> Result<Option<Vec<String>>, ()> {
             Some(width) if value < 0 => {
                 format!("-{:0width$}", value.unsigned_abs(), width = width)
             }
-            Some(width) => format!("{value:0width$}", width = width),
+            Some(width) => format!("{value:0width$}"),
             None => value.to_string(),
         })
         .map(Some);

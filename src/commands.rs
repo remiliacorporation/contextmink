@@ -963,8 +963,7 @@ pub(crate) fn command_slice(
     let shown = rendered.len();
     let displayed_end = rendered
         .back()
-        .map(|(number, _)| *number)
-        .unwrap_or_else(|| plan.start.saturating_sub(1));
+        .map_or_else(|| plan.start.saturating_sub(1), |(number, _)| *number);
     let mut receipt = Receipt::new(
         "slice",
         config.profile.as_deref(),
@@ -1051,7 +1050,7 @@ fn command_slice_chars(
         return emit_json_checked(cli, receipt);
     }
     let mut stdout = io::stdout();
-    write!(stdout, "{}", shown_text)?;
+    write!(stdout, "{shown_text}")?;
     if !shown_text.ends_with('\n') {
         writeln!(stdout)?;
     }

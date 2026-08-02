@@ -332,10 +332,7 @@ fn spawn_error(program: &str, execution_mode: &str, error: std::io::Error) -> Br
     };
     fail(
         code,
-        format!(
-            "failed to spawn {program:?} in {} mode: {error}{hint}",
-            execution_mode
-        ),
+        format!("failed to spawn {program:?} in {execution_mode} mode: {error}{hint}"),
     )
 }
 

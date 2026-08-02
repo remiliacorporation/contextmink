@@ -160,8 +160,7 @@ pub(crate) fn scan_files_ordered(
         return Ok((Vec::new(), 0));
     }
     let workers = thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1)
+        .map_or(1, |value| value.get())
         .min(MAX_WORKERS)
         .min(total.div_ceil(CHUNK_SIZE));
     if workers <= 1 {

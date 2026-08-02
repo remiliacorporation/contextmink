@@ -1491,8 +1491,7 @@ fn xml_skip_non_element(rest: &str) -> Option<usize> {
             return Some(
                 after
                     .find(close)
-                    .map(|pos| open.len() + pos + close.len())
-                    .unwrap_or(rest.len()),
+                    .map_or(rest.len(), |pos| open.len() + pos + close.len()),
             );
         }
     }
