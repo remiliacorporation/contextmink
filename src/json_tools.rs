@@ -452,9 +452,10 @@ pub(crate) fn command_json_select(
             }
             let mut parts = Vec::with_capacity(fields.len());
             for field in &fields {
-                let summary = json_select_field(row, field.as_str())?
-                    .map(|value| value_summary(value, max_value_chars).text)
-                    .unwrap_or_else(|| "null".to_owned());
+                let summary = json_select_field(row, field.as_str())?.map_or_else(
+                    || "null".to_owned(),
+                    |value| value_summary(value, max_value_chars).text,
+                );
                 parts.push(format!("{field}={summary}"));
             }
             writeln!(stdout, "{index}: {}", parts.join(" "))?;
@@ -670,9 +671,10 @@ fn json_select_row(
     }
     let mut output_fields = serde_json::Map::new();
     for field in fields {
-        let summary = json_select_field(row, field.as_str())?
-            .map(|value| value_summary(value, max_value_chars).text)
-            .unwrap_or_else(|| "null".to_owned());
+        let summary = json_select_field(row, field.as_str())?.map_or_else(
+            || "null".to_owned(),
+            |value| value_summary(value, max_value_chars).text,
+        );
         output_fields.insert(field.clone(), json!(summary));
     }
     Ok(json!({

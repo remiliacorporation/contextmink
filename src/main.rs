@@ -500,8 +500,7 @@ fn run_application() -> Result<()> {
                     "decision={outcome} input_kind={input_kind} shell={} executed=false",
                     command
                         .as_ref()
-                        .map(|_| shell.unwrap_or(ShellDialect::Posix).cli_name())
-                        .unwrap_or("argv")
+                        .map_or("argv", |_| shell.unwrap_or(ShellDialect::Posix).cli_name())
                 )?;
                 if let Some(message) = report["message"].as_str() {
                     writeln!(stdout, "{message}")?;

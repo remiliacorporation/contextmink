@@ -20,10 +20,9 @@ pub(crate) fn mark_command_start() {
 }
 
 fn elapsed_ms() -> u64 {
-    COMMAND_START
-        .get()
-        .map(|start| start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
+    COMMAND_START.get().map_or(0, |start| {
+        start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+    })
 }
 
 pub(crate) fn clamp_text(value: &str, max_chars: usize) -> String {
