@@ -1,4 +1,4 @@
-# Papertiger operating contract
+# Papertiger project reference
 
 Papertiger is optional. Use it for work that crosses sessions or where
 dependencies, external blockers, decisions, probes, or proof obligations make
@@ -37,6 +37,9 @@ accidentally split ordinary planning across multiple authorities.
   their matching release, a temporary authority migration, and current-format
   re-export before import.
 - `export` is transfer and recovery, not a second live authority.
+  `export --output <path>` writes a canonical UTF-8 recovery file atomically
+  and prints a digest/count receipt; replacing an existing file requires
+  `--replace`.
 
 Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own
@@ -50,6 +53,7 @@ the agent harness:
 ```bash
 scripts/papertiger status
 scripts/papertiger focus --json
+scripts/papertiger search "<terms>" --json
 scripts/papertiger show <task.seq> --json
 scripts/papertiger audit
 ```
@@ -57,6 +61,7 @@ scripts/papertiger audit
 ```powershell
 .\scripts\papertiger.cmd status
 .\scripts\papertiger.cmd focus --json
+.\scripts\papertiger.cmd search "<terms>" --json
 .\scripts\papertiger.cmd show <task.seq> --json
 .\scripts\papertiger.cmd audit
 ```
@@ -74,7 +79,9 @@ flows outward.
 
 ## Mutations
 
-Set `PAPERTIGER_ACTOR` to the acting agent name before mutating. Write `--why`
+Set `PAPERTIGER_ACTOR` to a concise human-readable author label before
+mutating. It records who wrote each event; it is historical provenance, never
+an assignee, claim, lease, session handle, or liveness signal. Write `--why`
 for anything a future session could question, using language that stands alone
 without chat context.
 
@@ -94,11 +101,23 @@ scripts/papertiger gate close <task.seq> <name> \
 scripts/papertiger done <task.seq>
 ```
 
-`show --json` reports event-derived lifecycle timestamps. `started_at` is set
-only while the task is currently in progress, and `completed_at` only while it
-is currently done; event history retains earlier transitions. Use
-`list --sort activity` when recency is the useful orientation; do not interpret
-timestamps as duration, productivity, or submission data.
+`show --json` reports event-derived activity. `started_event` exists only while
+the task is currently in progress, and `completed_event` only while it is
+currently done. Their actor fields identify the transition author, not who
+should work next. `last_event` records the latest task, dependency, or gate
+event. Use `list --sort activity` when recency is useful; do not interpret
+event times as duration, productivity, or submission data.
+
+`log --json` returns full event identity and an `event-v1` cursor bound to the
+exact history prefix. Use `--after-cursor` for new events and
+`--before-cursor` for older pages. A cursor from divergent history refuses
+instead of silently reading the wrong timeline.
+
+`search` analyzes literal words across title, intent, result, tags, and event
+rationale, requires every term somewhere in the task record, and ranks exact
+phrases plus high-value fields deterministically. It searches done, retired,
+and rejected history by default. Use `--plan`, `--status`, or `--limit` to
+narrow it; there is no query language, external index, or semantic inference.
 
 When local archaeology benefits from a reverse link after creating a Git
 snapshot, resolve the full commit object ID in the owning repository and record
@@ -124,15 +143,18 @@ open dependencies, blockers, gates, or children; close or waive them with
 evidence and reasons rather than routing around the refusal. Check
 `list --status rejected` before reviving an old approach.
 
-When measured overlap or duplication has one canonical owner in the same plan,
+When measured overlap or duplication has one canonical task in the same plan,
 use `retire <old> --into <canonical> --why ...`. `show` remains on the retired
 task and renders the replacement; it never redirects silently. Rejection stays
 separate and accepts no replacement. A task with inbound replacements can only
 be retired into another live canonical task; rejection or bare retirement
 refuses rather than leaving a replacement chain that ends in dead work.
 
-Do not create Papertiger tasks for same-session checklist steps or leave tasks
-`in_progress` when no agent owns them.
+Do not create Papertiger tasks for same-session checklist steps. `in_progress`
+means work began and remains unfinished; it deliberately survives a dead or
+replaced session and needs no reassignment. A fresh agent reads the task and
+continues it directly. Add a task note only when handoff context beyond the
+stored intent, result, gates, and history is genuinely useful.
 
 ## Project-local installation
 
@@ -148,9 +170,13 @@ Do not create Papertiger tasks for same-session checklist steps or leave tasks
 - `.claude/skills/papertiger/SKILL.md`
 - additive Papertiger entries in `.gitignore`
 
-During a reviewed pre-receipt cutover, setup may also remove a recognized
-obsolete `tools/papertiger/README.md`; it never creates that path. Later retired
-paths require an exact prior receipt hash.
+During a pre-receipt cutover, setup recognizes the prior vendor README only as
+a predecessor receipt whose recorded SHA-256 values exactly match the old
+direct binary, agent contract, and Mise contract. It may then replace the
+contract and remove `tools/papertiger/README.md`,
+`tools/papertiger/papertiger.exe`, and `tools/papertiger/MISE.md`. A changed
+bundle, unrecognized README, or full source tree refuses even with
+`--replace-managed`. Later retired paths require an exact prior receipt hash.
 
 Commit `scripts/papertiger` with executable mode. On a host filesystem that
 does not preserve that bit, run `git update-index --chmod=+x
