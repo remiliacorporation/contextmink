@@ -1,6 +1,6 @@
 {
   "schema": "papertiger.project_install.v1",
-  "papertiger_version": "0.7.0",
+  "papertiger_version": "0.7.1",
   "authority_path": "state/papertiger.sqlite",
   "managed_files": [
     {
