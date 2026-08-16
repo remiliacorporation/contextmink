@@ -62,8 +62,9 @@ fn usage() -> String {
      \x20                 caller-side .contextmink.toml/.git root, then the\n\
      \x20                 bridge binary's policy/repository root, else the\n\
      \x20                 current directory).\n\
-     \x20 --login         Run the command through a Git Bash login shell\n\
-     \x20                 (argv-safe; no command text is shell-reparsed).\n\
+     \x20 --login         Run the command through a Git Bash login shell,\n\
+     \x20                 including utilities supplied by its PATH (argv-safe;\n\
+     \x20                 no command text is shell-reparsed).\n\
      \x20 --preserve-descendants\n\
      \x20                 Do not place the child in the Windows kill-on-close\n\
      \x20                 supervision job. Use only when a successful command\n\
@@ -82,7 +83,8 @@ fn usage() -> String {
      \n\
      Direct argv modes spawn natively (no MSYS argument rewriting). A program\n\
      spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
-     names use PATH; shebang scripts enter Git Bash deterministically.\n\
+     names use the native PATH; use --login for Git Bash PATH utilities;\n\
+     shebang scripts enter Git Bash deterministically.\n\
      Use --script for an intentional Bash script without a shebang.\n\
      \n\
      Destructive-command deny-list: argv matching `git clean` is refused\n\
