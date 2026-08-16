@@ -6,8 +6,15 @@ use super::process_boundary::{
 };
 use super::{
     DUMP_WARN_BYTES, DUMP_WARN_LINES, assemble_argv, decode_base64, reader_exceeds_line_limit,
-    sed_window_span,
+    sed_window_span, usage,
 };
+
+#[test]
+fn usage_distinguishes_native_and_git_bash_path_lookup() {
+    let text = usage();
+    assert!(text.contains("names use the native PATH"));
+    assert!(text.contains("use --login for Git Bash PATH utilities"));
+}
 
 fn encode_base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

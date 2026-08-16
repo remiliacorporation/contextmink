@@ -305,7 +305,10 @@ mode a path-like program (`./gradlew`, `bin/tool`) resolves against `--cwd`,
 matching POSIX exec semantics. A file whose first line begins `#!` enters Git
 Bash deterministically; a Bash script without a shebang requires
 explicit `--script`, whose path resolves from the bridge root instead of
-`--cwd`. Bare names (`git`) use PATH. Destructive argv matching the safety
+`--cwd`. Bare names in direct mode use the native Windows `PATH`; use
+`--login` for utilities supplied by Git Bash (for example,
+`contextmink-bridge.exe --login -- perl --version`) instead of hardcoding a
+Git installation path. Destructive argv matching the safety
 deny-list is refused before spawn; `contextmink-bridge --help` prints the
 current deny-list and break-glass override.
 
