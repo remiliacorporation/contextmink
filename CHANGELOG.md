@@ -28,7 +28,7 @@ The release workflow extracts the section for the requested version and fails if
 - Made a missing bridge `--script` refusal name the project-root resolution rule, its independence from `--cwd`, and both safe path corrections.
 - Canonicalized `grep` on `--pattern PATTERN [PATH]...` or `--pattern-file FILE [PATH]...`, removed duplicate path and slice spellings, and made common noncanonical guesses name the exact replacement.
 - Scoped repository-owned exclude globs to their config tree during parent or foreign-root scans while retaining built-in build/dependency exclusions across every explicit root.
-- Made the Zig rehearsal deny cross-target Rust warnings while isolating the environment-owned linker diagnostic emitted by non-native SDK discovery and Zig compatibility handling.
+- Made the Zig rehearsal deny cross-target crate warnings, accept only the exact environment-owned Apple SDK probe on non-native hosts, and fail on every other warning header.
 
 ## [0.8.0] - 2026-07-31
 
