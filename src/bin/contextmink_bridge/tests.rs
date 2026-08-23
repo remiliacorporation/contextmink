@@ -87,7 +87,7 @@ fn temp_tree(name: &str) -> PathBuf {
 #[cfg(windows)]
 fn bridge_accepts_explicit_descendant_preservation_before_command_form() {
     let root = temp_tree("preserve-descendants");
-    let exit_code = super::run_with_root(
+    let exit_code = super::run_bridge_from_root(
         vec![
             "--preserve-descendants".to_owned(),
             "--print-argv".to_owned(),
@@ -104,7 +104,7 @@ fn bridge_accepts_explicit_descendant_preservation_before_command_form() {
 #[test]
 #[cfg(not(windows))]
 fn bridge_rejects_descendant_preservation_outside_windows() {
-    let error = super::run_with_root(
+    let error = super::run_bridge_from_root(
         vec![
             "--preserve-descendants".to_owned(),
             "--".to_owned(),
@@ -277,7 +277,7 @@ fn dump_warning_line_probe_is_bounded_and_handles_trailing_newlines() {
 fn direct_mode_runs_relative_extensionless_script_under_cwd() {
     let root = temp_tree("cwd-script");
     fs::write(root.join("probe"), "#!/bin/sh\nexit 42\n").unwrap();
-    let code = super::run(vec![
+    let code = super::run_bridge(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--".to_owned(),
@@ -292,7 +292,7 @@ fn direct_mode_runs_relative_extensionless_script_under_cwd() {
 fn direct_mode_refuses_non_native_text_without_shebang() {
     let root = temp_tree("cwd-non-script");
     fs::write(root.join("probe"), "exit 0\n").unwrap();
-    let error = super::run(vec![
+    let error = super::run_bridge(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--".to_owned(),
@@ -309,7 +309,7 @@ fn direct_mode_refuses_non_native_text_without_shebang() {
 #[test]
 fn run_blocks_git_clean_argv_before_spawn() {
     let root = temp_tree("deny-direct");
-    let error = super::run(vec![
+    let error = super::run_bridge(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--".to_owned(),
@@ -344,7 +344,7 @@ fn run_blocks_destructive_argv_from_argfile_form() {
         "bash\n-lc\ncd generated_output && git clean -fdX\n",
     )
     .unwrap();
-    let error = super::run(vec![
+    let error = super::run_bridge(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--argfile".to_owned(),
@@ -367,7 +367,7 @@ fn run_allows_command_words_as_script_arguments() {
     let root = temp_tree("deny-script");
     let script = root.join("probe.sh");
     fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-    let exit_code = super::run(vec![
+    let exit_code = super::run_bridge(vec![
         "--cwd".to_owned(),
         root.to_string_lossy().into_owned(),
         "--script".to_owned(),
@@ -390,7 +390,7 @@ fn run_keeps_protected_path_words_local_to_the_script_command() {
     .unwrap();
     let script = root.join("probe.sh");
     fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-    let exit_code = super::run_with_root(
+    let exit_code = super::run_bridge_from_root(
         vec![
             "--cwd".to_owned(),
             root.to_string_lossy().into_owned(),

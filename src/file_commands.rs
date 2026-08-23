@@ -362,8 +362,7 @@ fn write_nested_repos_note(stdout: &mut impl Write, nested: &[String]) -> Result
 pub(crate) fn command_grep(
     cli: &Cli,
     config: &ContextConfig,
-    args: &[String],
-    explicit_paths: &[PathBuf],
+    paths: &[PathBuf],
     pattern_arg: Option<&str>,
     pattern_file: Option<&Path>,
     literal: bool,
@@ -376,22 +375,13 @@ pub(crate) fn command_grep(
     quiet: bool,
     caps: &GrepCaps,
 ) -> Result<()> {
-    let (pattern, effective_paths) = if pattern_arg.is_some() || pattern_file.is_some() {
-        let mut paths = string_args_to_paths(args);
-        paths.extend_from_slice(explicit_paths);
-        (None, paths_or_current_dir(&paths))
-    } else {
-        let Some((pattern, paths)) = args.split_first() else {
-            return Err(anyhow!(
-                "grep requires PATTERN, --pattern <pattern>, or --pattern-file <file>"
-            ));
-        };
-        let mut paths = string_args_to_paths(paths);
-        paths.extend_from_slice(explicit_paths);
-        (Some(pattern.as_str()), paths_or_current_dir(&paths))
-    };
-    let pattern =
-        collect_single_text_source("grep pattern", pattern.or(pattern_arg), pattern_file, true)?;
+    if pattern_arg.is_none() && pattern_file.is_none() {
+        return Err(anyhow!(
+            "grep requires one pattern source; use `--pattern <PATTERN>` or `--pattern-file <FILE>`, followed by optional positional paths"
+        ));
+    }
+    let effective_paths = paths_or_current_dir(paths);
+    let pattern = collect_single_text_source("grep pattern", pattern_arg, pattern_file, true)?;
     let matcher = TextMatcher::new(&pattern, literal, ignore_case)?;
     command_grep_with_matcher(
         cli,
@@ -407,10 +397,6 @@ pub(crate) fn command_grep(
         quiet,
         caps,
     )
-}
-
-fn string_args_to_paths(args: &[String]) -> Vec<PathBuf> {
-    args.iter().map(PathBuf::from).collect()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1,5 +1,15 @@
 use super::*;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+
+#[test]
+fn cli_guidance_subcommand_names_match_clap() {
+    let command = Cli::command();
+    let names = command
+        .get_subcommands()
+        .map(|command| command.get_name())
+        .collect::<Vec<_>>();
+    assert_eq!(names, cli::SUBCOMMAND_NAMES);
+}
 
 #[test]
 fn paths_default_to_workspace_root() {
@@ -22,9 +32,12 @@ fn grep_accepts_named_pattern_and_positional_paths() {
     .expect("parse grep --pattern");
 
     match cli.command {
-        Command::Grep { args, pattern, .. } => {
+        Command::Grep { paths, pattern, .. } => {
             assert_eq!(pattern.as_deref(), Some("implementation-query"));
-            assert_eq!(args, vec!["ghidramink/tools/ghidramink-core/src"]);
+            assert_eq!(
+                paths,
+                vec![PathBuf::from("ghidramink/tools/ghidramink-core/src")]
+            );
         }
         _ => panic!("expected grep command"),
     }
@@ -136,7 +149,18 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
         vec!["contextmink", "sqlite-schema", "--path", "sample.sqlite"],
         vec!["contextmink", "files", "--path", "src"],
         vec!["contextmink", "dirs", "--path", "src"],
+        vec!["contextmink", "grep", "needle", "."],
+        vec![
+            "contextmink",
+            "grep",
+            "--pattern",
+            "needle",
+            "--path",
+            "src",
+        ],
         vec!["contextmink", "grep-terms", "--term", "x", "--path", "src"],
+        vec!["contextmink", "slice", "sample.txt", "--start-line", "2"],
+        vec!["contextmink", "slice", "sample.txt", "--end-line", "3"],
         vec![
             "contextmink",
             "sqlite",
@@ -159,16 +183,8 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
 
 #[test]
 fn cli_accepts_current_forms() {
-    Cli::try_parse_from([
-        "contextmink",
-        "grep",
-        "needle",
-        "--path",
-        "src",
-        "--path",
-        "tests",
-    ])
-    .expect("parse intuitive grep path flags");
+    Cli::try_parse_from(["contextmink", "grep", "--pattern", "needle", "src", "tests"])
+        .expect("parse canonical grep form");
     Cli::try_parse_from([
         "contextmink",
         "grep-terms",

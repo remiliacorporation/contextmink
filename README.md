@@ -184,9 +184,9 @@ below is the short map.
   `--quiet` suppresses the path payload, sets `result.shown` to zero, and keeps
   exact totals and scope caps. Deliberate quiet suppression is not output
   truncation.
-- `grep` — bounded match summary for a regex or `--literal` pattern. Use
-  `--pattern PATTERN` when every positional argument should be a path, and
-  `--pattern-file` for shell-fragile regex. `--glob`/`--ext` narrow, `-i`,
+- `grep` — bounded match summary for a regex or `--literal` pattern. Supply
+  exactly one pattern source with `--pattern PATTERN` or `--pattern-file FILE`;
+  every positional argument is a search path. `--glob`/`--ext` narrow, `-i`,
   `--context N`, `--limit`, `--max-sample-lines`, `--max-matching-files`,
   `--max-content-files`, and optional deterministic `--max-content-bytes`.
   `--quiet` suppresses per-file match content and file lists, reports zero
@@ -282,7 +282,7 @@ scripts/contextmink dirs crates --depth 2 --limit 40
 scripts/contextmink files specs --ext json --limit 20
 scripts/contextmink files crates --path-contains render --path-contains tests --limit 20
 scripts/contextmink files vendor --with-git-ignored --limit 20
-scripts/contextmink grep render_chunk src --ext rs --context 2 --limit 8
+scripts/contextmink grep --pattern render_chunk src --ext rs --context 2 --limit 8
 scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
 scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
 scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --max-sample-lines 12

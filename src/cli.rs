@@ -1,8 +1,28 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 
 use crate::destructive_guard::ShellDialect;
+
+pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
+    "files",
+    "dirs",
+    "grep",
+    "grep-terms",
+    "slice",
+    "outline",
+    "json-find",
+    "json-select",
+    "sqlite",
+    "sqlite-schema",
+    "setup-project",
+    "capture",
+    "hook-guard",
+    "guard-check",
+    "hook-snippet",
+];
+
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub(crate) struct Cli {
@@ -23,6 +43,75 @@ pub(crate) struct Cli {
     pub(crate) no_config: bool,
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+pub(crate) fn parse_cli() -> Cli {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                ErrorKind::UnknownArgument
+                    | ErrorKind::MissingRequiredArgument
+                    | ErrorKind::ArgumentConflict
+            ) && let Some(guidance) = noncanonical_form_guidance(&args)
+            {
+                Cli::command()
+                    .error(ErrorKind::InvalidValue, guidance)
+                    .exit();
+            }
+            error.exit()
+        }
+    }
+}
+
+pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static str> {
+    let flag_present = |value: &str| {
+        args.iter().any(|arg| {
+            let arg = arg.to_string_lossy();
+            arg == value || arg.starts_with(&format!("{value}="))
+        })
+    };
+    let command = selected_subcommand(args)?;
+
+    if command == "grep" && flag_present("--path") {
+        return Some(
+            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`",
+        );
+    }
+    if command == "grep" && !flag_present("--pattern") && !flag_present("--pattern-file") {
+        return Some(
+            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...` or `--pattern-file <FILE> <PATH>...`",
+        );
+    }
+    if command == "slice" && flag_present("--start-line") {
+        return Some("slice uses `--start <LINE>`; replace `--start-line` with `--start`");
+    }
+    if command == "slice" && flag_present("--end-line") {
+        return Some("slice uses `--end <LINE>`; replace `--end-line` with `--end`");
+    }
+    if command == "outline" && flag_present("--max-items") {
+        return Some("outline uses `--limit <COUNT>`; replace `--max-items` with `--limit`");
+    }
+    None
+}
+
+fn selected_subcommand(args: &[OsString]) -> Option<&str> {
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].to_str()?;
+        match arg {
+            "--config" => index += 2,
+            "--json" | "--fail-if-truncated" | "--require-complete-scope" | "--no-config" => {
+                index += 1;
+            }
+            value if value.starts_with("--config=") => index += 1,
+            value if SUBCOMMAND_NAMES.contains(&value) => return Some(value),
+            _ => return None,
+        }
+    }
+    None
 }
 
 #[derive(Debug, Subcommand)]
@@ -119,29 +208,27 @@ pub(crate) enum Command {
     },
     /// Search text and report bounded file counts plus sample lines.
     ///
-    /// Without --pattern-file, the first positional is PATTERN and the rest are
-    /// paths. With --pattern-file, every positional is a path.
+    /// Supply the pattern with --pattern or --pattern-file. Every positional is
+    /// a search path; the current directory is used when none is supplied.
     Grep {
         #[arg(
-            value_name = "PATTERN_OR_PATH",
-            help = "PATTERN followed by optional PATHs, or only PATHs with --pattern-file"
-        )]
-        args: Vec<String>,
-        #[arg(
-            long = "path",
             value_name = "PATH",
-            help = "Search this path; repeat for multiple paths. This is equivalent to positional paths when --pattern or --pattern-file supplies the pattern"
+            help = "Files or directories to search; defaults to the current directory"
         )]
         paths: Vec<PathBuf>,
         #[arg(
             long = "pattern",
             value_name = "PATTERN",
-            help = "Regex or literal pattern to search for; with this flag, all positional values are paths"
+            required_unless_present = "pattern_file",
+            conflicts_with = "pattern_file",
+            help = "Regex or literal pattern to search for"
         )]
         pattern: Option<String>,
         #[arg(
             long = "pattern-file",
             value_name = "FILE",
+            required_unless_present = "pattern",
+            conflicts_with = "pattern",
             help = "Read the regex or literal pattern from a UTF-8 file"
         )]
         pattern_file: Option<PathBuf>,
@@ -346,18 +433,9 @@ pub(crate) enum Command {
         file: PathBuf,
         #[arg(long, help = "One-based inclusive line range START:END")]
         range: Option<String>,
-        #[arg(
-            long,
-            visible_alias = "start-line",
-            default_value_t = 1,
-            help = "First one-based line to print"
-        )]
+        #[arg(long, default_value_t = 1, help = "First one-based line to print")]
         start: usize,
-        #[arg(
-            long,
-            visible_alias = "end-line",
-            help = "Last one-based line to print"
-        )]
+        #[arg(long, help = "Last one-based line to print")]
         end: Option<usize>,
         #[arg(
             long,
