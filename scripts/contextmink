@@ -128,7 +128,7 @@ case "${OS:-}:$(uname -s 2>/dev/null || true)" in
       export CONTEXTMINK_BASH="$bash_path"
     fi
     # JSON Pointer selectors begin with '/', and regex/term/filter values can
-    # carry '/' or '//' anywhere; MSYS would otherwise rewrite the former as
+    # carry '/' or '//' anywhere; MSYS would otherwise rewrite a single slash as
     # Windows paths and collapse doubled slashes in the latter before the
     # native contextmink.exe sees them.
     conv_excl=()

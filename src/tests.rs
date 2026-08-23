@@ -44,8 +44,8 @@ fn grep_accepts_named_pattern_and_positional_paths() {
 }
 
 #[test]
-fn cli_rejects_removed_forms_and_duplicate_inputs() {
-    let rejected = vec![
+fn cli_rejects_noncanonical_forms_and_duplicate_inputs() {
+    let noncanonical = vec![
         vec!["contextmink", "--fail-on-truncated", "files"],
         vec!["contextmink", "--fail-on-truncate", "files"],
         vec!["contextmink", "--strict-complete", "files"],
@@ -173,10 +173,10 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
         vec!["contextmink", "run", "--", "echo", "ok"],
     ];
 
-    for argv in rejected {
+    for argv in noncanonical {
         assert!(
             Cli::try_parse_from(&argv).is_err(),
-            "removed CLI form unexpectedly parsed: {argv:?}"
+            "noncanonical CLI form unexpectedly parsed: {argv:?}"
         );
     }
 }

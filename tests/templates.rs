@@ -134,7 +134,7 @@ fn public_guidance_uses_current_cli_forms() {
             include_str!("../.github/workflows/release-artifacts.yml"),
         ),
     ];
-    let retired_examples = [
+    let noncanonical_examples = [
         "files --path ",
         "files --path`",
         "dirs --path",
@@ -151,10 +151,10 @@ fn public_guidance_uses_current_cli_forms() {
     ];
 
     for (name, contents) in surfaces {
-        for retired in retired_examples {
+        for noncanonical in noncanonical_examples {
             assert!(
-                !contents.contains(retired),
-                "{name} still documents retired CLI form {retired:?}"
+                !contents.contains(noncanonical),
+                "{name} documents noncanonical CLI form {noncanonical:?}"
             );
         }
     }
