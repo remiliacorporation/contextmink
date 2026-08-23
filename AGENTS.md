@@ -12,6 +12,7 @@ only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
 - **Project integration and release-managed files**: `docs/setup.md`.
+- **Human changelogs and release notes**: load the project changelog-writing skill.
 - **Capability triggers**: the dedicated section below; each trigger names its
   own operational authority.
 
@@ -63,8 +64,9 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 - `templates/AGENTS.contextmink.md` and
   `templates/CLAUDE.contextmink.md` are equivalent integration references.
 - `scripts/contextmink` and `templates/scripts/contextmink` stay byte-identical.
-- Setup-managed skills must remain thin discovery envelopes around the canonical
-  integration reference. Do not fork behavior by harness.
+- Give each setup-managed skill one canonical template and keep installed
+  harness copies byte-identical. Keep the Contextmink skill a thin discovery
+  envelope around the canonical integration reference.
 - When setup-managed surfaces change, update setup preflight, idempotence,
   replacement, release-package, and extracted-install tests in the same change.
 - The Windows bridge and `capture` share process-boundary and destructive-guard
