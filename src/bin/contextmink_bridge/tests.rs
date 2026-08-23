@@ -56,6 +56,19 @@ fn script_form_consumes_one_conventional_argument_separator() {
     assert_eq!(argv[1], "--");
 }
 
+#[test]
+fn missing_script_teaches_project_root_resolution() {
+    let root = temp_tree("missing-script-root");
+    let error =
+        assemble_argv("--script", vec!["scripts/missing.sh".to_owned()], &root).unwrap_err();
+
+    assert_eq!(error.code, super::EXIT_MISSING_PATH);
+    assert!(error.message.contains(&root.display().to_string()));
+    assert!(error.message.contains("project root"));
+    assert!(error.message.contains("not --cwd"));
+    assert!(error.message.contains("absolute script path"));
+}
+
 fn assemble_argv_b64(argv: &[&str]) -> Result<Vec<String>, String> {
     let token = encode_base64(argv.join("\0").as_bytes());
     assemble_argv("--argv-b64", vec![token], std::path::Path::new("."))
