@@ -212,6 +212,31 @@ fn release_workflow_verifies_extracted_project_integration() {
 }
 
 #[test]
+fn workflows_use_the_repository_toolchain_and_classify_prereleases() {
+    let toolchain = include_str!("../rust-toolchain.toml");
+    let ci = include_str!("../.github/workflows/ci.yml");
+    let release = include_str!("../.github/workflows/release-artifacts.yml");
+    let pinned = "1.97.1";
+
+    assert!(toolchain.contains(&format!("channel = \"{pinned}\"")));
+    assert!(ci.contains(&format!("dtolnay/rust-toolchain@{pinned}")));
+    assert!(release.contains(&format!("dtolnay/rust-toolchain@{pinned}")));
+    assert!(!ci.contains("dtolnay/rust-toolchain@stable"));
+    assert!(!release.contains("dtolnay/rust-toolchain@stable"));
+
+    for required in [
+        "if [[ \"${version}\" == *-* ]]",
+        "release_flags+=(--prerelease --latest=false)",
+        "\"${release_flags[@]}\"",
+    ] {
+        assert!(
+            release.contains(required),
+            "release workflow is missing prerelease proof {required:?}"
+        );
+    }
+}
+
+#[test]
 fn cross_check_rehearses_every_non_windows_release_target() {
     let workflow = include_str!("../.github/workflows/release-artifacts.yml");
     let cross_check = include_str!("../scripts/cross_check.sh");

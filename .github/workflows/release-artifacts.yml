@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       artifact_version:
-        description: "Release version, bare semver (example: 0.1.0)"
+        description: "Release version, bare semver (example: 0.9.0-rc.1)"
         required: true
         type: string
       create_release:
@@ -29,8 +29,8 @@ jobs:
             exit 1
           fi
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust 1.97.1
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
 
@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
@@ -510,9 +510,17 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
+          version="${{ steps.ver.outputs.version }}"
+          release_flags=()
+          if [[ "${version}" == *-* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
           gh release create "${{ steps.ver.outputs.tag }}" \
             --target "$GITHUB_SHA" \
             --title "contextmink ${{ steps.ver.outputs.version }}" \
             --notes-file release_body.md \
+            "${release_flags[@]}" \
             release-assets/*
