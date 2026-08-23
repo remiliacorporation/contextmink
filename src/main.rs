@@ -29,7 +29,9 @@ use anyhow::{Result, anyhow};
 use capture::command_capture;
 use cli::{Cli, Command, parse_cli};
 use config::load_context_config;
-use config::project_setup::{SetupActionKind, SetupProjectRequest, setup_project};
+use config::project_setup::{
+    SetupActionKind, SetupProjectRequest, UninstallProjectRequest, setup_project, uninstall_project,
+};
 use destructive_guard::{DenyDecision, ShellDialect, evaluate_argv};
 use file_commands::{
     GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
@@ -68,66 +70,90 @@ fn run_application() -> Result<()> {
     output::mark_command_start();
     let cli = parse_cli();
     validate_global_flags(&cli)?;
-    if let Command::SetupProject {
-        project_root,
-        dry_run,
-        replace_managed,
-    } = &cli.command
-    {
-        if cli.config.is_some()
-            || cli.no_config
-            || cli.fail_if_truncated
-            || cli.require_complete_scope
-        {
-            return Err(anyhow!(
-                "setup-project accepts only its own flags plus --json; receipt strictness and configuration-selection flags do not apply to installation"
-            ));
-        }
-        let result = setup_project(SetupProjectRequest {
+    match &cli.command {
+        Command::SetupProject {
             project_root,
-            source_binary: None,
-            dry_run: *dry_run,
-            replace_managed: *replace_managed,
-        })?;
-        let mut stdout = io::stdout();
-        if cli.json {
-            serde_json::to_writer(&mut stdout, &result)?;
-            writeln!(stdout)?;
-        } else {
-            writeln!(
-                stdout,
-                "[contextmink] setup-project root={} profile={} dry_run={}",
-                result.project_root, result.profile, result.dry_run
-            )?;
-            for action in &result.actions {
-                let verb = match action.action {
-                    SetupActionKind::Create => "create",
-                    SetupActionKind::Replace => "replace",
-                    SetupActionKind::Unchanged => "unchanged",
-                    SetupActionKind::PreserveRepositoryOwned => "preserve_repository_owned",
-                    SetupActionKind::MakeExecutable => "make_executable",
-                    SetupActionKind::UpdateGitignore => "update_gitignore",
-                };
-                writeln!(stdout, "{verb}\t{}", display_path(&action.path))?;
-            }
-            if !result.agent_guidance_files_found.is_empty() {
+            dry_run,
+            replace_managed,
+        } => {
+            reject_inspection_globals(&cli, "setup-project", "installation")?;
+            let result = setup_project(SetupProjectRequest {
+                project_root,
+                source_binary: None,
+                dry_run: *dry_run,
+                replace_managed: *replace_managed,
+            })?;
+            let mut stdout = io::stdout();
+            if cli.json {
+                serde_json::to_writer(&mut stdout, &result)?;
+                writeln!(stdout)?;
+            } else {
                 writeln!(
                     stdout,
-                    "agent_guidance_files_found={}",
-                    result
-                        .agent_guidance_files_found
-                        .iter()
-                        .map(|path| display_path(path))
-                        .collect::<Vec<_>>()
-                        .join(",")
+                    "[contextmink] setup-project root={} profile={} dry_run={} ready={}",
+                    result.project_root, result.profile, result.dry_run, result.ready
                 )?;
+                write_setup_actions(&mut stdout, &result.actions)?;
+                if !result.agent_guidance_files_found.is_empty() {
+                    writeln!(
+                        stdout,
+                        "agent_guidance_files_found={}",
+                        result
+                            .agent_guidance_files_found
+                            .iter()
+                            .map(|path| display_path(path))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )?;
+                }
+                writeln!(stdout, "next_actions:")?;
+                for action in &result.next_actions {
+                    writeln!(stdout, "- {action}")?;
+                }
             }
-            writeln!(stdout, "next_actions:")?;
-            for action in &result.next_actions {
-                writeln!(stdout, "- {action}")?;
-            }
+            return Ok(());
         }
-        return Ok(());
+        Command::UninstallProject {
+            project_root,
+            dry_run,
+        } => {
+            reject_inspection_globals(&cli, "uninstall-project", "removal")?;
+            let result = uninstall_project(UninstallProjectRequest {
+                project_root,
+                running_binary: None,
+                dry_run: *dry_run,
+            })?;
+            let mut stdout = io::stdout();
+            if cli.json {
+                serde_json::to_writer(&mut stdout, &result)?;
+                writeln!(stdout)?;
+            } else {
+                writeln!(
+                    stdout,
+                    "[contextmink] uninstall-project root={} dry_run={} ready={}",
+                    result.project_root, result.dry_run, result.ready
+                )?;
+                write_setup_actions(&mut stdout, &result.actions)?;
+                if !result.preserved_repository_owned.is_empty() {
+                    writeln!(
+                        stdout,
+                        "preserved_repository_owned={}",
+                        result
+                            .preserved_repository_owned
+                            .iter()
+                            .map(|path| display_path(path))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )?;
+                }
+                writeln!(stdout, "next_actions:")?;
+                for action in &result.next_actions {
+                    writeln!(stdout, "- {action}")?;
+                }
+            }
+            return Ok(());
+        }
+        _ => {}
     }
     let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
         Ok(config) => config,
@@ -140,7 +166,9 @@ fn run_application() -> Result<()> {
         Err(error) => return Err(error),
     };
     match &cli.command {
-        Command::SetupProject { .. } => unreachable!("setup-project returns before config loading"),
+        Command::SetupProject { .. } | Command::UninstallProject { .. } => {
+            unreachable!("project lifecycle commands return before config loading")
+        }
         Command::Files {
             paths,
             globs,
@@ -538,6 +566,45 @@ fn validate_global_flags(cli: &Cli) -> Result<()> {
         return Err(anyhow!(
             "hook-guard uses the agent hook protocol; --json does not apply"
         ));
+    }
+    Ok(())
+}
+
+fn reject_inspection_globals(cli: &Cli, command: &str, operation: &str) -> Result<()> {
+    if cli.config.is_some() || cli.no_config || cli.fail_if_truncated || cli.require_complete_scope
+    {
+        return Err(anyhow!(
+            "{command} accepts only its own flags plus --json; receipt strictness and configuration-selection flags do not apply to {operation}"
+        ));
+    }
+    Ok(())
+}
+
+fn write_setup_actions(
+    stdout: &mut impl Write,
+    actions: &[config::project_setup::SetupAction],
+) -> Result<()> {
+    for action in actions {
+        let verb = match action.action {
+            SetupActionKind::Create => "create",
+            SetupActionKind::Replace => "replace",
+            SetupActionKind::Unchanged => "unchanged",
+            SetupActionKind::PreserveRepositoryOwned => "preserve_repository_owned",
+            SetupActionKind::MakeExecutable => "make_executable",
+            SetupActionKind::UpdateGitignore => "update_gitignore",
+            SetupActionKind::RemoveManaged => "remove_managed",
+            SetupActionKind::RemoveRetired => "remove_retired",
+            SetupActionKind::ModifiedRefusal => "modified_refusal",
+        };
+        if action.requires_replace_managed {
+            writeln!(
+                stdout,
+                "{verb}\t{}\trequires=--replace-managed",
+                display_path(&action.path)
+            )?;
+        } else {
+            writeln!(stdout, "{verb}\t{}", display_path(&action.path))?;
+        }
     }
     Ok(())
 }

@@ -13,7 +13,7 @@ fn instruction_templates_are_policy_equivalent() {
 fn agent_skill_templates_are_thin_and_harness_equivalent() {
     let template = include_str!("../templates/skills/contextmink/SKILL.md");
     let normalized_template = template.replace("\r\n", "\n");
-    assert!(template.contains("output cardinality is unknown"));
+    assert!(template.contains("uncertain or high output"));
     assert!(template.contains("Skip known-small direct reads"));
     assert!(template.contains("grep-terms --term TERM"));
     assert!(template.contains("contextmink.receipt.v2"));
@@ -228,7 +228,9 @@ fn release_workflow_verifies_extracted_project_integration() {
         "needs: [verify-source, build]",
         "integration-project",
         "--json setup-project",
-        "contextmink.project_setup.v1",
+        "contextmink.project_setup.v2",
+        "contextmink.project_uninstall.v1",
+        "project-install.json",
         "preserve_repository_owned",
         "setup-repair-smoke",
         "contextmink.receipt.v2",

@@ -211,11 +211,14 @@ jobs:
           project="${verify_root}/integration-project"
           mkdir -p "${project}/nested/work"
           "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
-          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v1"' "${verify_root}/setup-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v2"' "${verify_root}/setup-smoke.json"
+          grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/setup-smoke.json"
+          test -f "${project}/tools/contextmink/project-install.json"
           test -f "${project}/tools/contextmink/agent_integration.md"
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
+          test -f "${project}/scripts/contextmink.cmd"
           cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
           sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
           rm "${project}/.contextmink.toml.bak"
@@ -244,6 +247,14 @@ jobs:
             echo "capture smoke exposed an ambiguous generic exit field" >&2
             exit 1
           fi
+          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${project}" --dry-run > "${verify_root}/uninstall-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_uninstall.v1"' "${verify_root}/uninstall-smoke.json"
+          grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/uninstall-smoke.json"
+          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${project}" > "${verify_root}/uninstall-apply.json"
+          test ! -e "${project}/tools/contextmink/project-install.json"
+          test ! -e "${project}/.agents/skills/contextmink/SKILL.md"
+          test ! -e "${project}/.claude/skills/contextmink/SKILL.md"
+          grep -Fq 'exclude_globs = ["generated/**"]' "${project}/.contextmink.toml"
 
       - name: Verify packaged release (Windows)
         if: runner.os == 'Windows'
@@ -289,7 +300,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$project/nested/work" | Out-Null
           $project = (Resolve-Path $project).Path
           $setupSmoke = (& $binary --json setup-project $project | Out-String) | ConvertFrom-Json
-          if ($setupSmoke.schema -ne "contextmink.project_setup.v1") { throw "setup-project schema mismatch" }
+          if ($setupSmoke.schema -ne "contextmink.project_setup.v2" -or !$setupSmoke.ready) { throw "setup-project schema or readiness mismatch" }
+          if (!(Test-Path "$project/tools/contextmink/project-install.json")) { throw "project-install receipt missing" }
           if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
           $agentSkill = "$project/.agents/skills/contextmink/SKILL.md"
           $claudeSkill = "$project/.claude/skills/contextmink/SKILL.md"
@@ -352,6 +364,16 @@ jobs:
           $argvEcho = & $projectBridge --print-argv --argv-b64 $probeToken | Out-String
           if ($argvEcho -notmatch 'argv\[1\]=/type/path' -or $argvEcho -notmatch 'argv\[2\]=he said "hi"') {
             throw "bridge argv relay smoke failed"
+          }
+          $uninstallSmoke = (& $binary --json uninstall-project $project --dry-run | Out-String) | ConvertFrom-Json
+          if ($uninstallSmoke.schema -ne "contextmink.project_uninstall.v1" -or !$uninstallSmoke.ready) {
+            throw "uninstall-project preflight failed"
+          }
+          & $binary --json uninstall-project $project | Out-Null
+          if (Test-Path "$project/tools/contextmink/project-install.json") { throw "project-install receipt was not removed" }
+          if ((Test-Path $agentSkill) -or (Test-Path $claudeSkill)) { throw "managed Contextmink skill was not removed" }
+          if (!(Select-String -Path $configPath -SimpleMatch 'exclude_globs = ["generated/**"]')) {
+            throw "uninstall-project changed repository-owned config"
           }
 
       - uses: actions/upload-artifact@v4

@@ -26,8 +26,10 @@ globset = "0.4"
 ignore = "0.4"
 regex = "1"
 rusqlite = { version = "0.40.1", features = ["bundled", "functions", "hooks"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
 toml = "1.1.4"
 
 [target.'cfg(unix)'.dependencies]

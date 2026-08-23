@@ -17,6 +17,7 @@ pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
     "sqlite",
     "sqlite-schema",
     "setup-project",
+    "uninstall-project",
     "capture",
     "hook-guard",
     "guard-check",
@@ -705,7 +706,7 @@ pub(crate) enum Command {
     },
     /// Install a project-local release and report the agent-owned integration work.
     #[command(
-        after_help = "Only --json applies to setup-project. Receipt strictness and configuration-selection flags apply to inspection commands, not installation."
+        after_help = "Writes a platform-neutral ownership receipt and never edits repository guidance or harness settings. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
     )]
     SetupProject {
         #[arg(
@@ -721,9 +722,26 @@ pub(crate) enum Command {
         dry_run: bool,
         #[arg(
             long,
-            help = "Replace divergent release-managed binaries, launchers, and integration reference; validates and preserves an existing .contextmink.toml"
+            help = "Replace a reviewed modified or pre-receipt managed destination; receipt-owned upgrades need no flag and .contextmink.toml is always preserved"
         )]
         replace_managed: bool,
+    },
+    /// Remove receipt-owned project integration without touching repository-owned policy.
+    #[command(
+        after_help = "Run this command from an extracted Contextmink release outside the project. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
+    )]
+    UninstallProject {
+        #[arg(
+            value_name = "PROJECT_ROOT",
+            default_value = ".",
+            help = "Existing repository root whose receipt-owned Contextmink integration should be removed"
+        )]
+        project_root: PathBuf,
+        #[arg(
+            long,
+            help = "Preflight and report every removal or refusal without writing any file"
+        )]
+        dry_run: bool,
     },
     /// Execute argv non-interactively and print bounded stdout/stderr summaries.
     Capture {
