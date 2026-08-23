@@ -234,7 +234,10 @@ fn source_verification_isolates_package_fingerprints() {
     let verify = include_str!("../scripts/verify_source.sh");
 
     assert!(verify.contains("cargo fmt --all -- --check"));
-    assert!(verify.contains("cargo test --locked --all-targets --all-features"));
+    assert!(verify.contains("CONTEXTMINK_SOURCE_TARGET_DIR"));
+    assert!(verify.contains(
+        "CARGO_TARGET_DIR=\"$source_target_dir\" cargo test --locked --all-targets --all-features"
+    ));
     assert!(
         verify.contains(
             "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings"
