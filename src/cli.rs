@@ -128,6 +128,12 @@ pub(crate) enum Command {
         )]
         args: Vec<String>,
         #[arg(
+            long = "path",
+            value_name = "PATH",
+            help = "Search this path; repeat for multiple paths. This is equivalent to positional paths when --pattern or --pattern-file supplies the pattern"
+        )]
+        paths: Vec<PathBuf>,
+        #[arg(
             long = "pattern",
             value_name = "PATTERN",
             help = "Regex or literal pattern to search for; with this flag, all positional values are paths"
@@ -340,9 +346,18 @@ pub(crate) enum Command {
         file: PathBuf,
         #[arg(long, help = "One-based inclusive line range START:END")]
         range: Option<String>,
-        #[arg(long, default_value_t = 1, help = "First one-based line to print")]
+        #[arg(
+            long,
+            visible_alias = "start-line",
+            default_value_t = 1,
+            help = "First one-based line to print"
+        )]
         start: usize,
-        #[arg(long, help = "Last one-based line to print")]
+        #[arg(
+            long,
+            visible_alias = "end-line",
+            help = "Last one-based line to print"
+        )]
         end: Option<usize>,
         #[arg(
             long,

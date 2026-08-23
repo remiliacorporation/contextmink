@@ -136,7 +136,6 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
         vec!["contextmink", "sqlite-schema", "--path", "sample.sqlite"],
         vec!["contextmink", "files", "--path", "src"],
         vec!["contextmink", "dirs", "--path", "src"],
-        vec!["contextmink", "grep", "needle", "--path", "src"],
         vec!["contextmink", "grep-terms", "--term", "x", "--path", "src"],
         vec![
             "contextmink",
@@ -160,6 +159,16 @@ fn cli_rejects_removed_forms_and_duplicate_inputs() {
 
 #[test]
 fn cli_accepts_current_forms() {
+    Cli::try_parse_from([
+        "contextmink",
+        "grep",
+        "needle",
+        "--path",
+        "src",
+        "--path",
+        "tests",
+    ])
+    .expect("parse intuitive grep path flags");
     Cli::try_parse_from([
         "contextmink",
         "grep-terms",
