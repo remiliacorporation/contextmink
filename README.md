@@ -494,9 +494,15 @@ executable-lock contention without adding self-update machinery.
 
 Native CI remains authoritative and runs formatting, tests, Clippy, and package
 checks on Windows, Linux, and macOS. Source checkouts also provide an optional
-cross-link smoke test: install Zig plus `cargo-zigbuild` and run
-`scripts/cross_check.sh`. Zig is not a normal build dependency and the
-repository does not retain host-specific compiler wrappers.
+cross-link rehearsal for every non-Windows release target. Install Zig plus
+`cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
+with an exact `rustup` command; `scripts/cross_check.sh --install-targets` is the
+explicit opt-in to install them into the pinned toolchain. The rehearsal builds
+the full compile surface and release binaries for Linux x64, Intel macOS, and
+Apple Silicon macOS. A Windows host can report a missing Xcode SDK while still
+completing Zig compilation; native GitHub macOS jobs remain the link/runtime
+authority. Zig is not a normal build dependency, and the repository does not
+retain host-specific compiler wrappers.
 
 Keep package verification in a separate Cargo target directory. `cargo package`
 verifies the staged source tree under `target/package`; sharing its fingerprints

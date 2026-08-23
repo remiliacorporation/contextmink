@@ -196,6 +196,24 @@ fn release_workflow_verifies_extracted_project_integration() {
 }
 
 #[test]
+fn cross_check_rehearses_every_non_windows_release_target() {
+    let workflow = include_str!("../.github/workflows/release-artifacts.yml");
+    let cross_check = include_str!("../scripts/cross_check.sh");
+
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        assert!(workflow.contains(target));
+        assert!(cross_check.contains(target));
+    }
+    assert!(cross_check.contains("--install-targets"));
+    assert!(cross_check.contains("rustup target add --toolchain"));
+    assert!(cross_check.contains("--release --bins --target"));
+}
+
+#[test]
 fn launcher_template_matches_repo_launcher() {
     let repo_launcher = include_str!("../scripts/contextmink");
     let template_launcher = include_str!("../templates/scripts/contextmink");
