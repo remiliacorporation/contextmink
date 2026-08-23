@@ -88,7 +88,10 @@ fn capture_supervision_job_terminates_child_when_dropped() {
         .expect("spawn supervised fixture");
     let supervisor = supervise(&mut child).expect("supervise fixture child");
     drop(supervisor);
-    for _ in 0..20 {
+    // Job termination is asynchronous and can be delayed by parallel test or
+    // host process pressure. Match the descendant proof's bounded two-second
+    // observation window without weakening the eventual-exit assertion.
+    for _ in 0..40 {
         if child.try_wait().expect("poll supervised child").is_some() {
             return;
         }

@@ -99,15 +99,17 @@ lifecycle.
 
 ## Verification
 
-Run the gates appropriate to the changed boundary before claiming completion:
+Run the source gate before claiming completion. It isolates `cargo package`
+from ordinary test fingerprints:
 
 ```text
-cargo fmt --all -- --check
-cargo test --locked --all-targets --all-features
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo package --locked
+scripts/verify_source.sh
+# Windows native harness:
+target/release/contextmink-bridge.exe --script scripts/verify_source.sh
 tools/papertiger/bin/papertiger[.exe] audit
 ```
 
 For cross-platform or release work, also run `scripts/cross_check.sh` and the
-release workflow/static checks documented in `docs/setup.md`.
+release workflow/static checks documented in `docs/setup.md`. Before artifact
+handoff, use `scripts/verify_release.sh` (through `contextmink-bridge --script`
+on Windows) as the combined pinned actionlint, source, and cross-target gate.

@@ -1,0 +1,11 @@
+profile = "contextmink"
+
+# Planner and dogfood state are authority or retained evidence, not generic
+# repository-retrieval input. Use their domain tools or explicit reviewed paths.
+exclude_globs = ["state/**"]
+
+destructive_guard_recursive_delete_fragments = ["state"]
+destructive_guard_delete_fragments = [
+  "papertiger.sqlite",
+  "papertiger-mise.sqlite",
+]

@@ -404,8 +404,9 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   payload handling turns any schema drift into a total shell outage).
 - Broad scans cross nested Git repository roots by default, including tracked
   submodules and Git-ignored sibling repositories, apply each repository's own
-  ignore rules, and disclose every crossed root in `nested_repos_entered`.
-  Pass `--skip-nested-repos` to keep a broad scan inside each explicit root.
+  ignore rules, and disclose the exact `nested_repos_entered_total` plus a
+  bounded `nested_repos_entered_sample`. Pass `--skip-nested-repos` to keep a
+  broad scan inside each explicit root.
   Passing a nested repository as an explicit root still scans it normally.
   Repository-discovery I/O failures are hard errors, never silent omissions.
   Repositories below an ignored plain directory beyond the bounded discovery
@@ -493,9 +494,12 @@ tools/contextmink/Cargo.toml` from that parent repository. This avoids Windows
 executable-lock contention without adding self-update machinery.
 
 Native CI remains authoritative and runs formatting, tests, Clippy, and package
-checks on Windows, Linux, and macOS. Source checkouts also provide an optional
-cross-link rehearsal for every non-Windows release target. Install Zig plus
-`cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
+checks on Windows, Linux, and macOS. Run `scripts/verify_source.sh` for the same
+local source gates without allowing Cargo's staged package build to contaminate
+ordinary test fingerprints. On Windows, invoke it through
+`contextmink-bridge --script scripts/verify_source.sh`. Source checkouts also
+provide an optional cross-link rehearsal for every non-Windows release target.
+Install Zig plus `cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
 with an exact `rustup` command; `scripts/cross_check.sh --install-targets` is the
 explicit opt-in to install them into the pinned toolchain. The rehearsal builds
 the full compile surface and release binaries for Linux x64, Intel macOS, and
@@ -503,6 +507,12 @@ Apple Silicon macOS. A Windows host can report a missing Xcode SDK while still
 completing Zig compilation; native GitHub macOS jobs remain the link/runtime
 authority. Zig is not a normal build dependency, and the repository does not
 retain host-specific compiler wrappers.
+
+Before handing a commit to the public artifact workflow, run
+`scripts/verify_release.sh` (through `contextmink-bridge --script` on Windows).
+It requires pinned actionlint `1.7.12`, runs the isolated native source gate,
+then executes the complete Zig rehearsal. Pass `--install-targets` only when
+explicitly authorizing repair of missing pinned-toolchain components.
 
 Keep package verification in a separate Cargo target directory. `cargo package`
 verifies the staged source tree under `target/package`; sharing its fingerprints

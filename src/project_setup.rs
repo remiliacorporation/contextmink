@@ -274,7 +274,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 .to_owned(),
             "Verify the project-local entrypoint from every supported agent shell and a representative nested working directory; require the intended profile and contextmink.receipt.v2."
                 .to_owned(),
-            "Inventory nested Git repositories, decide whether broad scans may cross them or require exact roots/--skip-nested-repos, and verify nested_repos_entered."
+            "Inventory nested Git repositories, decide whether broad scans may cross them or require exact roots/--skip-nested-repos, and verify nested_repos_entered_total plus nested_repos_entered_sample."
                 .to_owned(),
             "Run the project-local guard-check -- git clean from the repository root and confirm the decision is deny."
                 .to_owned(),
