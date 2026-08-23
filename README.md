@@ -1,9 +1,5 @@
 # contextmink
 
-[![CI](https://github.com/remiliacorporation/contextmink/actions/workflows/ci.yml/badge.svg)](https://github.com/remiliacorporation/contextmink/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/remiliacorporation/contextmink)](https://github.com/remiliacorporation/contextmink/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
 **Give coding agents the evidence they need without spending the conversation
 on raw tool output.**
 
