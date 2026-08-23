@@ -8,27 +8,22 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Added
 
-- Added setup-managed Contextmink skills for open Agent Skills-compatible harnesses and Claude Code, with Codex UI metadata and one byte-identical generic workflow across harnesses.
-- Added source and release verification entrypoints that isolate Cargo's staged package fingerprints, pin actionlint for workflow validation, and compose native and cross-target release gates without making those tools runtime dependencies.
-- Expanded the optional Zig rehearsal to all three non-Windows artifact targets, with explicit pinned-toolchain target installation and both compile-surface and optimized-binary checks.
+- `setup-project` installs release-managed `contextmink` and `changelog-writing` skills under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. Existing integrations should dry-run the new release, use `--replace-managed` only for reviewed divergent release-managed files, and reduce always-loaded Contextmink guidance to one discovery trigger; `.contextmink.toml` remains repository-owned and preserved.
 
 ### Changed
 
-- Unreleased dogfood binaries now identify as `0.9.0-rc.1`, distinguishing the project-adaptable skill/setup and navigation changes from the tagged `0.8.0` release.
-- Replaced full-manual transplantation into always-loaded guidance with a concise broad-read discovery trigger; repository owners now adapt only shell, native-tool, nested-repository, exclusion, and destructive-path policy while the release-managed skill carries operational detail.
-- Made Rust outlines expose top-level enum variant headers while keeping tuple and struct variant payload fields hidden, so command enums and state machines are navigable without a broad source slice.
-- Made `contextmink-bridge --script <path> -- <args>` consume the conventional separator instead of forwarding a misleading leading `--`; double the separator when the script must receive one literally.
-- Renamed the bounded nested-repository receipt list to `nested_repos_entered_sample` while retaining the exact `nested_repos_entered_total`, so a large workspace cannot make a sample look exhaustive.
+- `grep` no longer accepts a positional pattern; use `contextmink grep --pattern PATTERN [PATH]...` or `contextmink grep --pattern-file FILE [PATH]...`, with every positional argument treated as a search path.
+- `files`, `dirs`, `grep`, and `grep-terms` receipts replace `nested_repos_entered` with the bounded `nested_repos_entered_sample` while retaining exact `nested_repos_entered_total`; machine consumers must update to the new field name.
+- `contextmink-bridge --script <path> -- <args>` consumes one conventional separator instead of forwarding it; pass two consecutive `--` arguments when the script must receive one.
+- Rust `outline` results include top-level enum variant headers while omitting tuple and struct variant payload fields.
 
 ### Fixed
 
-- Froze the destructive-guard invariant that dash-prefixed protected paths after the POSIX `--` option terminator remain deletion operands, including an executable capture witness that proves denial occurs before spawn.
-- Made grep distinguish capped scan scope from capped display and name the relevant output controls when an already-narrow query needs more per-file samples.
-- Added repository-owned source policy that keeps retained planner/dogfood state out of generic scans and denies recursive state or direct planner-database deletion before spawn.
-- Made a missing bridge `--script` refusal name the project-root resolution rule, its independence from `--cwd`, and both safe path corrections.
-- Canonicalized `grep` on `--pattern PATTERN [PATH]...` or `--pattern-file FILE [PATH]...`, removed duplicate path and slice spellings, and made common noncanonical guesses name the exact replacement.
-- Scoped repository-owned exclude globs to their config tree during parent or foreign-root scans while retaining built-in build/dependency exclusions across every explicit root.
-- Made the Zig rehearsal deny cross-target crate warnings, accept only the exact environment-owned Apple SDK probe on non-native hosts, and fail on every other warning header.
+- Repository `exclude_globs` apply only inside the owning configuration tree during ancestor or foreign-root scans, while built-in build and dependency exclusions continue across every explicit root.
+- `grep` text output distinguishes capped scan scope from capped display and names the relevant output controls when additional samples are required.
+- `grep`, `slice`, and `outline` reject common noncanonical forms with the exact canonical replacement instead of a generic parse failure.
+- A missing `contextmink-bridge --script` path reports that relative paths resolve from the project root independently of `--cwd` and recommends a project-root-relative or absolute path.
+- Source packages exclude `.claude/settings*.json`, preventing repository harness preferences from entering package handoffs.
 
 ## [0.8.0] - 2026-07-31
 
