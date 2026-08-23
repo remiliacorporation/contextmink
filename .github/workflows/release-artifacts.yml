@@ -247,7 +247,7 @@ jobs:
           grep -Eq '"child_exit_zero"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
           grep -Eq '"exit_expected"[[:space:]]*:[[:space:]]*true' "${verify_root}/capture-smoke.json"
           if grep -Eq '"(exit_code|success)"[[:space:]]*:' "${verify_root}/capture-smoke.json"; then
-            echo "capture smoke retained a removed generic exit field" >&2
+            echo "capture smoke exposed an ambiguous generic exit field" >&2
             exit 1
           fi
 
@@ -352,7 +352,7 @@ jobs:
             throw "capture exit contract smoke failed"
           }
           if ($captureSmoke.PSObject.Properties.Name -contains 'exit_code' -or $captureSmoke.PSObject.Properties.Name -contains 'success') {
-            throw "capture smoke retained a removed generic exit field"
+            throw "capture smoke exposed an ambiguous generic exit field"
           }
           Push-Location "$project/nested/work"
           try {

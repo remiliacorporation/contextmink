@@ -1437,12 +1437,13 @@ fn capture_successful_child_keeps_outer_success() {
 }
 
 #[test]
-fn capture_help_omits_the_removed_fail_with_child_flag() {
-    let root = fixture_root("capture-removed-fail-with-child");
+fn capture_help_states_the_canonical_exit_policy() {
+    let root = fixture_root("capture-help-exit-policy");
     let output = run_contextmink_raw(&root, &["capture", "--help"]);
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(!stdout.contains("--fail-with-child"));
+    assert!(stdout.contains("--expect-exit <CODE[,CODE...]>"));
+    assert!(stdout.contains("every other child status is propagated"));
 }
 
 #[test]
