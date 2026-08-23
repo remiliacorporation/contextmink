@@ -522,11 +522,12 @@ a parent repository, or `cargo build --release --manifest-path
 tools/contextmink/Cargo.toml` from that parent repository. This avoids Windows
 executable-lock contention without adding self-update machinery.
 
-Native CI remains authoritative and runs formatting, tests, Clippy, and package
-checks on Windows, Linux, and macOS. Run `scripts/verify_source.sh` for the same
-local source gates in dedicated `target/source-check` and
-`target/package-check` directories, preventing either prior local artifacts or
-Cargo's staged package build from contaminating the proof. On Windows, invoke it through
+Native CI remains authoritative and runs formatting, tests, Clippy, package,
+and Rust 1.95 MSRV checks on Windows, Linux, and macOS. Run
+`scripts/verify_source.sh` for the same local source gates in dedicated
+`target/source-check`, `target/package-check`, and `target/msrv-check`
+directories, preventing prior local artifacts or Cargo's staged package build
+from contaminating the proof. On Windows, invoke it through
 `contextmink-bridge --script scripts/verify_source.sh`. Source checkouts also
 provide an optional cross-link rehearsal for every non-Windows release target.
 Install Zig plus `cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
