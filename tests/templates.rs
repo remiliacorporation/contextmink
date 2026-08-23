@@ -139,6 +139,7 @@ fn public_guidance_uses_current_cli_forms() {
         "files --path`",
         "dirs --path",
         "grep contextmink --path",
+        "scripts/contextmink grep contextmink",
         "sqlite --path",
         "sqlite-schema --path",
         "files --max ",
