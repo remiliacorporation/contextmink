@@ -57,6 +57,53 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
 }
 
 #[test]
+fn changelog_skill_is_canonical_and_harness_equivalent() {
+    let template = include_str!("../templates/skills/changelog-writing/SKILL.md");
+    let normalized_template = template.replace("\r\n", "\n");
+    assert!(template.contains("source-faithful, human-facing changelogs"));
+    assert!(template.contains("Identify the exact previous-release and candidate revisions"));
+    assert!(template.contains("Compatibility:"));
+    assert!(template.contains("No material change"));
+    assert!(!template.contains("TODO"));
+
+    let metadata = include_str!("../templates/skills/changelog-writing/agents/openai.yaml");
+    assert!(metadata.contains("$changelog-writing"));
+    assert!(metadata.contains("Write source-faithful human release notes"));
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        ".agents/skills/changelog-writing/SKILL.md",
+        ".claude/skills/changelog-writing/SKILL.md",
+    ] {
+        let installed = root.join(relative);
+        if installed.is_file() {
+            assert_eq!(
+                std::fs::read_to_string(installed)
+                    .unwrap()
+                    .replace("\r\n", "\n"),
+                normalized_template
+            );
+        }
+    }
+    let installed_metadata = root.join(".agents/skills/changelog-writing/agents/openai.yaml");
+    if installed_metadata.is_file() {
+        assert_eq!(
+            std::fs::read_to_string(installed_metadata)
+                .unwrap()
+                .replace("\r\n", "\n"),
+            metadata.replace("\r\n", "\n")
+        );
+    }
+}
+
+#[test]
+fn source_package_excludes_repository_harness_settings() {
+    let manifest = include_str!("../Cargo.toml");
+
+    assert!(manifest.contains("exclude = [\"/.claude/settings*.json\"]"));
+}
+
+#[test]
 fn setup_points_to_templates_instead_of_duplicating_policy() {
     let setup = include_str!("../docs/setup.md");
 
@@ -191,6 +238,9 @@ fn release_workflow_verifies_extracted_project_integration() {
         "agent_integration.md",
         ".agents/skills/contextmink/SKILL.md",
         ".claude/skills/contextmink/SKILL.md",
+        ".agents/skills/changelog-writing/SKILL.md",
+        ".agents/skills/changelog-writing/agents/openai.yaml",
+        ".claude/skills/changelog-writing/SKILL.md",
         "scripts/contextmink --json guard-check",
         "scripts/contextmink --json hook-snippet",
         "child_exit_code",

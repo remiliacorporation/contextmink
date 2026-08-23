@@ -9,10 +9,14 @@ use super::{ContextminkConfig, canonical_normalized, load_context_config, valida
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
 const CMD_DIAGNOSTIC: &[u8] = include_bytes!("../templates/scripts/contextmink.cmd");
-const AGENT_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
-const AGENT_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
-const OPENAI_SKILL_METADATA: &[u8] =
+const CONTEXTMINK_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
+const CONTEXTMINK_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
+const CONTEXTMINK_OPENAI_METADATA: &[u8] =
     include_bytes!("../templates/skills/contextmink/agents/openai.yaml");
+const CHANGELOG_WRITING_SKILL: &[u8] =
+    include_bytes!("../templates/skills/changelog-writing/SKILL.md");
+const CHANGELOG_WRITING_OPENAI_METADATA: &[u8] =
+    include_bytes!("../templates/skills/changelog-writing/agents/openai.yaml");
 const GITIGNORE_COMMENT: &str = "# contextmink project-local release binaries";
 const GITIGNORE_ENTRY: &str = "/tools/contextmink/bin/";
 
@@ -65,6 +69,29 @@ struct ManagedFile {
 enum SetupFileOwnership {
     ReleaseManaged,
     RepositoryOwnedConfig,
+}
+
+fn managed_skill_files(name: &str, skill: &[u8], openai_metadata: &[u8]) -> [ManagedFile; 3] {
+    [
+        ManagedFile {
+            relative_path: PathBuf::from(format!(".agents/skills/{name}/SKILL.md")),
+            content: skill.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
+        ManagedFile {
+            relative_path: PathBuf::from(format!(".agents/skills/{name}/agents/openai.yaml")),
+            content: openai_metadata.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
+        ManagedFile {
+            relative_path: PathBuf::from(format!(".claude/skills/{name}/SKILL.md")),
+            content: skill.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
+    ]
 }
 
 struct PreflightFile {
@@ -135,29 +162,21 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         },
         ManagedFile {
             relative_path: PathBuf::from("tools/contextmink/agent_integration.md"),
-            content: AGENT_INTEGRATION.to_vec(),
-            executable: false,
-            ownership: SetupFileOwnership::ReleaseManaged,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from(".agents/skills/contextmink/SKILL.md"),
-            content: AGENT_SKILL.to_vec(),
-            executable: false,
-            ownership: SetupFileOwnership::ReleaseManaged,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from(".agents/skills/contextmink/agents/openai.yaml"),
-            content: OPENAI_SKILL_METADATA.to_vec(),
-            executable: false,
-            ownership: SetupFileOwnership::ReleaseManaged,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from(".claude/skills/contextmink/SKILL.md"),
-            content: AGENT_SKILL.to_vec(),
+            content: CONTEXTMINK_INTEGRATION.to_vec(),
             executable: false,
             ownership: SetupFileOwnership::ReleaseManaged,
         },
     ];
+    managed.extend(managed_skill_files(
+        "contextmink",
+        CONTEXTMINK_SKILL,
+        CONTEXTMINK_OPENAI_METADATA,
+    ));
+    managed.extend(managed_skill_files(
+        "changelog-writing",
+        CHANGELOG_WRITING_SKILL,
+        CHANGELOG_WRITING_OPENAI_METADATA,
+    ));
     if suffix == ".exe" {
         let bridge_name = "contextmink-bridge.exe";
         let source_bridge = source_binary.with_file_name(bridge_name);
@@ -508,6 +527,15 @@ mod tests {
                 .iter()
                 .all(|action| action.action == SetupActionKind::Create)
         );
+        for path in [
+            ".agents/skills/changelog-writing/SKILL.md",
+            ".agents/skills/changelog-writing/agents/openai.yaml",
+            ".claude/skills/changelog-writing/SKILL.md",
+        ] {
+            assert!(result.actions.iter().any(|action| {
+                action.path == Path::new(path) && action.action == SetupActionKind::Create
+            }));
+        }
         assert!(!project.join(".contextmink.toml").exists());
         assert!(!project.join("AGENTS.md").exists());
         cleanup(&project);
@@ -546,19 +574,31 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join("tools/contextmink/agent_integration.md")).unwrap(),
-            AGENT_INTEGRATION
+            CONTEXTMINK_INTEGRATION
         );
         assert_eq!(
             fs::read(project.join(".agents/skills/contextmink/SKILL.md")).unwrap(),
-            AGENT_SKILL
+            CONTEXTMINK_SKILL
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/contextmink/SKILL.md")).unwrap(),
-            AGENT_SKILL
+            CONTEXTMINK_SKILL
         );
         assert_eq!(
             fs::read(project.join(".agents/skills/contextmink/agents/openai.yaml")).unwrap(),
-            OPENAI_SKILL_METADATA
+            CONTEXTMINK_OPENAI_METADATA
+        );
+        assert_eq!(
+            fs::read(project.join(".agents/skills/changelog-writing/SKILL.md")).unwrap(),
+            CHANGELOG_WRITING_SKILL
+        );
+        assert_eq!(
+            fs::read(project.join(".claude/skills/changelog-writing/SKILL.md")).unwrap(),
+            CHANGELOG_WRITING_SKILL
+        );
+        assert_eq!(
+            fs::read(project.join(".agents/skills/changelog-writing/agents/openai.yaml")).unwrap(),
+            CHANGELOG_WRITING_OPENAI_METADATA
         );
         if cfg!(windows) {
             assert_eq!(
@@ -685,6 +725,11 @@ mod tests {
         let (project, binary) = fixture("replace-managed");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
+        fs::write(
+            project.join(".agents/skills/changelog-writing/SKILL.md"),
+            b"older release",
+        )
+        .unwrap();
         let owned_config = "profile = \"owned\"\nexclude_globs = [\"cache/**\"]\n";
         fs::write(project.join(".contextmink.toml"), owned_config).unwrap();
 
@@ -697,12 +742,20 @@ mod tests {
                 && action.action == SetupActionKind::Replace
         }));
         assert!(result.actions.iter().any(|action| {
+            action.path == Path::new(".agents/skills/changelog-writing/SKILL.md")
+                && action.action == SetupActionKind::Replace
+        }));
+        assert!(result.actions.iter().any(|action| {
             action.path == Path::new(".contextmink.toml")
                 && action.action == SetupActionKind::PreserveRepositoryOwned
         }));
         assert_eq!(
             fs::read(project.join("scripts/contextmink")).unwrap(),
             BASH_LAUNCHER
+        );
+        assert_eq!(
+            fs::read(project.join(".agents/skills/changelog-writing/SKILL.md")).unwrap(),
+            CHANGELOG_WRITING_SKILL
         );
         assert_eq!(
             fs::read_to_string(project.join(".contextmink.toml")).unwrap(),

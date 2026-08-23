@@ -136,16 +136,18 @@ On Windows PowerShell, use
 `& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
 the platform-appropriate release artifacts, installs the Bash launcher and the
 PowerShell diagnostic shim, generates a real project profile, adds the binary
-directory to `.gitignore`, and installs one thin Contextmink skill for open
-Agent Skills-compatible harnesses and Claude Code around the canonical
-`tools/contextmink/agent_integration.md` reference. It deliberately does not
+directory to `.gitignore`, and installs the Contextmink and human-facing
+changelog-writing skills for open Agent Skills-compatible harnesses and Claude
+Code. The thin Contextmink skill points to the canonical
+`tools/contextmink/agent_integration.md` reference. Setup deliberately does not
 edit `AGENTS.md` or `CLAUDE.md`: the maintaining agent must inspect the
 repository, add one concise discovery trigger, and adapt only project-owned
 shell, native-tool, nested-repository, exclusion, and destructive-path policy.
 
 `setup-project` preflights every destination before writing. It is idempotent
 for the same release and requires `--replace-managed` to update divergent
-release-managed binaries, launchers, or the integration reference. An existing
+release-managed binaries, launchers, skills, or the integration reference. An
+existing
 `.contextmink.toml` is repository-owned: setup validates it with the real
 configuration loader, reports `preserve_repository_owned`, and never compares
 or replaces it from the release template. Invalid configuration fails before

@@ -9,6 +9,7 @@ readme = "README.md"
 repository = "https://github.com/remiliacorporation/contextmink"
 publish = false
 autobins = false
+exclude = ["/.claude/settings*.json"]
 
 [[bin]]
 name = "contextmink"

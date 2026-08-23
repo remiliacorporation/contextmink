@@ -155,9 +155,9 @@ Adapt the installation to the project before copying generic policy:
    installs the current platform binary, the Windows bridge and diagnostic
    `.cmd` shim when applicable, the Bash launcher, a real-profile
    `.contextmink.toml`, `.gitignore` coverage for
-   `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and thin
-   skills under `.agents/skills/contextmink/` and
-   `.claude/skills/contextmink/`.
+   `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and the
+   Contextmink and changelog-writing skills under `.agents/skills/` and
+   `.claude/skills/`.
 
 3. Read every printed `next_actions` entry. Inspect and edit
    `.contextmink.toml` for this repository's generated/high-output trees and
@@ -439,11 +439,13 @@ direct contextmink commands, and
 bridge for the Bash launcher or other Bash-first repository scripts. The policy
 content is otherwise shell-agnostic.
 
-Setup installs byte-identical thin skills for `.agents/skills` consumers and
-Claude Code, plus Codex-facing `agents/openai.yaml` metadata. Do not fork their
-semantic body by harness. Keep only the discovery trigger in always-loaded
-guidance so the detailed contract is loaded before broad reads without taxing
-every prompt.
+Setup installs byte-identical Contextmink and changelog-writing skill bodies for
+`.agents/skills` consumers and Claude Code, plus Codex-facing
+`agents/openai.yaml` metadata. The changelog-writing skill is the human-facing
+release-note standard shared with Papertiger. Do not fork either semantic body
+by harness. Keep only the Contextmink discovery trigger in always-loaded
+guidance so the detailed integration contract is loaded before broad reads
+without taxing every prompt.
 
 ## Operational Notes
 
