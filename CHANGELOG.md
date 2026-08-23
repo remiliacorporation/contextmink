@@ -25,6 +25,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Fixed
 
+- `setup-project --skill-target auto` recognizes harness directory and configuration markers only when each path has its documented file type, preventing a same-named file or directory from selecting the wrong skill residence.
 - Repository `exclude_globs` apply only inside the owning configuration tree during ancestor or foreign-root scans, while built-in build and dependency exclusions continue across every explicit root.
 - `grep` text output distinguishes capped scan scope from capped display and names the relevant output controls when additional samples are required.
 - `grep`, `slice`, and `outline` reject common noncanonical forms with the exact canonical replacement instead of a generic parse failure.

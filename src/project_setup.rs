@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -32,21 +32,15 @@ const AGENTS_SKILL_PATHS: &[&str] = &[
     ".agents/skills/contextmink/agents/openai.yaml",
 ];
 const CLAUDE_SKILL_PATHS: &[&str] = &[".claude/skills/contextmink/SKILL.md"];
-// Compatibility is anchored in the shared `.agents/skills` contract. These
-// generic markers cover any harness already using that contract; the compact
-// fallback catalog only bootstraps common compatible harnesses before the
-// shared directory exists.
-const SHARED_AGENT_SKILLS_MARKERS: &[&str] = &[".agents"];
-const COMMON_AGENT_SKILLS_BOOTSTRAP_MARKERS: &[&str] = &[
-    "AGENTS.md",
-    ".codex",
-    ".pi",
-    ".omp",
-    ".opencode",
-    "opencode.json",
-    "opencode.jsonc",
-];
-const CLAUDE_HARNESS_MARKERS: &[&str] = &[".claude", "CLAUDE.md"];
+// Compatibility is anchored in the shared `.agents/skills` contract. The
+// bootstrap catalog only selects that shared residence for common compatible
+// harnesses before `.agents` exists; it never creates harness-native copies.
+const SHARED_AGENT_SKILLS_DIRECTORIES: &[&str] = &[".agents"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] = &[".codex", ".pi", ".omp", ".opencode"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_FILES: &[&str] =
+    &["AGENTS.md", "opencode.json", "opencode.jsonc"];
+const CLAUDE_HARNESS_DIRECTORIES: &[&str] = &[".claude"];
+const CLAUDE_HARNESS_FILES: &[&str] = &["CLAUDE.md"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -971,9 +965,11 @@ fn resolve_skill_target(
     if let Some(installed) = installed {
         return Ok(installed);
     }
-    let agents = harness_marker_exists(root, SHARED_AGENT_SKILLS_MARKERS)?
-        || harness_marker_exists(root, COMMON_AGENT_SKILLS_BOOTSTRAP_MARKERS)?;
-    let claude = harness_marker_exists(root, CLAUDE_HARNESS_MARKERS)?;
+    let agents = harness_directory_exists(root, SHARED_AGENT_SKILLS_DIRECTORIES)?
+        || harness_directory_exists(root, COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES)?
+        || harness_file_exists(root, COMMON_AGENT_SKILLS_BOOTSTRAP_FILES)?;
+    let claude = harness_directory_exists(root, CLAUDE_HARNESS_DIRECTORIES)?
+        || harness_file_exists(root, CLAUDE_HARNESS_FILES)?;
     Ok(match (agents, claude) {
         (true, true) => SkillTarget::Both,
         (true, false) => SkillTarget::Agents,
@@ -982,13 +978,29 @@ fn resolve_skill_target(
     })
 }
 
-fn harness_marker_exists(root: &Path, markers: &[&str]) -> Result<bool> {
+fn harness_directory_exists(root: &Path, markers: &[&str]) -> Result<bool> {
+    harness_marker_exists(root, markers, |metadata| metadata.is_dir())
+}
+
+fn harness_file_exists(root: &Path, markers: &[&str]) -> Result<bool> {
+    harness_marker_exists(root, markers, |metadata| metadata.is_file())
+}
+
+fn harness_marker_exists(
+    root: &Path,
+    markers: &[&str],
+    expected_type: fn(&fs::Metadata) -> bool,
+) -> Result<bool> {
     for marker in markers {
-        if root
-            .join(marker)
-            .try_exists()
-            .with_context(|| format!("inspect harness marker {marker}"))?
-        {
+        let path = root.join(marker);
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("inspect harness marker {marker}"));
+            }
+        };
+        if expected_type(&metadata) {
             return Ok(true);
         }
     }
@@ -1504,6 +1516,22 @@ mod tests {
             assert_eq!(receipt.skill_target, expected);
             cleanup(&project);
         }
+    }
+
+    #[test]
+    fn auto_selection_requires_marker_file_types() {
+        let (project, binary) = fixture("auto-marker-types");
+        fs::write(project.join(".pi"), "not a harness directory\n").unwrap();
+        fs::create_dir(project.join("opencode.json")).unwrap();
+        fs::create_dir(project.join("CLAUDE.md")).unwrap();
+
+        let mut auto = request(&project, &binary, false);
+        auto.skill_target = SkillTarget::Auto;
+        let result = setup_project(auto).unwrap();
+        assert_eq!(result.resolved_skill_target, SkillTarget::None);
+        assert!(!project.join(".agents/skills/contextmink/SKILL.md").exists());
+        assert!(!project.join(".claude/skills/contextmink/SKILL.md").exists());
+        cleanup(&project);
     }
 
     #[test]
