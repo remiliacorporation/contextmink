@@ -1,4 +1,0 @@
-interface:
-  display_name: "Changelog Writing"
-  short_description: "Write source-faithful human release notes"
-  default_prompt: "Use $changelog-writing to turn verified product changes into concise, human-facing release notes."

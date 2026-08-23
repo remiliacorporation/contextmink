@@ -156,8 +156,7 @@ Adapt the installation to the project before copying generic policy:
    `.cmd` shim when applicable, the Bash launcher, a real-profile
    `.contextmink.toml`, `.gitignore` coverage for
    `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and the
-   Contextmink and changelog-writing skills under `.agents/skills/` and
-   `.claude/skills/`.
+   Contextmink skill under `.agents/skills/` and `.claude/skills/`.
 
 3. Read every printed `next_actions` entry. Inspect and edit
    `.contextmink.toml` for this repository's generated/high-output trees and
@@ -362,14 +361,13 @@ copy of the Rust crate:
    quiet; callers can still pass an explicit file or subdirectory inside an
    excluded tree when that tree is the target.
 
-4. Project both release-managed skills into the target repository's harness
-   discovery paths. Copy each canonical `SKILL.md` from
-   `templates/skills/contextmink/` and `templates/skills/changelog-writing/` to
-   the matching `.agents/skills/<name>/SKILL.md` and
-   `.claude/skills/<name>/SKILL.md`; copy each `agents/openai.yaml` only to the
-   matching `.agents` skill. Keep the two harness skill bodies byte-identical,
-   and refuse or explicitly review a divergent existing destination instead of
-   overwriting it silently.
+4. Project the release-managed Contextmink skill into the target repository's
+   harness discovery paths. Copy `templates/skills/contextmink/SKILL.md` to
+   `.agents/skills/contextmink/SKILL.md` and
+   `.claude/skills/contextmink/SKILL.md`; copy its `agents/openai.yaml` only to
+   the matching `.agents` skill. Keep the two harness skill bodies
+   byte-identical. Refuse or explicitly review a divergent existing destination
+   instead of overwriting it silently.
 
 5. Treat the instruction templates as integration references for the tool
    surfaces the target repository uses:
@@ -448,13 +446,13 @@ direct contextmink commands, and
 bridge for the Bash launcher or other Bash-first repository scripts. The policy
 content is otherwise shell-agnostic.
 
-Setup installs byte-identical Contextmink and changelog-writing skill bodies for
-`.agents/skills` consumers and Claude Code, plus Codex-facing
-`agents/openai.yaml` metadata. The changelog-writing skill is the human-facing
-release-note standard shared with Papertiger. Do not fork either semantic body
-by harness. Keep only the Contextmink discovery trigger in always-loaded
-guidance so the detailed integration contract is loaded before broad reads
-without taxing every prompt.
+Setup installs byte-identical Contextmink skill bodies for `.agents/skills`
+consumers and Claude Code, plus Codex-facing `agents/openai.yaml` metadata. The
+source checkout's changelog-writing skill is repository-local development
+guidance and is not installed into consumer repositories. Do not fork the
+Contextmink semantic body by harness. Keep only its discovery trigger in
+always-loaded guidance so the detailed integration contract is loaded before
+broad reads without taxing every prompt.
 
 ## Operational Notes
 

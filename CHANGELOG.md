@@ -4,11 +4,11 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
-## [0.9.0-rc.1] - 2026-08-23
+## [0.9.0] - 2026-08-23
 
 ### Added
 
-- `setup-project` installs release-managed `contextmink` and `changelog-writing` skills under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. Existing integrations should dry-run the new release, use `--replace-managed` only for reviewed divergent release-managed files, and reduce always-loaded Contextmink guidance to one discovery trigger; `.contextmink.toml` remains repository-owned and preserved.
+- `setup-project` installs a release-managed `contextmink` skill under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. Existing integrations should dry-run the new release, use `--replace-managed` only for reviewed divergent release-managed files, and reduce always-loaded Contextmink guidance to one discovery trigger; `.contextmink.toml` remains repository-owned and preserved.
 
 ### Changed
 
@@ -23,7 +23,7 @@ The release workflow extracts the section for the requested version and fails if
 - `grep` text output distinguishes capped scan scope from capped display and names the relevant output controls when additional samples are required.
 - `grep`, `slice`, and `outline` reject common noncanonical forms with the exact canonical replacement instead of a generic parse failure.
 - Source-vendoring setup examples use the required `grep --pattern` form.
-- Source-vendoring guidance projects both release-managed skills into `.agents/skills/` and `.claude/skills/` instead of leaving them undiscoverable under `tools/contextmink/templates/`.
+- Source-vendoring guidance projects the release-managed Contextmink skill into `.agents/skills/` and `.claude/skills/` instead of leaving it undiscoverable under `tools/contextmink/templates/`.
 - A missing `contextmink-bridge --script` path reports that relative paths resolve from the project root independently of `--cwd` and recommends a project-root-relative or absolute path.
 - Source packages exclude `.claude/settings*.json`, preventing repository harness preferences from entering package handoffs.
 

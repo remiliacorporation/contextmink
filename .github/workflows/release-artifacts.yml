@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       artifact_version:
-        description: "Release version, bare semver (example: 0.9.0-rc.1)"
+        description: "Release version, bare semver (example: 0.9.0)"
         required: true
         type: string
       create_release:
@@ -196,8 +196,6 @@ jobs:
           test -f "${bundle}/manifest.json"
           test -d "${bundle}/docs"
           test -d "${bundle}/templates"
-          test -f "${bundle}/templates/skills/changelog-writing/SKILL.md"
-          test -f "${bundle}/templates/skills/changelog-writing/agents/openai.yaml"
           test "$("${bundle}/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
           "${bundle}/${{ matrix.binary_name }}" files src --limit 1 > /tmp/contextmink-smoke.txt
@@ -219,10 +217,6 @@ jobs:
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
           cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
-          test -f "${project}/.agents/skills/changelog-writing/SKILL.md"
-          test -f "${project}/.agents/skills/changelog-writing/agents/openai.yaml"
-          test -f "${project}/.claude/skills/changelog-writing/SKILL.md"
-          cmp "${project}/.agents/skills/changelog-writing/SKILL.md" "${project}/.claude/skills/changelog-writing/SKILL.md"
           sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
           rm "${project}/.contextmink.toml.bak"
           rm "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
@@ -275,8 +269,6 @@ jobs:
           if (!(Test-Path "$bundle/manifest.json")) { throw "manifest.json missing" }
           if (!(Test-Path "$bundle/docs")) { throw "docs missing" }
           if (!(Test-Path "$bundle/templates")) { throw "templates missing" }
-          if (!(Test-Path "$bundle/templates/skills/changelog-writing/SKILL.md")) { throw "changelog-writing skill template missing" }
-          if (!(Test-Path "$bundle/templates/skills/changelog-writing/agents/openai.yaml")) { throw "changelog-writing skill metadata missing" }
           $reportedVersion = & $binary --version
           if ($reportedVersion -ne "contextmink ${{ steps.names.outputs.version }}") {
             throw "binary version mismatch: $reportedVersion"
@@ -305,12 +297,6 @@ jobs:
           if (!(Test-Path "$project/.agents/skills/contextmink/agents/openai.yaml")) { throw "Codex skill metadata missing" }
           if (!(Test-Path $claudeSkill)) { throw "Claude contextmink envelope missing" }
           if ((Get-FileHash $agentSkill).Hash -ne (Get-FileHash $claudeSkill).Hash) { throw "contextmink skill envelopes diverged" }
-          $agentChangelogSkill = "$project/.agents/skills/changelog-writing/SKILL.md"
-          $claudeChangelogSkill = "$project/.claude/skills/changelog-writing/SKILL.md"
-          if (!(Test-Path $agentChangelogSkill)) { throw "Agent Skills changelog-writing skill missing" }
-          if (!(Test-Path "$project/.agents/skills/changelog-writing/agents/openai.yaml")) { throw "changelog-writing skill metadata missing" }
-          if (!(Test-Path $claudeChangelogSkill)) { throw "Claude changelog-writing skill missing" }
-          if ((Get-FileHash $agentChangelogSkill).Hash -ne (Get-FileHash $claudeChangelogSkill).Hash) { throw "changelog-writing skill bodies diverged" }
           if (!(Test-Path "$project/scripts/contextmink.cmd")) { throw "PowerShell diagnostic shim missing" }
           $projectBin = "$project/tools/contextmink/bin"
           $configPath = "$project/.contextmink.toml"
