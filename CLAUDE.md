@@ -11,11 +11,9 @@ This file is the always-loaded repository contract. Load operational detail
 only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
-- **Bounded retrieval**: load the project Contextmink skill before broad or
-  potentially high-output generic reads; direct known-small reads remain direct.
 - **Project integration and release-managed files**: `docs/setup.md`.
-- **Durable local work**: load the project Papertiger skill, then query the live
-  authority with `tools/papertiger/bin/papertiger[.exe]`.
+- **Capability triggers**: the dedicated section below; each trigger names its
+  own operational authority.
 
 Do not grow this file with flag inventories, receipt schemas, or setup recipes.
 Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
