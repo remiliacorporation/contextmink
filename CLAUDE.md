@@ -99,8 +99,8 @@ lifecycle.
 
 ## Verification
 
-Run the source gate before claiming completion. It isolates `cargo package`
-from ordinary test fingerprints:
+Run the source gate before claiming completion. It isolates source verification
+and `cargo package` into separate target directories:
 
 ```text
 scripts/verify_source.sh

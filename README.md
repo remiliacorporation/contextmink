@@ -495,8 +495,9 @@ executable-lock contention without adding self-update machinery.
 
 Native CI remains authoritative and runs formatting, tests, Clippy, and package
 checks on Windows, Linux, and macOS. Run `scripts/verify_source.sh` for the same
-local source gates without allowing Cargo's staged package build to contaminate
-ordinary test fingerprints. On Windows, invoke it through
+local source gates in dedicated `target/source-check` and
+`target/package-check` directories, preventing either prior local artifacts or
+Cargo's staged package build from contaminating the proof. On Windows, invoke it through
 `contextmink-bridge --script scripts/verify_source.sh`. Source checkouts also
 provide an optional cross-link rehearsal for every non-Windows release target.
 Install Zig plus `cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
