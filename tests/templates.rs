@@ -57,43 +57,19 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
 }
 
 #[test]
-fn changelog_skill_is_canonical_and_harness_equivalent() {
-    let template = include_str!("../templates/skills/changelog-writing/SKILL.md");
-    let normalized_template = template.replace("\r\n", "\n");
-    assert!(template.contains("source-faithful, human-facing changelogs"));
-    assert!(template.contains("Identify the exact previous-release and candidate revisions"));
-    assert!(template.contains("Compatibility:"));
-    assert!(template.contains("No material change"));
-    assert!(!template.contains("TODO"));
+fn repository_changelog_skill_is_harness_equivalent() {
+    let agent_skill = include_str!("../.agents/skills/changelog-writing/SKILL.md");
+    let claude_skill = include_str!("../.claude/skills/changelog-writing/SKILL.md");
+    assert_eq!(agent_skill, claude_skill);
+    assert!(agent_skill.contains("source-faithful, human-facing changelogs"));
+    assert!(agent_skill.contains("Identify the exact previous-release and candidate revisions"));
+    assert!(agent_skill.contains("Compatibility:"));
+    assert!(agent_skill.contains("No material change"));
+    assert!(!agent_skill.contains("TODO"));
 
-    let metadata = include_str!("../templates/skills/changelog-writing/agents/openai.yaml");
+    let metadata = include_str!("../.agents/skills/changelog-writing/agents/openai.yaml");
     assert!(metadata.contains("$changelog-writing"));
     assert!(metadata.contains("Write source-faithful human release notes"));
-
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for relative in [
-        ".agents/skills/changelog-writing/SKILL.md",
-        ".claude/skills/changelog-writing/SKILL.md",
-    ] {
-        let installed = root.join(relative);
-        if installed.is_file() {
-            assert_eq!(
-                std::fs::read_to_string(installed)
-                    .unwrap()
-                    .replace("\r\n", "\n"),
-                normalized_template
-            );
-        }
-    }
-    let installed_metadata = root.join(".agents/skills/changelog-writing/agents/openai.yaml");
-    if installed_metadata.is_file() {
-        assert_eq!(
-            std::fs::read_to_string(installed_metadata)
-                .unwrap()
-                .replace("\r\n", "\n"),
-            metadata.replace("\r\n", "\n")
-        );
-    }
 }
 
 #[test]
@@ -116,14 +92,13 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 }
 
 #[test]
-fn source_vendor_guidance_projects_every_managed_skill() {
+fn source_vendor_guidance_projects_the_contextmink_skill() {
     let setup = include_str!("../docs/setup.md");
 
     for required in [
         "templates/skills/contextmink/",
-        "templates/skills/changelog-writing/",
-        ".agents/skills/<name>/SKILL.md",
-        ".claude/skills/<name>/SKILL.md",
+        ".agents/skills/contextmink/SKILL.md",
+        ".claude/skills/contextmink/SKILL.md",
         "agents/openai.yaml",
         "byte-identical",
         "divergent existing destination",
@@ -133,6 +108,7 @@ fn source_vendor_guidance_projects_every_managed_skill() {
             "source-vendor guidance is missing {required:?}"
         );
     }
+    assert!(!setup.contains("templates/skills/changelog-writing/"));
 }
 
 #[test]
@@ -259,9 +235,6 @@ fn release_workflow_verifies_extracted_project_integration() {
         "agent_integration.md",
         ".agents/skills/contextmink/SKILL.md",
         ".claude/skills/contextmink/SKILL.md",
-        ".agents/skills/changelog-writing/SKILL.md",
-        ".agents/skills/changelog-writing/agents/openai.yaml",
-        ".claude/skills/changelog-writing/SKILL.md",
         "scripts/contextmink --json guard-check",
         "scripts/contextmink --json hook-snippet",
         "child_exit_code",
@@ -280,6 +253,7 @@ fn release_workflow_verifies_extracted_project_integration() {
     assert!(!workflow.contains("\"success\"[[:space:]]*:[[:space:]]*true"));
     assert!(!workflow.contains("$captureSmoke.exit_code"));
     assert!(!workflow.contains("$captureSmoke.success"));
+    assert!(!workflow.contains("changelog-writing"));
 }
 
 #[test]

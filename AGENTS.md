@@ -12,7 +12,9 @@ only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
 - **Project integration and release-managed files**: `docs/setup.md`.
-- **Human changelogs and release notes**: load the project changelog-writing skill.
+- **Human changelogs and release notes**: `.agents/skills/changelog-writing/SKILL.md`
+  is the repository-local reviewed copy of Papertiger's canonical skill; it is
+  not a Contextmink setup-managed capability.
 - **Capability triggers**: the dedicated section below; each trigger names its
   own operational authority.
 

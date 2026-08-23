@@ -9,10 +9,9 @@ release, the agent responsible for maintaining the target repository runs:
 ```
 
 The command installs platform-appropriate project-local binaries and launchers,
-generates a real profile, updates `.gitignore`, and installs the Contextmink and
-human-facing changelog-writing skills for open Agent Skills-compatible harnesses
-and Claude Code. The thin Contextmink skill points to
-`tools/contextmink/agent_integration.md`. Setup never edits repository agent
+generates a real profile, updates `.gitignore`, and installs the Contextmink
+skill for open Agent Skills-compatible harnesses and Claude Code. The thin skill
+points to `tools/contextmink/agent_integration.md`. Setup never edits repository agent
 guidance. An existing `.contextmink.toml` is validated and preserved as
 repository-owned configuration; invalid configuration fails before any write.
 The same command restores ignored host binaries in a fresh clone. The
