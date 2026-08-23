@@ -1,8 +1,9 @@
 # Papertiger project reference
 
-Papertiger is optional. Use it for work that crosses sessions or where
-dependencies, external blockers, decisions, probes, or proof obligations make
-live focus and cold-resume context more useful than a short checklist.
+Papertiger is optional. Use it when work has independently reviewable outcomes,
+separate commits, dependencies, external blockers, decisions, probes, or proof
+obligations that merit durable identity and cold-resume context. This can apply
+even when the operator requests all outcomes in one session.
 
 Use that judgment proactively. When authorized development exposes a deferred
 defect, external dependency, consequential unresolved decision, proof debt, or
@@ -10,16 +11,18 @@ validated tooling friction that should survive the session, record it without
 waiting for the operator to say "make a Papertiger task." Do not stop current
 in-scope work merely to hand off the new task unless it blocks or changes the
 authorized scope. Do not create tasks for speculative observations you have not
-reproduced, same-session steps, or status reporting that belongs in a shared
-issue system.
+reproduced, disposable same-session steps inside one durable outcome, or status
+reporting that belongs in a shared issue system.
 
 ## Authority
 
-The default authority is `state/papertiger.sqlite`. Project-local launchers
-default the receipt-selected authority to the canonical repository root even
-when called from a nested directory. `PAPERTIGER_DB` or an explicit global
-`--db` deliberately overrides that launcher default for operational use; do not
-accidentally split ordinary planning across multiple authorities.
+The default authority is `state/papertiger.sqlite`. The native binary walks
+upward from the current directory to find the nearest
+`tools/papertiger/project-install.json`, verifies that its version matches the
+running binary, and resolves its recorded authority against that project root.
+`PAPERTIGER_DB` or an explicit global `--db` deliberately overrides receipt
+discovery for operational use; do not accidentally split ordinary planning
+across multiple authorities.
 
 - Many agents and harnesses may use one canonical SQLite authority in its
   planning worktree. Every connection receives one fixed 500 ms SQLite lock
@@ -32,7 +35,7 @@ accidentally split ordinary planning across multiple authorities.
   work clearly existed.
 - `init` is the only creation and migration command. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current authority schema is v6. Before migrating an older authority, use
+- The current authority schema is v7. Before migrating an older authority, use
   its matching release to archive its current export. Older dump files require
   their matching release, a temporary authority migration, and current-format
   re-export before import.
@@ -47,26 +50,28 @@ facts. Markdown carries doctrine and rationale, never duplicated live status.
 
 ## Start from live truth
 
-From the repository root, choose the project launcher for the active shell, not
-the agent harness:
+Invoke the release-managed native binary directly. In the examples below,
+`papertiger` means the resolved binary at
+`<project-root>/tools/papertiger/bin/papertiger[.exe]`; an installation on
+`PATH` may use the same binary name. Do not route it through a shell script or
+Contextmink's process bridge. Project and authority selection belong to the
+Papertiger binary.
 
 ```bash
-scripts/papertiger status
-scripts/papertiger focus --json
-scripts/papertiger search "<terms>" --json
-scripts/papertiger show <task.seq> --json
-scripts/papertiger audit
-```
-
-```powershell
-.\scripts\papertiger.cmd status
-.\scripts\papertiger.cmd focus --json
-.\scripts\papertiger.cmd search "<terms>" --json
-.\scripts\papertiger.cmd show <task.seq> --json
-.\scripts\papertiger.cmd audit
+papertiger status
+papertiger focus --json
+papertiger search "<terms>" --json
+papertiger show <task.seq> --json
+papertiger audit
 ```
 
 If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
+`status --json` distinguishes all in-progress work from its explicit parent
+and leaf projections. Every bounded projection reports its scope, ordering,
+eligible, returned, and omitted counts; when it is incomplete, follow its
+`continuation_command` rather than treating the visible entries as exhaustive.
+Planner read commands open the SQLite authority read-only by construction;
+they never initialize, migrate, or repair it.
 `task.seq`, written as `N` or `#N`, is the only task identity and selector.
 Prefer bare `N`: it is portable across shells, while `#N` must be quoted where
 `#` begins a comment.
@@ -95,11 +100,23 @@ Windows PowerShell 5.1 uses a legacy encoding for native pipelines by default,
 so send non-ASCII text through a UTF-8 file or configure `$OutputEncoding`.
 
 ```bash
-scripts/papertiger start <task.seq> --why "Why execution starts now"
-scripts/papertiger gate close <task.seq> <name> \
+papertiger add "Durable outcome" --start \
+  --intent "Standalone purpose" --intent-source user \
+  --why "Why this outcome starts now"
+papertiger start <task.seq> --why "Why execution starts now"
+papertiger gate close <task.seq> <name> \
   --evidence file:path/to/receipt.json --sha256 <digest>
-scripts/papertiger done <task.seq>
+papertiger done <task.seq>
 ```
+
+`add --start` creates the task and enters `in_progress` in one transaction. It
+requires a standalone rationale and rolls back the task and both lifecycle
+events if readiness validation fails. `--intent-source`, `--result-source`, and
+`note --source` accept `user`, `agent`, or `external`; they describe who
+supplied stored meaning, independently of the recording `PAPERTIGER_ACTOR`.
+Omitting a source preserves explicit unspecified or legacy state.
+Use `edit <task.seq> --clear-intent-source --why <reason>` to correct a
+mistaken attribution without erasing the intent or its revision history.
 
 `show --json` reports event-derived activity. `started_event` exists only while
 the task is currently in progress, and `completed_event` only while it is
@@ -113,6 +130,14 @@ exact history prefix. Use `--after-cursor` for new events and
 `--before-cursor` for older pages. A cursor from divergent history refuses
 instead of silently reading the wrong timeline.
 
+New task `edit` events carry a
+`papertiger.task_definition_revision.v1` payload with canonical before/after
+values for every changed field. Their public
+`task_definition_revision_state` is `complete`. Historical edit events that
+predate snapshots remain readable as `legacy_without_snapshots`; never infer
+their missing prior values. Pure no-op edits refuse rather than minting a
+misleading revision.
+
 `search` analyzes literal words across title, intent, result, tags, and event
 rationale, requires every term somewhere in the task record, and ranks exact
 phrases plus high-value fields deterministically. It searches done, retired,
@@ -125,8 +150,8 @@ it locally:
 
 ```bash
 git rev-parse --verify 'HEAD^{commit}'
-scripts/papertiger commit add <task.seq> <full-oid> --repo <repo-label>
-scripts/papertiger commit find <full-oid>
+papertiger commit add <task.seq> <full-oid> --repo <repo-label>
+papertiger commit find <full-oid>
 ```
 
 This association is optional evidence for lookup. Papertiger does not invoke Git,
@@ -150,11 +175,29 @@ separate and accepts no replacement. A task with inbound replacements can only
 be retired into another live canonical task; rejection or bare retirement
 refuses rather than leaving a replacement chain that ends in dead work.
 
-Do not create Papertiger tasks for same-session checklist steps. `in_progress`
-means work began and remains unfinished; it deliberately survives a dead or
-replaced session and needs no reassignment. A fresh agent reads the task and
-continues it directly. Add a task note only when handoff context beyond the
-stored intent, result, gates, and history is genuinely useful.
+Do not create Papertiger tasks for disposable same-session checklist steps
+inside one durable outcome. Create separate tasks when outcomes are independently
+reviewable, separately committed, or have distinct decisions or proof—even if
+one session is expected to finish them. `in_progress` means work began and
+remains unfinished; it deliberately survives a dead or replaced session and
+needs no reassignment. A fresh agent reads the task and continues it directly.
+Add a task note only when handoff context beyond the stored intent, result,
+gates, and history is genuinely useful.
+
+## Repository guidance discovery trip-wire
+
+After reviewing this contract, keep one concise trigger in the repository-owned
+agent guidance; a bare link or generic "planning" label is too easy for some
+harnesses to ignore. Use this wording or an equivalent with the same boundaries:
+
+> Before editing multi-outcome or separate-commit work, or work matching an
+> existing durable task, load the project Papertiger skill. Skip one bounded
+> edit, read-only review, disposable same-session steps, and domain-owned or
+> shared-team lifecycle.
+
+`setup-project` never edits `AGENTS.md`, `CLAUDE.md`, or another repository-owned
+context file. The project owner must review and place this trip-wire; the managed
+skill remains the canonical command and authority contract.
 
 ## Project-local installation
 
@@ -164,8 +207,6 @@ stored intent, result, gates, and history is genuinely useful.
 - `tools/papertiger/agent_integration.md`
 - `tools/papertiger/project-install.json` (tracked version, authority path, and
   managed-text hashes; no platform-binary hash)
-- `scripts/papertiger`
-- `scripts/papertiger.cmd`
 - `.agents/skills/papertiger/SKILL.md`
 - `.claude/skills/papertiger/SKILL.md`
 - additive Papertiger entries in `.gitignore`
@@ -178,10 +219,6 @@ contract and remove `tools/papertiger/README.md`,
 bundle, unrecognized README, or full source tree refuses even with
 `--replace-managed`. Later retired paths require an exact prior receipt hash.
 
-Commit `scripts/papertiger` with executable mode. On a host filesystem that
-does not preserve that bit, run `git update-index --chmod=+x
-scripts/papertiger` before committing it.
-
 It never edits `AGENTS.md` or `CLAUDE.md`, updates the harness, installs hooks or
 an MCP server, touches global configuration, or initializes or migrates
 authority. Setup never invokes Git, and `.gitignore` cannot untrack an existing
@@ -190,8 +227,8 @@ path; if the host binary or selected authority is tracked, review it and use
 local file. On a first cutover, pass
 `--authority-path <project-relative path>` when the project does not use
 `state/papertiger.sqlite`; later upgrades preserve the receipt value. For an
-upgrade, run `setup-project` from the newly verified release binary; the
-existing project launcher cannot update itself. Preview with `setup-project
+upgrade, run `setup-project` from the newly verified release binary; a
+project-local binary cannot overwrite itself while running on Windows. Preview with `setup-project
 <root> --dry-run --json`.
 Receipt-matching upgrades and missing-file repair are automatic;
 `--replace-managed` is only for a reviewed pre-receipt cutover or explicit
@@ -200,8 +237,8 @@ must be moved or deleted deliberately. An older release refuses to downgrade a
 newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
-The receipt hashes the managed text surfaces: both launchers, the canonical
-contract, and both skill envelopes. It also owns the host-local binary but does
+The receipt hashes the managed text surfaces: the canonical contract and both
+skill envelopes. It also owns the host-local binary but does
 not put platform-specific binary bytes in that text hash list; each applied
 setup upgrades the binary to the exact bytes of the running release. Modified
 receipt-hashed text refuses unless the operator explicitly reviews replacement.

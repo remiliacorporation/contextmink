@@ -1,27 +1,19 @@
 {
   "schema": "papertiger.project_install.v1",
-  "papertiger_version": "0.7.1",
+  "papertiger_version": "0.9.0-rc.3",
   "authority_path": "state/papertiger.sqlite",
   "managed_files": [
     {
-      "path": "scripts/papertiger",
-      "sha256": "068c29b5a92b3f7c71d537c759bdf4dbee3b0a408976deec7ccaa3ae7ee22ffe"
-    },
-    {
-      "path": "scripts/papertiger.cmd",
-      "sha256": "865458e7da8428a34ed4a587fa469feca309ec0f0cc6e425b5487cac07b823ad"
-    },
-    {
       "path": "tools/papertiger/agent_integration.md",
-      "sha256": "c780c86a71be0231b1bcf50ccd001b9217a9dc9e9b3908d75354af8f02db1d61"
+      "sha256": "85ea0c3f3c2588687c3064bec32b547058016637cc8e25a21963055235873e2b"
     },
     {
       "path": ".agents/skills/papertiger/SKILL.md",
-      "sha256": "9402ccdec42a155abc4d2e6e7c6874c77cb652ecdc09c84e7b185e381eba8298"
+      "sha256": "fb3806c584e89ebec6814f9a3c9e7a286052aaae508a4f4099c507a633e3398d"
     },
     {
       "path": ".claude/skills/papertiger/SKILL.md",
-      "sha256": "9402ccdec42a155abc4d2e6e7c6874c77cb652ecdc09c84e7b185e381eba8298"
+      "sha256": "fb3806c584e89ebec6814f9a3c9e7a286052aaae508a4f4099c507a633e3398d"
     }
   ]
 }
