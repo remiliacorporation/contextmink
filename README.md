@@ -472,8 +472,10 @@ exclude_globs = [
 Accepted keys are `profile`, `exclude_globs`,
 `destructive_guard_recursive_delete_fragments`, and
 `destructive_guard_delete_fragments`; unknown keys, duplicate keys, and
-malformed values are hard errors. Exclude globs match paths relative to the
-config file's directory, so anchored rules hold from any working directory.
+malformed values are hard errors. Repository exclude globs match paths relative
+to the config file's directory and apply only inside that tree, so anchored
+rules hold from any working directory without leaking into foreign scan roots.
+Built-in build/dependency exclusions apply inside every explicit scan root.
 Empty profiles and the shipped placeholder profile are hard errors. Use
 `--config <file>` for an explicit policy or `--no-config` for built-in defaults
 only.

@@ -37,13 +37,18 @@ impl Drop for Fixture {
 }
 
 fn config(root: &Path, patterns: &[&str]) -> ContextConfig {
-    let mut excludes = GlobSetBuilder::new();
+    let mut repository_excludes = GlobSetBuilder::new();
     for pattern in patterns {
-        excludes.add(Glob::new(pattern).expect("test exclude glob must compile"));
+        repository_excludes.add(Glob::new(pattern).expect("test exclude glob must compile"));
     }
     ContextConfig {
         profile: Some("files-tests".to_owned()),
-        excludes: excludes.build().expect("test exclude set must compile"),
+        builtin_excludes: GlobSetBuilder::new()
+            .build()
+            .expect("empty builtin exclude set must compile"),
+        repository_excludes: repository_excludes
+            .build()
+            .expect("test repository exclude set must compile"),
         policy_root: canonical_normalized(root),
         destructive_guard: DestructiveGuardConfig::default(),
     }

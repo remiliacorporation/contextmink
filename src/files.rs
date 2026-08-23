@@ -125,35 +125,56 @@ pub(crate) fn collect_files(
 
 /// Keeps selection paths and exclusion-policy paths in their distinct spaces.
 /// Include globs use `scan_path`, which is relative to the explicit scan root.
-/// Exclude globs use `policy_path`, which is relative to the config root.
+/// Built-in excludes use `scan_path`; repository excludes use a path relative
+/// to the owning config root and never apply to foreign sibling trees.
 #[derive(Clone)]
 struct PolicyMapper {
     scan_root: PathBuf,
     root_is_file: bool,
-    /// Config-root-relative prefix for this scan root; `None` when no config
-    /// root applies (no config, or the root lives outside the config tree),
-    /// which falls back to matching the path exactly as spelled.
-    policy_prefix: Option<String>,
+    repository_relation: RepositoryRootRelation,
+}
+
+#[derive(Clone)]
+enum RepositoryRootRelation {
+    /// The explicit root is equal to or below the policy root. `prefix` is the
+    /// explicit root's repository-relative path.
+    ScanInsidePolicy { prefix: String },
+    /// The explicit root is above the policy root. `prefix` locates the policy
+    /// root inside the scan, so only that subtree receives repository policy.
+    PolicyInsideScan { prefix: String },
+    /// No repository policy applies: no config was loaded or the explicit root
+    /// is disjoint from the selected config tree.
+    Disjoint,
 }
 
 impl PolicyMapper {
     fn for_root(root: &Path, config: &ContextConfig) -> Self {
-        let policy_prefix = match (&config.policy_root, canonical_normalized(root)) {
+        let repository_relation = match (&config.policy_root, canonical_normalized(root)) {
             (Some(policy_root), Some(canonical_root)) => {
                 if canonical_root == *policy_root {
-                    Some(String::new())
+                    RepositoryRootRelation::ScanInsidePolicy {
+                        prefix: String::new(),
+                    }
+                } else if let Some(prefix) = canonical_root.strip_prefix(&format!("{policy_root}/"))
+                {
+                    RepositoryRootRelation::ScanInsidePolicy {
+                        prefix: prefix.to_owned(),
+                    }
+                } else if let Some(prefix) = policy_root.strip_prefix(&format!("{canonical_root}/"))
+                {
+                    RepositoryRootRelation::PolicyInsideScan {
+                        prefix: prefix.to_owned(),
+                    }
                 } else {
-                    canonical_root
-                        .strip_prefix(&format!("{policy_root}/"))
-                        .map(str::to_owned)
+                    RepositoryRootRelation::Disjoint
                 }
             }
-            _ => None,
+            _ => RepositoryRootRelation::Disjoint,
         };
         Self {
             scan_root: root.to_path_buf(),
             root_is_file: root.is_file(),
-            policy_prefix,
+            repository_relation,
         }
     }
 
@@ -167,18 +188,36 @@ impl PolicyMapper {
         trim_normalized_path(&normalize_path(selected)).to_owned()
     }
 
-    fn policy_path<'a>(&self, path: &Path, scan_path: &'a str) -> Cow<'a, str> {
-        let Some(prefix) = &self.policy_prefix else {
-            return Cow::Owned(trim_normalized_path(&normalize_path(path)).to_owned());
-        };
-        if self.root_is_file || scan_path.is_empty() {
-            Cow::Owned(prefix.clone())
-        } else if prefix.is_empty() {
-            Cow::Borrowed(scan_path)
-        } else {
-            Cow::Owned(format!("{prefix}/{scan_path}"))
+    fn repository_path<'a>(&self, scan_path: &'a str) -> Option<Cow<'a, str>> {
+        match &self.repository_relation {
+            RepositoryRootRelation::ScanInsidePolicy { prefix } => {
+                if self.root_is_file || scan_path.is_empty() {
+                    Some(Cow::Owned(prefix.clone()))
+                } else if prefix.is_empty() {
+                    Some(Cow::Borrowed(scan_path))
+                } else {
+                    Some(Cow::Owned(format!("{prefix}/{scan_path}")))
+                }
+            }
+            RepositoryRootRelation::PolicyInsideScan { prefix } => {
+                if scan_path == prefix {
+                    Some(Cow::Borrowed(""))
+                } else {
+                    scan_path
+                        .strip_prefix(prefix)
+                        .and_then(|relative| relative.strip_prefix('/'))
+                        .map(Cow::Borrowed)
+                }
+            }
+            RepositoryRootRelation::Disjoint => None,
         }
     }
+}
+
+#[derive(Default)]
+struct ExplicitExcludedRoots {
+    builtin: Vec<String>,
+    repository: Vec<String>,
 }
 
 struct CollectState {
@@ -195,7 +234,7 @@ fn walk_root(
     include_matcher: &Option<GlobSet>,
     path_terms: &[String],
     extension_matcher: &[String],
-    explicit_excluded_roots: &[String],
+    explicit_excluded_roots: &ExplicitExcludedRoots,
     state: &mut CollectState,
     nesting: usize,
 ) -> Result<()> {
@@ -209,17 +248,22 @@ fn walk_root(
         .git_exclude(!options.with_git_ignored)
         .parents(!options.with_git_ignored);
     if !options.with_excluded {
-        let excludes = config.excludes.clone();
-        let explicit_roots = explicit_excluded_roots.to_vec();
+        let builtin_excludes = config.builtin_excludes.clone();
+        let repository_excludes = config.repository_excludes.clone();
+        let explicit_builtin_roots = explicit_excluded_roots.builtin.clone();
+        let explicit_repository_roots = explicit_excluded_roots.repository.clone();
         let filter_mapper = mapper.clone();
         walk.filter_entry(move |entry| {
             let scan_path = filter_mapper.scan_path(entry.path());
-            let policy_path = filter_mapper.policy_path(entry.path(), &scan_path);
-            !is_excluded_by_policy(
-                &policy_path,
+            let repository_path = filter_mapper.repository_path(&scan_path);
+            !is_path_excluded(
+                &scan_path,
+                repository_path.as_deref(),
                 entry.file_type().is_some_and(|kind| kind.is_dir()),
-                &excludes,
-                &explicit_roots,
+                &builtin_excludes,
+                &repository_excludes,
+                &explicit_builtin_roots,
+                &explicit_repository_roots,
             )
         });
     }
@@ -387,7 +431,7 @@ fn collect_pruned_repo_roots_for_visited_dirs(
     visited_dirs: &HashSet<PathBuf>,
     config: &ContextConfig,
     with_excluded: bool,
-    explicit_excluded_roots: &[String],
+    explicit_excluded_roots: &ExplicitExcludedRoots,
 ) -> Result<Vec<PathBuf>> {
     let dirs = visited_dirs
         .iter()
@@ -453,7 +497,7 @@ fn collect_pruned_repo_roots(
     visited_dirs: &HashSet<PathBuf>,
     config: &ContextConfig,
     with_excluded: bool,
-    explicit_excluded_roots: &[String],
+    explicit_excluded_roots: &ExplicitExcludedRoots,
     output: &mut Vec<PathBuf>,
 ) -> Result<()> {
     probe_children_for_repos(
@@ -475,7 +519,7 @@ fn probe_children_for_repos(
     visited_dirs: &HashSet<PathBuf>,
     config: &ContextConfig,
     with_excluded: bool,
-    explicit_excluded_roots: &[String],
+    explicit_excluded_roots: &ExplicitExcludedRoots,
     remaining_probe_depth: usize,
     output: &mut Vec<PathBuf>,
 ) -> Result<()> {
@@ -508,12 +552,15 @@ fn probe_children_for_repos(
         }
         if !with_excluded {
             let scan_path = mapper.scan_path(&path);
-            let policy_path = mapper.policy_path(&path, &scan_path);
-            if is_excluded_by_policy(
-                &policy_path,
+            let repository_path = mapper.repository_path(&scan_path);
+            if is_path_excluded(
+                &scan_path,
+                repository_path.as_deref(),
                 true,
-                &config.excludes,
-                explicit_excluded_roots,
+                &config.builtin_excludes,
+                &config.repository_excludes,
+                &explicit_excluded_roots.builtin,
+                &explicit_excluded_roots.repository,
             ) {
                 continue;
             }
@@ -540,26 +587,29 @@ fn explicit_excluded_roots(
     paths: &[PathBuf],
     config: &ContextConfig,
     with_excluded: bool,
-) -> Vec<String> {
+) -> ExplicitExcludedRoots {
     if with_excluded {
-        return Vec::new();
+        return ExplicitExcludedRoots::default();
     }
-    paths
-        .iter()
-        .filter_map(|path| {
-            let mapper = PolicyMapper::for_root(path, config);
-            let scan_path = mapper.scan_path(path);
-            let policy_path = mapper.policy_path(path, &scan_path);
-            if policy_path.is_empty() || policy_path == "." {
-                return None;
-            }
-            if matches_exclude_policy(&policy_path, path.is_dir(), &config.excludes) {
-                Some(policy_path.into_owned())
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut roots = ExplicitExcludedRoots::default();
+    for path in paths {
+        let mapper = PolicyMapper::for_root(path, config);
+        let scan_path = mapper.scan_path(path);
+        if !scan_path.is_empty()
+            && scan_path != "."
+            && matches_exclude_globset(&scan_path, path.is_dir(), &config.builtin_excludes)
+        {
+            roots.builtin.push(scan_path.clone());
+        }
+        if let Some(repository_path) = mapper.repository_path(&scan_path)
+            && !repository_path.is_empty()
+            && repository_path != "."
+            && matches_exclude_globset(&repository_path, path.is_dir(), &config.repository_excludes)
+        {
+            roots.repository.push(repository_path.into_owned());
+        }
+    }
+    roots
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -571,19 +621,22 @@ fn file_is_included(
     extension_matcher: &[String],
     config: &ContextConfig,
     with_excluded: bool,
-    explicit_excluded_roots: &[String],
+    explicit_excluded_roots: &ExplicitExcludedRoots,
 ) -> bool {
     let scan_path = mapper.scan_path(path);
     if !with_excluded {
         if path.file_name().is_some_and(|name| name == ".git") {
             return false;
         }
-        let policy_path = mapper.policy_path(path, &scan_path);
-        if is_excluded_by_policy(
-            &policy_path,
+        let repository_path = mapper.repository_path(&scan_path);
+        if is_path_excluded(
+            &scan_path,
+            repository_path.as_deref(),
             false,
-            &config.excludes,
-            explicit_excluded_roots,
+            &config.builtin_excludes,
+            &config.repository_excludes,
+            &explicit_excluded_roots.builtin,
+            &explicit_excluded_roots.repository,
         ) {
             return false;
         }
@@ -614,30 +667,45 @@ fn file_is_included(
     true
 }
 
-fn is_excluded_by_policy(
-    policy_path: &str,
+fn is_path_excluded(
+    scan_path: &str,
+    repository_path: Option<&str>,
+    is_dir: bool,
+    builtin_excludes: &GlobSet,
+    repository_excludes: &GlobSet,
+    explicit_builtin_roots: &[String],
+    explicit_repository_roots: &[String],
+) -> bool {
+    is_excluded_by_globset(scan_path, is_dir, builtin_excludes, explicit_builtin_roots)
+        || repository_path.is_some_and(|path| {
+            is_excluded_by_globset(path, is_dir, repository_excludes, explicit_repository_roots)
+        })
+}
+
+fn is_excluded_by_globset(
+    path: &str,
     is_dir: bool,
     excludes: &GlobSet,
     explicit_excluded_roots: &[String],
 ) -> bool {
-    if policy_path.is_empty() || policy_path == "." {
+    if path.is_empty() || path == "." {
         return false;
     }
-    if !matches_exclude_policy(policy_path, is_dir, excludes) {
+    if !matches_exclude_globset(path, is_dir, excludes) {
         return false;
     }
     let Some(relative_to_explicit_root) =
-        relative_to_explicit_excluded_root(policy_path, explicit_excluded_roots)
+        relative_to_explicit_excluded_root(path, explicit_excluded_roots)
     else {
         return true;
     };
     if relative_to_explicit_root.is_empty() {
         return false;
     }
-    matches_exclude_policy(relative_to_explicit_root, is_dir, excludes)
+    matches_exclude_globset(relative_to_explicit_root, is_dir, excludes)
 }
 
-fn matches_exclude_policy(path: &str, is_dir: bool, excludes: &GlobSet) -> bool {
+fn matches_exclude_globset(path: &str, is_dir: bool, excludes: &GlobSet) -> bool {
     if excludes.is_match(path) {
         return true;
     }

@@ -45,7 +45,10 @@ pub(crate) struct DestructiveGuardConfig {
 #[allow(dead_code)]
 pub(crate) struct ContextConfig {
     pub(crate) profile: Option<String>,
-    pub(crate) excludes: GlobSet,
+    /// Generic build/dependency metadata excluded in every explicit scan root.
+    pub(crate) builtin_excludes: GlobSet,
+    /// Repository-owned exclusions, applied only to paths inside `policy_root`.
+    pub(crate) repository_excludes: GlobSet,
     /// Canonical, `/`-normalized directory of the loaded config file.
     /// Exclude globs are matched against paths relative to this root, so
     /// policy holds even when scan roots are absolute or `..`-relative.
@@ -70,22 +73,27 @@ pub(crate) fn load_context_config(
             policy_root = Some(selected_config_policy_root(path)?);
         }
     }
-    let mut builder = GlobSetBuilder::new();
+    let mut builtin_builder = GlobSetBuilder::new();
     for pattern in BUILTIN_EXCLUDES {
-        builder.add(Glob::new(pattern).with_context(|| format!("invalid builtin glob {pattern}"))?);
+        builtin_builder
+            .add(Glob::new(pattern).with_context(|| format!("invalid builtin glob {pattern}"))?);
     }
+    let mut repository_builder = GlobSetBuilder::new();
     if let Some(excludes) = &raw.exclude_globs {
         for pattern in excludes {
-            builder.add(
+            repository_builder.add(
                 Glob::new(pattern).with_context(|| format!("invalid exclude glob {pattern}"))?,
             );
         }
     }
     Ok(ContextConfig {
         profile: raw.profile,
-        excludes: builder
+        builtin_excludes: builtin_builder
             .build()
-            .context("failed to build exclude glob set")?,
+            .context("failed to build builtin exclude glob set")?,
+        repository_excludes: repository_builder
+            .build()
+            .context("failed to build repository exclude glob set")?,
         policy_root,
         destructive_guard: DestructiveGuardConfig {
             recursive_delete_fragments: raw

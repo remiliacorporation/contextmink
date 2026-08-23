@@ -3302,6 +3302,70 @@ fn excludes_hold_for_absolute_scan_roots() {
 }
 
 #[test]
+fn ancestor_scan_scopes_repository_excludes_to_their_policy_root() {
+    let root = fixture_root("ancestor-root-policy");
+    let project = root.join("owned-project");
+    let sibling = root.join("foreign-project");
+    fs::create_dir_all(project.join("state")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(sibling.join("state")).unwrap();
+    fs::create_dir_all(sibling.join("target")).unwrap();
+    fs::write(
+        project.join(".contextmink.toml"),
+        "profile = \"owned-project\"\nexclude_globs = [\"state/**\"]\n",
+    )
+    .unwrap();
+    fs::write(project.join("state").join("authority.sqlite"), "owned\n").unwrap();
+    fs::write(project.join("src").join("lib.rs"), "pub fn retained() {}\n").unwrap();
+    fs::write(sibling.join("state").join("foreign.txt"), "foreign\n").unwrap();
+    fs::write(sibling.join("target").join("build.log"), "generated\n").unwrap();
+
+    let absolute_root = root.to_string_lossy().replace('\\', "/");
+    let files = parse_json_output(
+        &project,
+        &[
+            "--json",
+            "files",
+            &absolute_root,
+            "--with-git-ignored",
+            "--limit",
+            "50",
+        ],
+    );
+    let listed = files["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert!(
+        listed
+            .iter()
+            .any(|path| path.ends_with("owned-project/src/lib.rs")),
+        "owned project content must remain visible: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .all(|path| !path.ends_with("owned-project/state/authority.sqlite")),
+        "repository policy must protect its subtree in an ancestor scan: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|path| path.ends_with("foreign-project/state/foreign.txt")),
+        "repository policy must not leak into a foreign sibling: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .all(|path| !path.ends_with("foreign-project/target/build.log")),
+        "built-in excludes must still apply across the explicit scan root: {listed:?}"
+    );
+}
+
+#[test]
 fn bare_config_filename_keeps_excludes_for_absolute_scan_roots() {
     let root = fixture_root("bare-config-policy-root");
     fs::write(
