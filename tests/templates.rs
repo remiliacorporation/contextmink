@@ -252,6 +252,8 @@ fn cross_check_rehearses_every_non_windows_release_target() {
     assert!(cross_check.contains("--install-targets"));
     assert!(cross_check.contains("rustup target add --toolchain"));
     assert!(cross_check.contains("--release --bins --target"));
+    assert!(cross_check.contains("-Dwarnings -Alinker-messages"));
+    assert!(cross_check.contains("RUSTFLAGS=\"$cross_rustflags\" cargo zigbuild"));
 }
 
 #[test]

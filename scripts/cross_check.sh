@@ -81,9 +81,14 @@ if ((${#missing_targets[@]})); then
 fi
 
 echo "contextmink cross-check toolchain: $active_toolchain; zig $(zig version)" >&2
+# Rust's linker_messages lint reports non-native SDK discovery and Zig linker
+# compatibility diagnostics on this rehearsal host. Native release jobs retain
+# link/runtime authority; deny every other Rust warning while silencing only
+# that environment-owned lint.
+cross_rustflags="${RUSTFLAGS:-} -Dwarnings -Alinker-messages"
 for target in "${targets[@]}"; do
     echo "contextmink cross-check compile surface: $target" >&2
-    cargo zigbuild --locked --all-targets --target "$target"
+    RUSTFLAGS="$cross_rustflags" cargo zigbuild --locked --all-targets --target "$target"
     echo "contextmink cross-check release binary: $target" >&2
-    cargo zigbuild --locked --release --bins --target "$target"
+    RUSTFLAGS="$cross_rustflags" cargo zigbuild --locked --release --bins --target "$target"
 done

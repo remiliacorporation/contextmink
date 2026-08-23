@@ -508,8 +508,10 @@ explicit opt-in to install them into the pinned toolchain. The rehearsal builds
 the full compile surface and release binaries for Linux x64, Intel macOS, and
 Apple Silicon macOS. A Windows host can report a missing Xcode SDK while still
 completing Zig compilation; native GitHub macOS jobs remain the link/runtime
-authority. Zig is not a normal build dependency, and the repository does not
-retain host-specific compiler wrappers.
+authority. The rehearsal denies every Rust warning except the environment-owned
+`linker_messages` lint that carries those non-native SDK and Zig linker notices.
+Zig is not a normal build dependency, and the repository does not retain
+host-specific compiler wrappers.
 
 Before handing a commit to the public artifact workflow, run
 `scripts/verify_release.sh` (through `contextmink-bridge --script` on Windows).
