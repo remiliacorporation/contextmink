@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 
+use crate::config::project_setup::SkillTarget;
 use crate::destructive_guard::ShellDialect;
 
 pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
@@ -725,6 +726,13 @@ pub(crate) enum Command {
             help = "Replace a reviewed modified or pre-receipt managed destination; receipt-owned upgrades need no flag and .contextmink.toml is always preserved"
         )]
         replace_managed: bool,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "auto",
+            help = "Select Contextmink skill discovery: auto preserves a receipt choice or detects existing harness markers once; explicit values reselect safely"
+        )]
+        skill_target: SkillTarget,
     },
     /// Remove receipt-owned project integration without touching repository-owned policy.
     #[command(

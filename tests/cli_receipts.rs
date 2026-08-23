@@ -243,6 +243,8 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     assert_eq!(setup["schema"], "contextmink.project_setup.v2");
     assert_eq!(setup["dry_run"], false);
     assert_eq!(setup["ready"], true);
+    assert_eq!(setup["requested_skill_target"], "auto");
+    assert_eq!(setup["resolved_skill_target"], "agents");
     assert_eq!(
         fs::read_to_string(root.join("AGENTS.md")).unwrap(),
         "existing guidance\n"
@@ -256,11 +258,7 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
         root.join(".agents/skills/contextmink/agents/openai.yaml")
             .is_file()
     );
-    assert!(root.join(".claude/skills/contextmink/SKILL.md").is_file());
-    assert_eq!(
-        fs::read(root.join(".agents/skills/contextmink/SKILL.md")).unwrap(),
-        fs::read(root.join(".claude/skills/contextmink/SKILL.md")).unwrap()
-    );
+    assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
     assert!(root.join("scripts/contextmink").is_file());
     assert!(root.join("scripts/contextmink.cmd").is_file());
     assert!(
@@ -271,13 +269,18 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
         &fs::read(root.join("tools/contextmink/project-install.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(install_receipt["schema"], "contextmink.project_install.v1");
+    assert_eq!(install_receipt["schema"], "contextmink.project_install.v2");
     assert_eq!(
         install_receipt["contextmink_version"],
         env!("CARGO_PKG_VERSION")
     );
     assert_eq!(install_receipt["managed_gitignore_block"], true);
     assert_eq!(install_receipt["managed_gitignore_file"], true);
+    assert_eq!(install_receipt["skill_target"], "agents");
+    assert!(
+        root.join("tools/contextmink/bin/runtime-install.json")
+            .is_file()
+    );
     assert!(
         install_receipt["managed_files"]
             .as_array()
@@ -338,6 +341,63 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     assert_eq!(
         fs::read_to_string(root.join("scripts/contextmink")).unwrap(),
         "older launcher\n"
+    );
+}
+
+#[test]
+fn setup_project_skill_target_controls_and_freezes_harness_residence() {
+    let root = fixture_root("setup-project-skill-target");
+    fs::remove_file(root.join(".contextmink.toml")).unwrap();
+
+    let none = parse_json_output(
+        &root,
+        &["--json", "setup-project", ".", "--skill-target", "none"],
+    );
+    assert_eq!(none["resolved_skill_target"], "none");
+    assert!(!root.join(".agents/skills/contextmink/SKILL.md").exists());
+    assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
+
+    let both = parse_json_output(
+        &root,
+        &["--json", "setup-project", ".", "--skill-target", "both"],
+    );
+    assert_eq!(both["resolved_skill_target"], "both");
+    assert!(root.join(".agents/skills/contextmink/SKILL.md").is_file());
+    assert!(root.join(".claude/skills/contextmink/SKILL.md").is_file());
+
+    let frozen = parse_json_output(&root, &["--json", "setup-project", "."]);
+    assert_eq!(frozen["requested_skill_target"], "auto");
+    assert_eq!(frozen["resolved_skill_target"], "both");
+}
+
+#[test]
+fn setup_project_reports_unowned_deselected_skill_as_unready() {
+    let root = fixture_root("setup-project-unowned-skill");
+    fs::remove_file(root.join(".contextmink.toml")).unwrap();
+    let skill = root.join(".claude/skills/contextmink/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "unreceipted project content\n").unwrap();
+
+    let setup = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "setup-project",
+            ".",
+            "--skill-target",
+            "none",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(setup["ready"], false);
+    assert!(setup["actions"].as_array().unwrap().iter().any(|action| {
+        action["path"] == ".claude/skills/contextmink/SKILL.md"
+            && action["action"] == "unowned_refusal"
+    }));
+    assert!(!root.join("tools/contextmink/project-install.json").exists());
+    assert_eq!(
+        fs::read_to_string(skill).unwrap(),
+        "unreceipted project content\n"
     );
 }
 

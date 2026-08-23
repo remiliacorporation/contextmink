@@ -75,6 +75,7 @@ fn run_application() -> Result<()> {
             project_root,
             dry_run,
             replace_managed,
+            skill_target,
         } => {
             reject_inspection_globals(&cli, "setup-project", "installation")?;
             let result = setup_project(SetupProjectRequest {
@@ -82,6 +83,7 @@ fn run_application() -> Result<()> {
                 source_binary: None,
                 dry_run: *dry_run,
                 replace_managed: *replace_managed,
+                skill_target: *skill_target,
             })?;
             let mut stdout = io::stdout();
             if cli.json {
@@ -90,8 +92,13 @@ fn run_application() -> Result<()> {
             } else {
                 writeln!(
                     stdout,
-                    "[contextmink] setup-project root={} profile={} dry_run={} ready={}",
-                    result.project_root, result.profile, result.dry_run, result.ready
+                    "[contextmink] setup-project root={} profile={} dry_run={} ready={} requested_skill_target={} resolved_skill_target={}",
+                    result.project_root,
+                    result.profile,
+                    result.dry_run,
+                    result.ready,
+                    result.requested_skill_target.as_str(),
+                    result.resolved_skill_target.as_str()
                 )?;
                 write_setup_actions(&mut stdout, &result.actions)?;
                 if !result.agent_guidance_files_found.is_empty() {
@@ -590,10 +597,12 @@ fn write_setup_actions(
             SetupActionKind::Replace => "replace",
             SetupActionKind::Unchanged => "unchanged",
             SetupActionKind::PreserveRepositoryOwned => "preserve_repository_owned",
+            SetupActionKind::PreserveUnowned => "preserve_unowned",
             SetupActionKind::MakeExecutable => "make_executable",
             SetupActionKind::UpdateGitignore => "update_gitignore",
             SetupActionKind::RemoveManaged => "remove_managed",
             SetupActionKind::RemoveRetired => "remove_retired",
+            SetupActionKind::UnownedRefusal => "unowned_refusal",
             SetupActionKind::ModifiedRefusal => "modified_refusal",
         };
         if action.requires_replace_managed {
