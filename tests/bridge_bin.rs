@@ -140,6 +140,28 @@ fn print_argv_reports_exact_arguments_for_every_channel() {
 }
 
 #[test]
+fn script_print_argv_normalizes_one_optional_separator() {
+    let root = temp_root("script-separator");
+    let script = root.join("probe.sh");
+    fs::write(&script, "exit 0\n").unwrap();
+    let script = forward_slashes(&script);
+
+    let output = run_bridge(&["--print-argv", "--script", &script, "--", "--flag", "value"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("argv[0]={script}\nargv[1]=--flag\nargv[2]=value\n")
+    );
+
+    let output = run_bridge(&["--print-argv", "--script", &script, "--", "--"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("argv[0]={script}\nargv[1]=--\n")
+    );
+}
+
+#[test]
 fn argfile_distinguishes_invalid_encoding_from_a_missing_path() {
     let root = temp_root("argfile-invalid-encoding");
     let argfile = root.join("args.txt");
