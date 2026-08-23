@@ -210,10 +210,14 @@ jobs:
 
           project="${verify_root}/integration-project"
           mkdir -p "${project}/nested/work"
+          printf 'fixture guidance\n' > "${project}/AGENTS.md"
+          printf 'fixture guidance\n' > "${project}/CLAUDE.md"
           "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v2"' "${verify_root}/setup-smoke.json"
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/setup-smoke.json"
+          grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"both"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/project-install.json"
+          test -f "${project}/tools/contextmink/bin/runtime-install.json"
           test -f "${project}/tools/contextmink/agent_integration.md"
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
@@ -229,6 +233,10 @@ jobs:
           "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-repair-apply.json"
           test -f "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
           grep -Fq 'exclude_globs = ["generated/**"]' "${project}/.contextmink.toml"
+          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" --skill-target agents > "${verify_root}/setup-reselect.json"
+          grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"agents"' "${verify_root}/setup-reselect.json"
+          test -f "${project}/.agents/skills/contextmink/SKILL.md"
+          test ! -e "${project}/.claude/skills/contextmink/SKILL.md"
           printf 'fixture\n' > "${project}/nested/work/fixture.txt"
           (cd "${project}" && scripts/contextmink --json files . --limit 1) > "${verify_root}/root-smoke.json"
           (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --limit 1) > "${verify_root}/nested-smoke.json"
@@ -252,9 +260,19 @@ jobs:
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/uninstall-smoke.json"
           "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${project}" > "${verify_root}/uninstall-apply.json"
           test ! -e "${project}/tools/contextmink/project-install.json"
+          test ! -e "${project}/tools/contextmink/bin/runtime-install.json"
           test ! -e "${project}/.agents/skills/contextmink/SKILL.md"
           test ! -e "${project}/.claude/skills/contextmink/SKILL.md"
           grep -Fq 'exclude_globs = ["generated/**"]' "${project}/.contextmink.toml"
+
+          no_skill_project="${verify_root}/no-skill-project"
+          mkdir -p "${no_skill_project}"
+          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${no_skill_project}" --skill-target none > "${verify_root}/setup-none.json"
+          grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"none"' "${verify_root}/setup-none.json"
+          test ! -e "${no_skill_project}/.agents/skills/contextmink/SKILL.md"
+          test ! -e "${no_skill_project}/.claude/skills/contextmink/SKILL.md"
+          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${no_skill_project}" > "${verify_root}/uninstall-none.json"
+          test ! -e "${no_skill_project}/tools/contextmink/project-install.json"
 
       - name: Verify packaged release (Windows)
         if: runner.os == 'Windows'
@@ -299,9 +317,13 @@ jobs:
           $project = "$verifyRoot/integration-project"
           New-Item -ItemType Directory -Force -Path "$project/nested/work" | Out-Null
           $project = (Resolve-Path $project).Path
+          Set-Content -Path "$project/AGENTS.md" -Value "fixture guidance" -NoNewline
+          Set-Content -Path "$project/CLAUDE.md" -Value "fixture guidance" -NoNewline
           $setupSmoke = (& $binary --json setup-project $project | Out-String) | ConvertFrom-Json
           if ($setupSmoke.schema -ne "contextmink.project_setup.v2" -or !$setupSmoke.ready) { throw "setup-project schema or readiness mismatch" }
+          if ($setupSmoke.resolved_skill_target -ne "both") { throw "setup-project auto target mismatch" }
           if (!(Test-Path "$project/tools/contextmink/project-install.json")) { throw "project-install receipt missing" }
+          if (!(Test-Path "$project/tools/contextmink/bin/runtime-install.json")) { throw "runtime-install receipt missing" }
           if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
           $agentSkill = "$project/.agents/skills/contextmink/SKILL.md"
           $claudeSkill = "$project/.claude/skills/contextmink/SKILL.md"
@@ -330,6 +352,9 @@ jobs:
           if (!(Select-String -Path "$project/.contextmink.toml" -SimpleMatch 'exclude_globs = ["generated/**"]')) {
             throw "setup-project changed repository-owned config"
           }
+          $reselection = (& $binary --json setup-project $project --skill-target agents | Out-String) | ConvertFrom-Json
+          if ($reselection.resolved_skill_target -ne "agents") { throw "setup-project reselection mismatch" }
+          if (!(Test-Path $agentSkill) -or (Test-Path $claudeSkill)) { throw "setup-project did not retire deselected Claude skill" }
           Set-Content -Path "$project/nested/work/fixture.txt" -Value "fixture" -NoNewline
           $projectBinary = "$projectBin/contextmink.exe"
           $projectBridge = "$projectBin/contextmink-bridge.exe"
@@ -371,10 +396,21 @@ jobs:
           }
           & $binary --json uninstall-project $project | Out-Null
           if (Test-Path "$project/tools/contextmink/project-install.json") { throw "project-install receipt was not removed" }
+          if (Test-Path "$project/tools/contextmink/bin/runtime-install.json") { throw "runtime-install receipt was not removed" }
           if ((Test-Path $agentSkill) -or (Test-Path $claudeSkill)) { throw "managed Contextmink skill was not removed" }
           if (!(Select-String -Path $configPath -SimpleMatch 'exclude_globs = ["generated/**"]')) {
             throw "uninstall-project changed repository-owned config"
           }
+
+          $noSkillProject = "$verifyRoot/no-skill-project"
+          New-Item -ItemType Directory -Force -Path $noSkillProject | Out-Null
+          $noneSetup = (& $binary --json setup-project $noSkillProject --skill-target none | Out-String) | ConvertFrom-Json
+          if ($noneSetup.resolved_skill_target -ne "none") { throw "explicit no-skill setup mismatch" }
+          if ((Test-Path "$noSkillProject/.agents/skills/contextmink/SKILL.md") -or (Test-Path "$noSkillProject/.claude/skills/contextmink/SKILL.md")) {
+            throw "no-skill setup installed a harness skill"
+          }
+          & $binary --json uninstall-project $noSkillProject | Out-Null
+          if (Test-Path "$noSkillProject/tools/contextmink/project-install.json") { throw "no-skill uninstall left the project receipt" }
 
       - uses: actions/upload-artifact@v4
         with:

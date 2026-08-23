@@ -126,14 +126,17 @@ Adapt the installation to the project before copying generic policy:
    source vendoring or a reviewed multi-platform package policy is the
    hermetic alternative.
 6. Choose the integration depth deliberately. `setup-project` is the
-   deterministic agent integration: it adds one tool-namespaced Contextmink
-   skill to both shared Agent Skills and Claude discovery paths, without
-   editing harness settings or existing guidance. Its short description is
-   discoverable; the full body is loaded on selection. This is preferable to
-   auto-detecting one current harness in a repository that may be shared by
-   several. Use the standalone binary install instead when the project wants
-   no harness files. Do not setup-install general-purpose skills owned by
-   another tool or workflow.
+   deterministic agent integration, but skill residence is project-selected.
+   Its default `--skill-target auto` detects existing shared Agent Skills/Codex
+   markers (`.agents`, `.codex`, or `AGENTS.md`) and Claude markers (`.claude`
+   or `CLAUDE.md`) only on first install. It resolves both marker families to
+   `both`, one family to `agents` or `claude`, and an unmarked repository to
+   `none`. The concrete result is receipt-frozen so later upgrades do not react
+   to incidental harness files. Use `--skill-target agents|claude|both|none`
+   for an explicit first selection or reselection. The short description is
+   discoverable; the full body is loaded on selection. Setup never edits
+   harness settings or guidance, and never installs general-purpose skills
+   owned by another tool or workflow.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -161,11 +164,14 @@ Adapt the installation to the project before copying generic policy:
    both project launchers, a real-profile
    `.contextmink.toml`, `.gitignore` coverage for
    `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and the
-   Contextmink skill under `.agents/skills/` and `.claude/skills/`. It also
+   Contextmink skill under the resolved discovery path or paths. It also
    writes `tools/contextmink/project-install.json`, a platform-neutral receipt
-   containing the Contextmink version, fixed runtime paths, canonical SHA-256
+   containing the Contextmink version, resolved skill target, canonical SHA-256
    identities for release-managed text, and exact ownership of the additive
-   `.gitignore` block or file it created. The receipt never claims
+   `.gitignore` block or file it created. The ignored host-local
+   `tools/contextmink/bin/runtime-install.json` separately records raw SHA-256
+   identities for installed binaries, avoiding platform bytes in the tracked
+   receipt. Neither receipt claims
    `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, or unrelated
    skills.
 
@@ -176,7 +182,7 @@ Adapt the installation to the project before copying generic policy:
    comparing it to the release template or replacing it. Invalid configuration
    fails before any setup write.
 
-4. Read the installed Contextmink skill and
+4. If a skill target was selected, read the installed Contextmink skill and
    `tools/contextmink/agent_integration.md`, inspect the existing guidance
    hierarchy, and add one concise trigger to `AGENTS.md`, `CLAUDE.md`, or the
    repository's actual equivalent. Setup intentionally never edits agent
@@ -205,9 +211,13 @@ Adapt the installation to the project before copying generic policy:
 
 7. To upgrade, rerun the newer release with `--dry-run`. A valid existing
    configuration must be reported as `preserve_repository_owned`.
-   Receipt-matching older text and runtime binaries upgrade without extra
-   authority, and obsolete receipt paths are removed only when their hashes
-   still match. A modified or pre-receipt destination reports
+   `auto` preserves the receipt's resolved skill target. Pass an explicit
+   `--skill-target` to reselect; deselected skill files are retired only when
+   their recorded hashes still match. An unreceipted file at a deselected
+   Contextmink skill path reports `unowned_refusal` and blocks every setup write
+   until the operator moves or removes it deliberately. Receipt-matching older
+   text and host runtime binaries upgrade without extra authority. A modified or pre-receipt
+   destination reports
    `requires_replace_managed: true` and makes the plan `ready: false`; inspect
    it, then apply with `--replace-managed` if replacement is correct. Modified
    retired paths always refuse and require deliberate manual resolution.
@@ -246,17 +256,23 @@ Windows PowerShell:
 ```
 
 The command requires `tools/contextmink/project-install.json`, removes only
-receipt-owned skills, launchers, integration text, fixed runtime paths, and an
-exact receipt-owned Contextmink `.gitignore` block, and prunes only empty
-Contextmink-owned directories. It refuses modified managed text before
-deletion. It preserves
+receipt-owned skills, launchers, integration text, host binaries whose raw
+hashes match `tools/contextmink/bin/runtime-install.json`, and an exact
+receipt-owned Contextmink `.gitignore` block, and prunes only empty
+Contextmink-owned directories. It refuses modified receipt-owned text or
+runtime bytes before deletion and reports unreceipted runtime files as
+`preserve_unowned`. It preserves
 `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, and unrelated
 skills; review those repository-owned files and remove any obsolete discovery
 trigger or policy deliberately.
 
-The 0.9.0 release is the first receipt-bearing Contextmink install. A prior
-`0.9.0-rc` setup may also have projected `changelog-writing`. Stable setup does
-not infer that an unreceipted general skill is Contextmink-owned. Review
+The 0.9.0 release is the first stable receipt-bearing Contextmink install. An
+early candidate `contextmink.project_install.v1` receipt is accepted and
+rewritten as v2; its concrete skill target is derived from the skill paths it
+already recorded. Host runtime ownership is established separately only for
+bytes matching the current release or after reviewed `--replace-managed`. A
+prior `0.9.0-rc` setup may also have projected `changelog-writing`. Stable
+setup does not infer that an unreceipted general skill is Contextmink-owned. Review
 `.agents/skills/changelog-writing/SKILL.md`,
 `.agents/skills/changelog-writing/agents/openai.yaml`, and
 `.claude/skills/changelog-writing/SKILL.md`; remove them manually only if the
@@ -412,15 +428,20 @@ copy of the Rust crate:
    quiet; callers can still pass an explicit file or subdirectory inside an
    excluded tree when that tree is the target.
 
-4. Project the project-local Contextmink skill into the target repository's
-   harness discovery paths. Copy `templates/skills/contextmink/SKILL.md` to
-   `.agents/skills/contextmink/SKILL.md` and
-   `.claude/skills/contextmink/SKILL.md`; copy its `agents/openai.yaml` only to
-   the matching `.agents` skill. Keep the two harness skill bodies
-   byte-identical. In a source-vendored integration these copies are owned by
-   the target repository rather than a binary-install receipt. Refuse or
-   explicitly review a divergent existing destination instead of overwriting
-   it silently.
+4. Select `agents`, `claude`, `both`, or `none` for the target repository; do
+   not project both harness paths merely because both templates exist. For an
+   auto-like first selection, use the same existing-marker rules as
+   `setup-project`, then freeze the concrete choice in the repository's vendor
+   lock or manifest rather than redetecting it on every refresh. For `agents`,
+   copy `templates/skills/contextmink/SKILL.md` to
+   `.agents/skills/contextmink/SKILL.md` and copy `agents/openai.yaml` under that
+   skill. For `claude`, copy the skill body to
+   `.claude/skills/contextmink/SKILL.md`; `both` uses both destinations and
+   keeps their bodies byte-identical. In a source-vendored integration these
+   copies are owned by the target repository rather than a binary-install
+   receipt. Record their hashes, retire a deselected copy only while its prior
+   vendor hash still matches, and refuse or explicitly review a divergent
+   existing destination instead of overwriting or removing it silently.
 
 5. Treat the instruction templates as integration references for the tool
    surfaces the target repository uses:

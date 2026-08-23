@@ -4,13 +4,13 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
-## [0.9.0] - 2026-08-23
+## [0.9.0] - 2026-08-24
 
 ### Added
 
-- `setup-project` installs a thin, tool-namespaced `contextmink` skill under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. It does not edit harness settings or always-loaded guidance.
-- `tools/contextmink/project-install.json` records the release version, fixed runtime paths, managed-text hashes, and installer-created ignore policy. Later releases can upgrade, retire, or remove only receipt-owned surfaces; `.contextmink.toml` remains repository-owned.
-- `uninstall-project` removes receipt-owned launchers, skills, integration text, runtime paths, and an installer-owned Contextmink `.gitignore` block while preserving `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, unrelated skills, and preexisting ignore policy. Run it from an unpacked matching or newer release; modified managed text and project-local self-removal refuse before deletion.
+- `setup-project --skill-target auto|agents|claude|both|none` selects where the thin, tool-namespaced `contextmink` skill resides. First-install `auto` detects existing Agent Skills/Codex and Claude markers, resolves an unmarked project to `none`, and persists the concrete choice so upgrades do not re-detect it opportunistically.
+- `tools/contextmink/project-install.json` records the resolved skill target, release-managed text hashes, and installer-created ignore policy; the ignored `tools/contextmink/bin/runtime-install.json` records exact host-binary hashes without making the tracked receipt platform-specific. `.contextmink.toml` remains repository-owned.
+- `uninstall-project` removes only hash-matching receipt-owned launchers, selected skills, integration text, host binaries, and an installer-owned Contextmink `.gitignore` block. It preserves `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, unrelated skills, preexisting ignore policy, and runtime files without proven ownership; modified receipt-owned files and project-local self-removal refuse before deletion.
 
 ### Changed
 
@@ -18,8 +18,9 @@ The release workflow extracts the section for the requested version and fails if
 - `files`, `dirs`, `grep`, and `grep-terms` receipts replace `nested_repos_entered` with the bounded `nested_repos_entered_sample` while retaining exact `nested_repos_entered_total`; machine consumers must update to the new field name.
 - `contextmink-bridge --script <path> -- <args>` consumes one conventional separator instead of forwarding it; pass two consecutive `--` arguments when the script must receive one.
 - Rust `outline` results include top-level enum variant headers while omitting tuple and struct variant payload fields.
-- `setup-project` JSON uses `contextmink.project_setup.v2`, with top-level `ready` and per-action `requires_replace_managed`. Both project launchers are installed on every host, and receipt-matching upgrades no longer require `--replace-managed`.
+- `setup-project` JSON uses `contextmink.project_setup.v2`, with top-level `requested_skill_target`, `resolved_skill_target`, and `ready` plus per-action `requires_replace_managed`. Both project launchers are installed on every host. Explicit skill reselection retires deselected files only while receipt hashes match; an unreceipted deselected skill reports `unowned_refusal`, while modified or divergent pre-receipt destinations require reviewed `--replace-managed`.
 - Existing pre-receipt integrations should dry-run 0.9.0 and authorize only reviewed divergent destinations. Repositories that ran a 0.9.0 release candidate must separately review any unreceipted `.agents/skills/changelog-writing/` or `.claude/skills/changelog-writing/` files; stable setup will not guess that a general-purpose skill is Contextmink-owned.
+- Early `contextmink.project_install.v1` candidate receipts migrate to v2 by deriving the frozen skill target from their recorded skill paths. Host runtime ownership is established only for matching release bytes or after reviewed `--replace-managed`.
 
 ### Fixed
 
@@ -27,7 +28,7 @@ The release workflow extracts the section for the requested version and fails if
 - `grep` text output distinguishes capped scan scope from capped display and names the relevant output controls when additional samples are required.
 - `grep`, `slice`, and `outline` reject common noncanonical forms with the exact canonical replacement instead of a generic parse failure.
 - Source-vendoring setup examples use the required `grep --pattern` form.
-- Source-vendoring guidance projects the release-managed Contextmink skill into `.agents/skills/` and `.claude/skills/` instead of leaving it undiscoverable under `tools/contextmink/templates/`.
+- Source-vendoring guidance selects `agents`, `claude`, `both`, or `none`, freezes that choice in repository-owned vendor metadata, and retires a deselected skill only while its recorded vendor hash still matches.
 - A missing `contextmink-bridge --script` path reports that relative paths resolve from the project root independently of `--cwd` and recommends a project-root-relative or absolute path.
 - Source packages exclude `.claude/settings*.json`, preventing repository harness preferences from entering package handoffs.
 
