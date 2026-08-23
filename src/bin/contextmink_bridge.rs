@@ -377,7 +377,11 @@ fn assemble_argv(
             if !script.is_file() {
                 return Err(fail(
                     EXIT_MISSING_PATH,
-                    format!("script not found: {}", script.display()),
+                    format!(
+                        "script not found: {}; relative --script paths resolve from project root {} (not --cwd); pass a project-root-relative or absolute script path",
+                        script.display(),
+                        root.display()
+                    ),
                 ));
             }
             let mut argv = vec![script.to_string_lossy().replace('\\', "/")];
