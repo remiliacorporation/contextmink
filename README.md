@@ -137,9 +137,14 @@ On Windows PowerShell, use
 the platform-appropriate release binaries, installs both project launchers,
 generates a real project profile, adds the binary directory to `.gitignore`,
 and installs a thin Contextmink skill only for the selected harness paths. The
-default `--skill-target auto` resolves once from existing `.agents`, `.codex`,
-`AGENTS.md`, `.claude`, and `CLAUDE.md` markers; an unmarked project resolves to
-`none`. Use `--skill-target agents|claude|both|none` to select explicitly. The
+default `--skill-target auto` resolves once from existing Agent Skills, Codex,
+Pi, OMP, OpenCode, and Claude markers. Compatibility is path-based: any harness
+that consumes project `.agents/skills` uses the `agents` target without needing
+a harness-specific integration. `.codex`, `.pi`, `.omp`, `.opencode`,
+`opencode.json`, and `opencode.jsonc` are convenience markers for common
+consumers before `.agents` exists. `.claude` or `CLAUDE.md` selects `claude`;
+an unmarked project resolves to `none`. Use
+`--skill-target agents|claude|both|none` to select explicitly. The
 namespaced skill points to the canonical
 `tools/contextmink/agent_integration.md` reference; its body is loaded only when
 selected, while its short discovery description is the only resident skill
@@ -148,6 +153,10 @@ duplicating Contextmink policy. Setup never edits harness settings, hooks,
 `AGENTS.md`, or `CLAUDE.md`: the maintaining agent must inspect the repository,
 add one concise discovery trigger, and adapt only project-owned shell,
 native-tool, nested-repository, exclusion, and destructive-path policy.
+
+Setup manages only `.agents/skills/contextmink` and
+`.claude/skills/contextmink`. Harness markers never create duplicate `.pi`,
+`.omp`, or `.opencode` skill copies.
 
 `setup-project` preflights every destination before writing and records the
 resolved skill target, stable integration-text hashes, and installer-created
@@ -178,8 +187,12 @@ host binaries are missing.
 The default is low-ceremony without assuming a harness. Use
 `--skill-target none` when the project wants Contextmink-managed runtime and
 launchers but no skill files; use a standalone binary install when it wants no
-project integration at all. To remove a managed integration, run the matching
-or newer release binary from outside the project:
+project integration at all. For an unrecognized harness that consumes
+`.agents/skills`, select `agents` explicitly once; the receipt freezes that
+choice. A harness that requires a different directory should use `none` and a
+repository-owned guidance pointer instead of an installer guess. To remove a
+managed integration, run the matching or newer release binary from outside the
+project:
 
 ```bash
 ./contextmink uninstall-project /path/to/repository --dry-run

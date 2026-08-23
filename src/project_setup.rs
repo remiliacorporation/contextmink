@@ -32,6 +32,21 @@ const AGENTS_SKILL_PATHS: &[&str] = &[
     ".agents/skills/contextmink/agents/openai.yaml",
 ];
 const CLAUDE_SKILL_PATHS: &[&str] = &[".claude/skills/contextmink/SKILL.md"];
+// Compatibility is anchored in the shared `.agents/skills` contract. These
+// generic markers cover any harness already using that contract; the compact
+// fallback catalog only bootstraps common compatible harnesses before the
+// shared directory exists.
+const SHARED_AGENT_SKILLS_MARKERS: &[&str] = &[".agents"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_MARKERS: &[&str] = &[
+    "AGENTS.md",
+    ".codex",
+    ".pi",
+    ".omp",
+    ".opencode",
+    "opencode.json",
+    "opencode.jsonc",
+];
+const CLAUDE_HARNESS_MARKERS: &[&str] = &[".claude", "CLAUDE.md"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -956,8 +971,9 @@ fn resolve_skill_target(
     if let Some(installed) = installed {
         return Ok(installed);
     }
-    let agents = harness_marker_exists(root, &[".agents", ".codex", "AGENTS.md"])?;
-    let claude = harness_marker_exists(root, &[".claude", "CLAUDE.md"])?;
+    let agents = harness_marker_exists(root, SHARED_AGENT_SKILLS_MARKERS)?
+        || harness_marker_exists(root, COMMON_AGENT_SKILLS_BOOTSTRAP_MARKERS)?;
+    let claude = harness_marker_exists(root, CLAUDE_HARNESS_MARKERS)?;
     Ok(match (agents, claude) {
         (true, true) => SkillTarget::Both,
         (true, false) => SkillTarget::Agents,
@@ -1389,8 +1405,45 @@ mod tests {
         for (name, markers, expected, agents, claude) in [
             ("auto-none", &[][..], SkillTarget::None, false, false),
             (
-                "auto-agents",
+                "auto-agents-guidance",
                 &["AGENTS.md"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            (
+                "auto-agent-skills-directory",
+                &[".agents/"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            (
+                "auto-codex",
+                &[".codex/"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            ("auto-pi", &[".pi/"][..], SkillTarget::Agents, true, false),
+            ("auto-omp", &[".omp/"][..], SkillTarget::Agents, true, false),
+            (
+                "auto-opencode-directory",
+                &[".opencode/"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            (
+                "auto-opencode-json",
+                &["opencode.json"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            (
+                "auto-opencode-jsonc",
+                &["opencode.jsonc"][..],
                 SkillTarget::Agents,
                 true,
                 false,
@@ -1412,7 +1465,11 @@ mod tests {
         ] {
             let (project, binary) = fixture(name);
             for marker in markers {
-                fs::write(project.join(marker), "project guidance\n").unwrap();
+                if let Some(directory) = marker.strip_suffix('/') {
+                    fs::create_dir_all(project.join(directory)).unwrap();
+                } else {
+                    fs::write(project.join(marker), "project guidance\n").unwrap();
+                }
             }
             let mut auto = request(&project, &binary, false);
             auto.skill_target = SkillTarget::Auto;
@@ -1431,6 +1488,16 @@ mod tests {
                     .is_file(),
                 claude
             );
+            for duplicate in [
+                ".pi/skills/contextmink/SKILL.md",
+                ".omp/skills/contextmink/SKILL.md",
+                ".opencode/skills/contextmink/SKILL.md",
+            ] {
+                assert!(
+                    !project.join(duplicate).exists(),
+                    "auto detection must not create a duplicate harness-native skill at {duplicate}"
+                );
+            }
             let receipt = load_install_receipt(&project.join(INSTALL_RECEIPT_PATH))
                 .unwrap()
                 .unwrap();

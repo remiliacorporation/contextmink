@@ -92,6 +92,41 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 }
 
 #[test]
+fn public_setup_names_supported_project_skill_harnesses() {
+    let surfaces = [
+        ("README.md", include_str!("../README.md")),
+        ("SETUP.md", include_str!("../SETUP.md")),
+        ("docs/setup.md", include_str!("../docs/setup.md")),
+    ];
+
+    for (name, surface) in surfaces {
+        for required in ["Codex", "Pi", "OMP", "OpenCode", "Claude"] {
+            assert!(
+                surface.contains(required),
+                "{name} is missing supported harness {required:?}"
+            );
+        }
+    }
+
+    let setup = include_str!("../docs/setup.md");
+    for required in [
+        "`.pi`",
+        "`.omp`",
+        "`.opencode`",
+        "`opencode.json`",
+        "`opencode.jsonc`",
+        "`--approve`",
+        "path-based rather than a closed harness allowlist",
+        "duplicate harness-native copies",
+    ] {
+        assert!(
+            setup.contains(required),
+            "setup guide is missing harness discovery detail {required:?}"
+        );
+    }
+}
+
+#[test]
 fn source_vendor_guidance_projects_the_contextmink_skill() {
     let setup = include_str!("../docs/setup.md");
 

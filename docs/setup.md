@@ -127,16 +127,25 @@ Adapt the installation to the project before copying generic policy:
    hermetic alternative.
 6. Choose the integration depth deliberately. `setup-project` is the
    deterministic agent integration, but skill residence is project-selected.
-   Its default `--skill-target auto` detects existing shared Agent Skills/Codex
-   markers (`.agents`, `.codex`, or `AGENTS.md`) and Claude markers (`.claude`
-   or `CLAUDE.md`) only on first install. It resolves both marker families to
-   `both`, one family to `agents` or `claude`, and an unmarked repository to
-   `none`. The concrete result is receipt-frozen so later upgrades do not react
-   to incidental harness files. Use `--skill-target agents|claude|both|none`
-   for an explicit first selection or reselection. The short description is
-   discoverable; the full body is loaded on selection. Setup never edits
-   harness settings or guidance, and never installs general-purpose skills
-   owned by another tool or workflow.
+   Its default `--skill-target auto` detects existing shared Agent Skills and
+   Codex markers (`.agents`, `.codex`, or `AGENTS.md`), Pi's `.pi` directory,
+   OMP's `.omp` directory, OpenCode's `.opencode` directory or `opencode.json` /
+   `opencode.jsonc`, and Claude markers (`.claude` or `CLAUDE.md`) only on first
+   install. Compatibility is path-based rather than a closed harness allowlist:
+   any harness that consumes project `.agents/skills` uses `agents`; the named
+   markers only bootstrap common consumers before `.agents` exists. Claude uses
+   `claude`; repositories with both marker families select `both`; and an
+   unmarked repository selects `none`. The concrete result is receipt-frozen so
+   later upgrades do not react to incidental harness files. Use
+   `--skill-target agents|claude|both|none` for an explicit first selection or
+   reselection. The short description is discoverable; the full body is loaded
+   on selection. Pi requires project trust before loading project-local
+   resources; save the decision or pass `--approve` for a noninteractive run.
+   Setup never edits harness settings or guidance, and never installs
+   general-purpose skills owned by another tool or workflow.
+   It manages only `.agents/skills/contextmink` and
+   `.claude/skills/contextmink`; Pi, OMP, and OpenCode markers do not create
+   duplicate harness-native copies.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -520,8 +529,10 @@ direct contextmink commands, and
 bridge for the Bash launcher or other Bash-first repository scripts. The policy
 content is otherwise shell-agnostic.
 
-Setup installs byte-identical Contextmink skill bodies for `.agents/skills`
-consumers and Claude Code, plus Codex-facing `agents/openai.yaml` metadata. The
+Setup installs byte-identical Contextmink skill bodies under `.agents/skills`
+for Codex, Pi, OMP, OpenCode, and any compatible consumer, and under
+`.claude/skills` for Claude Code. Codex-facing `agents/openai.yaml` metadata
+exists only in the shared Agent Skills copy. The
 source checkout's changelog-writing skill is repository-local development
 guidance and is not installed into consumer repositories. Do not fork the
 Contextmink semantic body by harness. Keep only its discovery trigger in
