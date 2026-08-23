@@ -213,6 +213,10 @@ jobs:
           "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v1"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/agent_integration.md"
+          test -f "${project}/.agents/skills/contextmink/SKILL.md"
+          test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
+          test -f "${project}/.claude/skills/contextmink/SKILL.md"
+          cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
           sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
           rm "${project}/.contextmink.toml.bak"
           rm "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
@@ -287,6 +291,12 @@ jobs:
           $setupSmoke = (& $binary --json setup-project $project | Out-String) | ConvertFrom-Json
           if ($setupSmoke.schema -ne "contextmink.project_setup.v1") { throw "setup-project schema mismatch" }
           if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
+          $agentSkill = "$project/.agents/skills/contextmink/SKILL.md"
+          $claudeSkill = "$project/.claude/skills/contextmink/SKILL.md"
+          if (!(Test-Path $agentSkill)) { throw "Agent Skills contextmink envelope missing" }
+          if (!(Test-Path "$project/.agents/skills/contextmink/agents/openai.yaml")) { throw "Codex skill metadata missing" }
+          if (!(Test-Path $claudeSkill)) { throw "Claude contextmink envelope missing" }
+          if ((Get-FileHash $agentSkill).Hash -ne (Get-FileHash $claudeSkill).Hash) { throw "contextmink skill envelopes diverged" }
           if (!(Test-Path "$project/scripts/contextmink.cmd")) { throw "PowerShell diagnostic shim missing" }
           $projectBin = "$project/tools/contextmink/bin"
           $configPath = "$project/.contextmink.toml"

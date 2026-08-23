@@ -136,11 +136,12 @@ On Windows PowerShell, use
 `& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
 the platform-appropriate release artifacts, installs the Bash launcher and the
 PowerShell diagnostic shim, generates a real project profile, adds the binary
-directory to `.gitignore`, and writes
-`tools/contextmink/agent_integration.md`. It deliberately does not edit
-`AGENTS.md` or `CLAUDE.md`: the maintaining agent must inspect the repository,
-adapt the integration reference to its existing guidance, and choose
-project-specific excludes and destructive-guard fragments.
+directory to `.gitignore`, and installs one thin Contextmink skill for open
+Agent Skills-compatible harnesses and Claude Code around the canonical
+`tools/contextmink/agent_integration.md` reference. It deliberately does not
+edit `AGENTS.md` or `CLAUDE.md`: the maintaining agent must inspect the
+repository, add one concise discovery trigger, and adapt only project-owned
+shell, native-tool, nested-repository, exclusion, and destructive-path policy.
 
 `setup-project` preflights every destination before writing. It is idempotent
 for the same release and requires `--replace-managed` to update divergent
@@ -152,7 +153,7 @@ any file is written. A dry run reports required release-file replacements
 without granting permission to perform them.
 
 This is also the fresh-clone repair path. Repositories normally track their
-configuration, launchers, and integration reference while ignoring
+configuration, launchers, skills, and integration reference while ignoring
 `tools/contextmink/bin/`; running `setup-project` from an unpacked release
 preserves the tracked configuration and restores whichever host binaries are
 missing.

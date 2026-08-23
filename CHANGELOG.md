@@ -6,6 +6,14 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Added
+
+- Added setup-managed Contextmink skills for open Agent Skills-compatible harnesses and Claude Code, with Codex UI metadata and one byte-identical generic workflow across harnesses.
+
+### Changed
+
+- Replaced full-manual transplantation into always-loaded guidance with a concise broad-read discovery trigger; repository owners now adapt only shell, native-tool, nested-repository, exclusion, and destructive-path policy while the release-managed skill carries operational detail.
+
 ## [0.8.0] - 2026-07-31
 
 ### Added

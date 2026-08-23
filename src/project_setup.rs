@@ -10,6 +10,9 @@ use super::{ContextminkConfig, canonical_normalized, load_context_config, valida
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
 const CMD_DIAGNOSTIC: &[u8] = include_bytes!("../templates/scripts/contextmink.cmd");
 const AGENT_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
+const AGENT_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
+const OPENAI_SKILL_METADATA: &[u8] =
+    include_bytes!("../templates/skills/contextmink/agents/openai.yaml");
 const GITIGNORE_COMMENT: &str = "# contextmink project-local release binaries";
 const GITIGNORE_ENTRY: &str = "/tools/contextmink/bin/";
 
@@ -136,6 +139,24 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             executable: false,
             ownership: SetupFileOwnership::ReleaseManaged,
         },
+        ManagedFile {
+            relative_path: PathBuf::from(".agents/skills/contextmink/SKILL.md"),
+            content: AGENT_SKILL.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
+        ManagedFile {
+            relative_path: PathBuf::from(".agents/skills/contextmink/agents/openai.yaml"),
+            content: OPENAI_SKILL_METADATA.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
+        ManagedFile {
+            relative_path: PathBuf::from(".claude/skills/contextmink/SKILL.md"),
+            content: AGENT_SKILL.to_vec(),
+            executable: false,
+            ownership: SetupFileOwnership::ReleaseManaged,
+        },
     ];
     if suffix == ".exe" {
         let bridge_name = "contextmink-bridge.exe";
@@ -249,7 +270,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 .to_owned(),
             "Add repository-owned destructive-guard fragments only for critical paths that require a deletion tripwire."
                 .to_owned(),
-            "Read tools/contextmink/agent_integration.md and adapt its operational contract into the repository's agent guidance; setup-project never edits AGENTS.md or CLAUDE.md."
+            "Review the installed Contextmink skill and tools/contextmink/agent_integration.md, then add one concise repository-guidance trigger for broad or potentially high-output reads; setup-project never edits AGENTS.md or CLAUDE.md."
                 .to_owned(),
             "Verify the project-local entrypoint from every supported agent shell and a representative nested working directory; require the intended profile and contextmink.receipt.v2."
                 .to_owned(),
@@ -526,6 +547,18 @@ mod tests {
         assert_eq!(
             fs::read(project.join("tools/contextmink/agent_integration.md")).unwrap(),
             AGENT_INTEGRATION
+        );
+        assert_eq!(
+            fs::read(project.join(".agents/skills/contextmink/SKILL.md")).unwrap(),
+            AGENT_SKILL
+        );
+        assert_eq!(
+            fs::read(project.join(".claude/skills/contextmink/SKILL.md")).unwrap(),
+            AGENT_SKILL
+        );
+        assert_eq!(
+            fs::read(project.join(".agents/skills/contextmink/agents/openai.yaml")).unwrap(),
+            OPENAI_SKILL_METADATA
         );
         if cfg!(windows) {
             assert_eq!(

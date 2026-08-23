@@ -1,4 +1,11 @@
-### Bounded Output
+# Contextmink project reference
+
+This is the detailed, release-managed integration reference behind the
+project-local Contextmink skill. Keep the skill generic; adapt repository-owned
+shell, native-tool, nested-repository, exclusion, and destructive-path policy
+in always-loaded guidance and `.contextmink.toml`.
+
+## Bounded Output
 
 Use contextmink when a file/text/JSON/SQLite/command-output read may produce
 more output than the transcript should carry.
