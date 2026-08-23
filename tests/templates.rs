@@ -116,6 +116,26 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 }
 
 #[test]
+fn source_vendor_guidance_projects_every_managed_skill() {
+    let setup = include_str!("../docs/setup.md");
+
+    for required in [
+        "templates/skills/contextmink/",
+        "templates/skills/changelog-writing/",
+        ".agents/skills/<name>/SKILL.md",
+        ".claude/skills/<name>/SKILL.md",
+        "agents/openai.yaml",
+        "byte-identical",
+        "divergent existing destination",
+    ] {
+        assert!(
+            setup.contains(required),
+            "source-vendor guidance is missing {required:?}"
+        );
+    }
+}
+
+#[test]
 fn public_guidance_uses_current_cli_forms() {
     let surfaces = [
         ("README.md", include_str!("../README.md")),

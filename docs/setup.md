@@ -362,7 +362,16 @@ copy of the Rust crate:
    quiet; callers can still pass an explicit file or subdirectory inside an
    excluded tree when that tree is the target.
 
-4. Treat the instruction templates as integration references for the tool
+4. Project both release-managed skills into the target repository's harness
+   discovery paths. Copy each canonical `SKILL.md` from
+   `templates/skills/contextmink/` and `templates/skills/changelog-writing/` to
+   the matching `.agents/skills/<name>/SKILL.md` and
+   `.claude/skills/<name>/SKILL.md`; copy each `agents/openai.yaml` only to the
+   matching `.agents` skill. Keep the two harness skill bodies byte-identical,
+   and refuse or explicitly review a divergent existing destination instead of
+   overwriting it silently.
+
+5. Treat the instruction templates as integration references for the tool
    surfaces the target repository uses:
 
    - Codex-facing policy starts from `templates/AGENTS.contextmink.md`.
@@ -375,7 +384,7 @@ copy of the Rust crate:
    are intentionally equivalent in generic policy; preserve repository-owned
    shell, path, domain-tool, and output rules during the merge.
 
-5. Verify the integration from the target repository root:
+6. Verify the integration from the target repository root:
 
    ```bash
    scripts/contextmink files . --limit 20
