@@ -271,6 +271,93 @@ fn rust_declaration(line: &str) -> bool {
     }
 }
 
+fn rust_enum_declaration(line: &str) -> bool {
+    let mut rest = line.trim_start();
+    if let Some(after) = strip_keyword(rest, "pub") {
+        let after = after.trim_start();
+        rest = if let Some(group) = after.strip_prefix('(') {
+            match group.find(')') {
+                Some(close) => group[close + 1..].trim_start(),
+                None => return false,
+            }
+        } else {
+            after
+        };
+    }
+    loop {
+        if starts_keyword(rest, "enum") {
+            return true;
+        }
+        if starts_any_keyword(rest, RUST_DECLARATION_KEYWORDS) || rest.starts_with("macro_rules!") {
+            return false;
+        }
+        if let Some(after) = strip_keyword(rest, "extern") {
+            let after = after.trim_start();
+            if starts_any_keyword(after, RUST_DECLARATION_KEYWORDS) {
+                rest = after;
+                continue;
+            }
+            let Some(quoted) = after.strip_prefix('"') else {
+                return false;
+            };
+            let Some(close) = quoted.find('"') else {
+                return false;
+            };
+            rest = quoted[close + 1..].trim_start();
+            continue;
+        }
+        match strip_any_keyword_ws(rest, RUST_MODIFIERS) {
+            Some(after) => rest = after,
+            None => return false,
+        }
+    }
+}
+
+fn rust_enum_variant(line: &str) -> bool {
+    let rest = line.trim_start();
+    if rest.is_empty() || rest.starts_with('#') {
+        return false;
+    }
+    let rest = rest.strip_prefix("r#").unwrap_or(rest);
+    let name_len = ident_span(rest, ident_start, ident_char);
+    if name_len == 0 {
+        return false;
+    }
+    let name = &rest[..name_len];
+    if RUST_DECLARATION_KEYWORDS.contains(&name)
+        || matches!(
+            name,
+            "as" | "break"
+                | "continue"
+                | "crate"
+                | "else"
+                | "false"
+                | "in"
+                | "let"
+                | "loop"
+                | "match"
+                | "move"
+                | "mut"
+                | "ref"
+                | "return"
+                | "self"
+                | "Self"
+                | "super"
+                | "true"
+                | "use"
+                | "where"
+        )
+    {
+        return false;
+    }
+    let after = rest[name_len..].trim_start();
+    after.is_empty()
+        || after.starts_with(',')
+        || after.starts_with('(')
+        || after.starts_with('{')
+        || after.starts_with('=')
+}
+
 fn python_declaration(line: &str) -> bool {
     let mut rest = line.trim_start();
     if let Some(after) = strip_keyword_ws(rest, "async") {
@@ -569,26 +656,78 @@ fn rust_document_outline(text: &str) -> Vec<usize> {
     let mut hits = Vec::new();
     let mut state = CLikeMaskState::default();
     let mut raw_terminator: Option<String> = None;
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut enum_bodies: Vec<(usize, usize, usize)> = Vec::new();
+    let mut pending_enum = false;
     for (index, line) in text.lines().enumerate() {
-        if let Some(terminator) = raw_terminator.as_deref() {
-            if line.contains(terminator) {
+        let masked = if let Some(terminator) = raw_terminator.as_deref() {
+            if let Some(close) = line.find(terminator) {
+                let suffix = close + terminator.len();
                 raw_terminator = None;
+                format!(
+                    "{}{}",
+                    " ".repeat(suffix),
+                    mask_c_like_line(&line[suffix..], &mut state)
+                )
+            } else {
+                continue;
             }
-            continue;
-        }
-        if let Some((open, content_start, terminator)) = rust_raw_string(line)
+        } else if let Some((open, content_start, terminator)) = rust_raw_string(line)
             && !line[content_start..].contains(&terminator)
         {
             raw_terminator = Some(terminator);
-            let masked = mask_c_like_line(&line[..open], &mut state);
-            if rust_declaration(&masked) {
-                hits.push(index);
-            }
-            continue;
+            let mut prefix = mask_c_like_line(&line[..open], &mut state);
+            prefix.push_str(&" ".repeat(line.len() - open));
+            prefix
+        } else {
+            mask_c_like_line(line, &mut state)
+        };
+
+        while enum_bodies
+            .last()
+            .is_some_and(|(depth, _, _)| *depth > brace_depth)
+        {
+            enum_bodies.pop();
         }
-        let masked = mask_c_like_line(line, &mut state);
         if rust_declaration(&masked) {
             hits.push(index);
+        }
+        if enum_bodies.last().is_some_and(|&(body, paren, bracket)| {
+            body == brace_depth && paren == paren_depth && bracket == bracket_depth
+        }) && rust_enum_variant(&masked)
+        {
+            hits.push(index);
+        }
+        if rust_enum_declaration(&masked) {
+            pending_enum = true;
+        }
+
+        for ch in masked.chars() {
+            match ch {
+                '{' => {
+                    brace_depth += 1;
+                    if pending_enum {
+                        enum_bodies.push((brace_depth, paren_depth, bracket_depth));
+                        pending_enum = false;
+                    }
+                }
+                '}' => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                    while enum_bodies
+                        .last()
+                        .is_some_and(|(depth, _, _)| *depth > brace_depth)
+                    {
+                        enum_bodies.pop();
+                    }
+                }
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                _ => {}
+            }
         }
     }
     hits
