@@ -806,6 +806,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "needle",
             long_file.file_name().unwrap().to_str().unwrap(),
             "--max-line-chars",
@@ -854,6 +855,7 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "needle",
             "many.txt",
             "--lines-per-file",
@@ -877,6 +879,7 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
         &root,
         &[
             "grep",
+            "--pattern",
             "needle",
             "many.txt",
             "--lines-per-file",
@@ -896,6 +899,7 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "needle",
             "many.txt",
             "--lines-per-file",
@@ -1332,6 +1336,7 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
         &[
             "--require-complete-scope",
             "grep",
+            "--pattern",
             "not-present",
             ".",
             "--max-content-files",
@@ -1831,6 +1836,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "needle",
             "artifacts/notes",
             "--max-content-files",
@@ -2051,6 +2057,7 @@ fn grep_content_file_cap_marks_no_match_as_scanned_subset_only() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "not-present",
             ".",
             "--max-content-files",
@@ -2302,6 +2309,7 @@ fn grep_json_honors_global_sample_cap() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "alpha",
             "sample.txt",
             "--lines-per-file",
@@ -2346,10 +2354,13 @@ fn grep_supports_pattern_files_for_shell_fragile_regex() {
 }
 
 #[test]
-fn grep_accepts_positional_search_paths() {
+fn grep_accepts_named_pattern_with_positional_search_paths() {
     let root = fixture_root("grep-positional-path");
 
-    let json = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
+    let json = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "alpha", "sample.txt"],
+    );
     assert_envelope(&json, "grep", "matching_files");
     assert_eq!(result(&json)["shown"], 1);
     assert_eq!(json["matching_lines_total"], 2);
@@ -2375,50 +2386,40 @@ fn grep_pattern_flag_treats_all_positionals_as_paths() {
 }
 
 #[test]
-fn grep_accepts_explicit_path_flags_for_agent_intuition() {
-    let root = fixture_root("grep-path-flag");
-    fs::write(root.join("alpha.txt"), "needle\n").unwrap();
-    fs::write(root.join("beta.txt"), "needle\n").unwrap();
+fn noncanonical_cli_forms_name_the_canonical_replacement() {
+    let root = fixture_root("noncanonical-cli-guidance");
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["grep", "needle", "sample.txt"],
+            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...`",
+        ),
+        (
+            &["grep", "--pattern", "needle", "--path", "sample.txt"],
+            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`",
+        ),
+        (
+            &["slice", "sample.txt", "--start-line", "2"],
+            "replace `--start-line` with `--start`",
+        ),
+        (
+            &["slice", "sample.txt", "--end-line", "3"],
+            "replace `--end-line` with `--end`",
+        ),
+        (
+            &["outline", "sample.txt", "--max-items", "3"],
+            "replace `--max-items` with `--limit`",
+        ),
+    ];
 
-    let json = parse_json_output(
-        &root,
-        &[
-            "--json",
-            "grep",
-            "--pattern",
-            "needle",
-            "--path",
-            "alpha.txt",
-            "--path",
-            "beta.txt",
-        ],
-    );
-
-    assert_envelope(&json, "grep", "matching_files");
-    assert_eq!(result(&json)["shown"], 2);
-    assert_eq!(json["matching_files"][0]["path"], "alpha.txt");
-    assert_eq!(json["matching_files"][1]["path"], "beta.txt");
-}
-
-#[test]
-fn slice_accepts_visible_line_name_aliases() {
-    let root = fixture_root("slice-line-aliases");
-    let json = parse_json_output(
-        &root,
-        &[
-            "--json",
-            "slice",
-            "sample.txt",
-            "--start-line",
-            "2",
-            "--end-line",
-            "3",
-        ],
-    );
-
-    assert_envelope(&json, "slice", "lines");
-    assert_eq!(json["start"], 2);
-    assert_eq!(json["end"], 3);
+    for (args, expected) in cases {
+        let output = run_contextmink_raw(&root, args);
+        assert_eq!(output.status.code(), Some(2), "args: {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "args: {args:?}\nstderr:\n{stderr}"
+        );
+    }
 }
 
 #[test]
@@ -2959,12 +2960,26 @@ fn grep_filters_by_extension_and_glob() {
     fs::write(root.join("code.rs"), "needle in rust\n").unwrap();
     fs::write(root.join("notes.md"), "needle in markdown\n").unwrap();
 
-    let by_ext = parse_json_output(&root, &["--json", "grep", "needle", ".", "--ext", "rs"]);
+    let by_ext = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "needle", ".", "--ext", "rs"],
+    );
     assert_envelope(&by_ext, "grep", "matching_files");
     assert_eq!(result(&by_ext)["total"], 1);
     assert_eq!(by_ext["matching_files"][0]["path"], "code.rs");
 
-    let by_glob = parse_json_output(&root, &["--json", "grep", "needle", ".", "--glob", "*.md"]);
+    let by_glob = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "--pattern",
+            "needle",
+            ".",
+            "--glob",
+            "*.md",
+        ],
+    );
     assert_envelope(&by_glob, "grep", "matching_files");
     assert_eq!(result(&by_glob)["total"], 1);
     assert_eq!(by_glob["matching_files"][0]["path"], "notes.md");
@@ -2975,12 +2990,23 @@ fn grep_ignore_case_matches_and_labels() {
     let root = fixture_root("grep-ignore-case");
     fs::write(root.join("mixed.txt"), "NeEdLe here\n").unwrap();
 
-    let sensitive = parse_json_output(&root, &["--json", "grep", "needle", "mixed.txt"]);
+    let sensitive = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "needle", "mixed.txt"],
+    );
     assert_eq!(sensitive["matching_lines_total"], 0);
 
     let insensitive = parse_json_output(
         &root,
-        &["--json", "grep", "-i", "--literal", "needle", "mixed.txt"],
+        &[
+            "--json",
+            "grep",
+            "-i",
+            "--literal",
+            "--pattern",
+            "needle",
+            "mixed.txt",
+        ],
     );
     assert_eq!(insensitive["matching_lines_total"], 1);
     assert!(
@@ -3011,7 +3037,15 @@ fn grep_context_lines_render_with_dash_separator() {
 
     let json = parse_json_output(
         &root,
-        &["--json", "grep", "needle", "ctx.txt", "--context", "1"],
+        &[
+            "--json",
+            "grep",
+            "--pattern",
+            "needle",
+            "ctx.txt",
+            "--context",
+            "1",
+        ],
     );
     let samples = json["matching_files"][0]["samples"].as_array().unwrap();
     assert_eq!(samples.len(), 3);
@@ -3019,7 +3053,10 @@ fn grep_context_lines_render_with_dash_separator() {
     assert_eq!(samples[1]["is_match"], true);
     assert_eq!(samples[2]["is_match"], false);
 
-    let human = run_contextmink(&root, &["grep", "needle", "ctx.txt", "--context", "1"]);
+    let human = run_contextmink(
+        &root,
+        &["grep", "--pattern", "needle", "ctx.txt", "--context", "1"],
+    );
     assert!(human.contains("ctx.txt:1-before"));
     assert!(human.contains("ctx.txt:2:needle"));
     assert!(human.contains("ctx.txt:3-after"));
@@ -3035,7 +3072,7 @@ fn grep_scans_utf16_files_and_lists_skipped_files() {
     fs::write(root.join("powershell.log"), utf16).unwrap();
     fs::write(root.join("binary.bin"), b"MZ\x00\x00needle").unwrap();
 
-    let json = parse_json_output(&root, &["--json", "grep", "needle", "."]);
+    let json = parse_json_output(&root, &["--json", "grep", "--pattern", "needle", "."]);
     assert_eq!(json["matching_lines_total"], 1);
     assert_eq!(json["matching_files"][0]["path"], "powershell.log");
     assert_eq!(json["skipped_large_or_binary"], 1);
@@ -3055,6 +3092,7 @@ fn grep_no_match_scope_demotes_when_large_files_skipped() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "not-present",
             "big.txt",
             "--max-file-bytes",
@@ -3449,8 +3487,21 @@ fn grep_quiet_suppresses_match_content_but_keeps_receipt_fields() {
 
     // JSON: no matching-files payload. Quiet reports emitted payload truthfully
     // while retaining scan totals and scope classification.
-    let loud = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt"]);
-    let quiet = parse_json_output(&root, &["--json", "grep", "alpha", "sample.txt", "--quiet"]);
+    let loud = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "alpha", "sample.txt"],
+    );
+    let quiet = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "--pattern",
+            "alpha",
+            "sample.txt",
+            "--quiet",
+        ],
+    );
     assert_envelope(&quiet, "grep", "matching_files");
     assert!(quiet.get("matching_files").is_none());
     assert_eq!(quiet["quiet"], true);
@@ -3480,7 +3531,10 @@ fn grep_quiet_suppresses_match_content_but_keeps_receipt_fields() {
     }
 
     // Text: no file_counts/sample_lines blocks, receipt line intact.
-    let human = run_contextmink(&root, &["grep", "alpha", "sample.txt", "--quiet"]);
+    let human = run_contextmink(
+        &root,
+        &["grep", "--pattern", "alpha", "sample.txt", "--quiet"],
+    );
     assert!(!human.contains("file_counts:"), "output: {human}");
     assert!(!human.contains("sample_lines:"), "output: {human}");
     let receipt = human
@@ -3518,6 +3572,7 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
         &[
             "--json",
             "grep",
+            "--pattern",
             "not-present",
             ".",
             "--quiet",
@@ -3531,7 +3586,10 @@ fn grep_quiet_no_match_still_reports_scan_scope() {
     assert_eq!(json["no_match_scope"], "scanned_subset");
     assert_eq!(result(&json)["total_is_lower_bound"], true);
 
-    let human = run_contextmink(&root, &["grep", "not-present", "sample.txt", "--quiet"]);
+    let human = run_contextmink(
+        &root,
+        &["grep", "--pattern", "not-present", "sample.txt", "--quiet"],
+    );
     assert!(human.contains("no_matches"), "output: {human}");
     let receipt = human
         .lines()
@@ -3885,7 +3943,10 @@ fn grep_receipts_split_skipped_large_and_binary() {
     fs::write(root.join("binary.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
     fs::write(root.join("plain.txt"), "needle\n").unwrap();
 
-    let json = parse_json_output(&root, &["--json", "grep", "needle", ".", "--quiet"]);
+    let json = parse_json_output(
+        &root,
+        &["--json", "grep", "--pattern", "needle", ".", "--quiet"],
+    );
     assert_eq!(json["skipped_binary"], 1);
     assert_eq!(json["skipped_large"], 0);
     assert_eq!(json["skipped_large_or_binary"], 1);

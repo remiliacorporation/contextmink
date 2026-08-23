@@ -12,8 +12,8 @@ use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::encoding::read_required_text;
 use crate::files::display_path;
+use crate::json_commands::contains_any;
 use crate::json_input::{parse_json_text, parse_jsonl_text};
-use crate::json_tools::contains_any;
 use crate::output::{
     ClampedText, Receipt, ReceiptCap, ReceiptResult, clamp_text, clamp_text_with_status,
     emit_json_checked, write_receipt_checked,

@@ -1,7 +1,7 @@
 mod capture;
 mod cli;
-mod commands;
 mod config;
+mod file_commands;
 // Guard enforcement and guard-check share one parser so diagnostics cannot
 // disagree with bridge/capture policy.
 // #[path]-loaded so child-module resolution matches the contextmink-bridge
@@ -13,8 +13,8 @@ mod files;
 mod grep_scan;
 mod hook_guard;
 mod hook_snippet;
+mod json_commands;
 mod json_input;
-mod json_tools;
 mod outline;
 mod output;
 mod process_boundary;
@@ -26,20 +26,18 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use clap::Parser;
-
 use capture::command_capture;
-use cli::{Cli, Command};
-use commands::{
-    GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
-};
+use cli::{Cli, Command, parse_cli};
 use config::load_context_config;
 use config::project_setup::{SetupActionKind, SetupProjectRequest, setup_project};
 use destructive_guard::{DenyDecision, ShellDialect, evaluate_argv};
+use file_commands::{
+    GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
+};
 use files::display_path;
 use hook_guard::command_hook_guard;
 use hook_snippet::command_hook_snippet;
-use json_tools::{command_json_find, command_json_select};
+use json_commands::{command_json_find, command_json_select};
 use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
 use text::{TermMode, TextMatcher, collect_terms};
@@ -68,7 +66,7 @@ fn main() -> Result<()> {
 
 fn run_application() -> Result<()> {
     output::mark_command_start();
-    let cli = Cli::parse();
+    let cli = parse_cli();
     validate_global_flags(&cli)?;
     if let Command::SetupProject {
         project_root,
@@ -191,7 +189,6 @@ fn run_application() -> Result<()> {
             *max_files_counted,
         ),
         Command::Grep {
-            args,
             paths,
             pattern,
             pattern_file,
@@ -215,7 +212,6 @@ fn run_application() -> Result<()> {
         } => command_grep(
             &cli,
             &config,
-            args,
             paths,
             pattern.as_deref(),
             pattern_file.as_deref(),

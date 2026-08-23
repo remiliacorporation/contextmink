@@ -111,7 +111,7 @@ fn usage() -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match run(args) {
+    match run_bridge(args) {
         Ok(code) => exit(code),
         Err(BridgeError { message, code }) => {
             eprintln!("contextmink-bridge: {message}");
@@ -126,18 +126,18 @@ struct BridgeError {
     code: i32,
 }
 
-fn fail(code: i32, message: impl Into<String>) -> BridgeError {
+fn bridge_error(code: i32, message: impl Into<String>) -> BridgeError {
     BridgeError {
         message: message.into(),
         code,
     }
 }
 
-fn run(args: Vec<String>) -> Result<i32, BridgeError> {
-    run_with_root(args, bridge_root()?)
+fn run_bridge(args: Vec<String>) -> Result<i32, BridgeError> {
+    run_bridge_from_root(args, bridge_root()?)
 }
 
-fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
+fn run_bridge_from_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     let mut cwd: Option<String> = None;
     let mut login = false;
     let mut preserve_descendants = false;
@@ -150,7 +150,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             "--cwd" => {
                 cwd = Some(
                     iter.next()
-                        .ok_or_else(|| fail(EXIT_USAGE, "--cwd requires a directory"))?,
+                        .ok_or_else(|| bridge_error(EXIT_USAGE, "--cwd requires a directory"))?,
                 );
             }
             "--login" => login = true,
@@ -176,7 +176,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 break;
             }
             other => {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_USAGE,
                     format!(
                         "unknown argument: {other} (use -- to separate the command, or --help)"
@@ -187,7 +187,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
     }
     #[cfg(not(windows))]
     if preserve_descendants {
-        return Err(fail(
+        return Err(bridge_error(
             EXIT_USAGE,
             "--preserve-descendants is supported only on Windows",
         ));
@@ -198,14 +198,14 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
         None => root.clone(),
     };
     if !target_cwd.is_dir() {
-        return Err(fail(
+        return Err(bridge_error(
             EXIT_MISSING_PATH,
             format!("working directory not found: {}", target_cwd.display()),
         ));
     }
 
     let Some((form, rest)) = command_form else {
-        return Err(fail(
+        return Err(bridge_error(
             EXIT_USAGE,
             format!(
                 "a command form (--, --script, --argfile, or --argv-b64) is required\n{}",
@@ -216,14 +216,17 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
 
     let (script_mode, argv) = assemble_argv(&form, rest, &root)?;
     if argv.is_empty() {
-        return Err(fail(EXIT_USAGE, format!("{form} requires a command")));
+        return Err(bridge_error(
+            EXIT_USAGE,
+            format!("{form} requires a command"),
+        ));
     }
 
     if print_argv {
         let mut stdout = std::io::stdout();
         for (index, arg) in argv.iter().enumerate() {
             writeln!(stdout, "argv[{index}]={arg}").map_err(|error| {
-                fail(EXIT_SPAWN_FAILED, format!("stdout write failed: {error}"))
+                bridge_error(EXIT_SPAWN_FAILED, format!("stdout write failed: {error}"))
             })?;
         }
         return Ok(0);
@@ -246,7 +249,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             );
         }
         destructive_guard::DenyDecision::Deny { message } => {
-            return Err(fail(
+            return Err(bridge_error(
                 EXIT_USAGE,
                 format!("destructive command blocked: {message}"),
             ));
@@ -269,7 +272,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
             } else {
                 EXIT_SPAWN_FAILED
             };
-            fail(code, message)
+            bridge_error(code, message)
         })?;
     prepared
         .command
@@ -295,7 +298,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 .spawn()
                 .map_err(|error| spawn_error(program, prepared.execution_mode, error))?;
             let supervisor = process_supervision::supervise(&mut child).map_err(|error| {
-                fail(
+                bridge_error(
                     EXIT_SPAWN_FAILED,
                     format!(
                         "failed to supervise {program:?} in {} mode: {error:#}",
@@ -304,7 +307,7 @@ fn run_with_root(args: Vec<String>, root: PathBuf) -> Result<i32, BridgeError> {
                 )
             })?;
             let status = child.wait().map_err(|error| {
-                fail(
+                bridge_error(
                     EXIT_SPAWN_FAILED,
                     format!(
                         "failed to wait for {program:?} in {} mode: {error}",
@@ -336,7 +339,7 @@ fn spawn_error(program: &str, execution_mode: &str, error: std::io::Error) -> Br
     } else {
         ""
     };
-    fail(
+    bridge_error(
         code,
         format!("failed to spawn {program:?} in {execution_mode} mode: {error}{hint}"),
     )
@@ -352,7 +355,7 @@ fn load_destructive_guard_config(
     config::load_context_config(Some(&path), false)
         .map(|config| config.destructive_guard)
         .map_err(|error| {
-            fail(
+            bridge_error(
                 EXIT_USAGE,
                 format!(
                     "failed to load bridge destructive guard config {}: {error:#}",
@@ -371,11 +374,11 @@ fn assemble_argv(
         "--" => Ok((false, rest)),
         "--script" => {
             let Some((script, args)) = rest.split_first() else {
-                return Err(fail(EXIT_USAGE, "--script requires a script path"));
+                return Err(bridge_error(EXIT_USAGE, "--script requires a script path"));
             };
             let script = resolve_from_root(root, script);
             if !script.is_file() {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_MISSING_PATH,
                     format!(
                         "script not found: {}; relative --script paths resolve from project root {} (not --cwd); pass a project-root-relative or absolute script path",
@@ -395,7 +398,7 @@ fn assemble_argv(
         }
         "--argfile" => {
             let [file] = rest.as_slice() else {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_USAGE,
                     "--argfile takes exactly one file and no further arguments",
                 ));
@@ -407,13 +410,13 @@ fn assemble_argv(
                 } else {
                     EXIT_IO
                 };
-                fail(
+                bridge_error(
                     code,
                     format!("failed to read argfile {}: {error}", file.display()),
                 )
             })?;
             let text = String::from_utf8(bytes).map_err(|_| {
-                fail(
+                bridge_error(
                     EXIT_DATA,
                     format!(
                         "argfile {} is not valid UTF-8; encode one argument per line as UTF-8",
@@ -427,7 +430,7 @@ fn assemble_argv(
                 .map(|line| line.trim_end_matches('\r').to_owned())
                 .collect();
             if argv.is_empty() {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_USAGE,
                     format!("argfile is empty: {}", file.display()),
                 ));
@@ -436,15 +439,16 @@ fn assemble_argv(
         }
         "--argv-b64" => {
             let [token] = rest.as_slice() else {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_USAGE,
                     "--argv-b64 takes exactly one token and no further arguments",
                 ));
             };
-            let bytes = decode_base64(token)
-                .map_err(|error| fail(EXIT_USAGE, format!("invalid --argv-b64 token: {error}")))?;
+            let bytes = decode_base64(token).map_err(|error| {
+                bridge_error(EXIT_USAGE, format!("invalid --argv-b64 token: {error}"))
+            })?;
             let joined = String::from_utf8(bytes)
-                .map_err(|_| fail(EXIT_USAGE, "--argv-b64 payload is not valid UTF-8"))?;
+                .map_err(|_| bridge_error(EXIT_USAGE, "--argv-b64 payload is not valid UTF-8"))?;
             // The documented encoder (`$argv -join [char]0`) never emits a
             // trailing NUL, so every split entry — including a trailing empty
             // string — is a genuine argument. Only a payload that is empty or
@@ -455,7 +459,7 @@ fn assemble_argv(
                 joined.split('\0').map(str::to_owned).collect()
             };
             if argv.is_empty() {
-                return Err(fail(
+                return Err(bridge_error(
                     EXIT_USAGE,
                     "--argv-b64 payload decodes to no arguments",
                 ));
@@ -481,9 +485,9 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 /// Shared project discovery supports both project-local and global installs.
 fn bridge_root() -> Result<PathBuf, BridgeError> {
     let cwd = std::env::current_dir()
-        .map_err(|error| fail(EXIT_SPAWN_FAILED, format!("resolve bridge cwd: {error}")))?;
+        .map_err(|error| bridge_error(EXIT_SPAWN_FAILED, format!("resolve bridge cwd: {error}")))?;
     let executable = std::env::current_exe().map_err(|error| {
-        fail(
+        bridge_error(
             EXIT_SPAWN_FAILED,
             format!("resolve bridge executable: {error}"),
         )

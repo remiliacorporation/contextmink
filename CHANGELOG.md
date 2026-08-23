@@ -26,7 +26,7 @@ The release workflow extracts the section for the requested version and fails if
 - Made grep distinguish capped scan scope from capped display and name the relevant output controls when an already-narrow query needs more per-file samples.
 - Added repository-owned source policy that keeps retained planner/dogfood state out of generic scans and denies recursive state or direct planner-database deletion before spawn.
 - Made a missing bridge `--script` refusal name the project-root resolution rule, its independence from `--cwd`, and both safe path corrections.
-- Added repeatable `grep --path` and visible `slice --start-line`/`--end-line` aliases so common agent guesses resolve to the canonical bounded operations.
+- Canonicalized `grep` on `--pattern PATTERN [PATH]...` or `--pattern-file FILE [PATH]...`, removed duplicate path and slice spellings, and made common noncanonical guesses name the exact replacement.
 - Scoped repository-owned exclude globs to their config tree during parent or foreign-root scans while retaining built-in build/dependency exclusions across every explicit root.
 
 ## [0.8.0] - 2026-07-31
