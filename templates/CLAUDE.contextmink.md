@@ -32,8 +32,9 @@ more output than the transcript should carry.
   `slice`, not dump windows. `outline <file>` maps declaration lines with line numbers
   (`--contains TEXT` filters rows; `--lang`, `--prefix <text>`, or
   `--pattern <regex>` cover unrecognized extensions), then
-  `slice --range START:END` prints the region. `slice` replaces `sed -n` /
-  `cat` / `head` file windows. Keep its default caps (120-line window,
+  `slice --range START:END` prints the region. Use `slice` when a file window
+  may be broad or needs bounded follow-up; keep direct exact small reads direct.
+  Keep its default caps (120-line window,
   220-line ceiling); narrow an oversized read with `outline` or
   `grep --context` instead of raising `--max-lines`.
   Built-in outline matching is a disclosed navigation heuristic over
