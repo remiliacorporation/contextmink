@@ -9,6 +9,8 @@ The release workflow extracts the section for the requested version and fails if
 ### Added
 
 - Added setup-managed Contextmink skills for open Agent Skills-compatible harnesses and Claude Code, with Codex UI metadata and one byte-identical generic workflow across harnesses.
+- Added source and release verification entrypoints that isolate Cargo's staged package fingerprints, pin actionlint for workflow validation, and compose native and cross-target release gates without making those tools runtime dependencies.
+- Expanded the optional Zig rehearsal to all three non-Windows artifact targets, with explicit pinned-toolchain target installation and both compile-surface and optimized-binary checks.
 
 ### Changed
 
@@ -16,10 +18,13 @@ The release workflow extracts the section for the requested version and fails if
 - Replaced full-manual transplantation into always-loaded guidance with a concise broad-read discovery trigger; repository owners now adapt only shell, native-tool, nested-repository, exclusion, and destructive-path policy while the release-managed skill carries operational detail.
 - Made Rust outlines expose top-level enum variant headers while keeping tuple and struct variant payload fields hidden, so command enums and state machines are navigable without a broad source slice.
 - Made `contextmink-bridge --script <path> -- <args>` consume the conventional separator instead of forwarding a misleading leading `--`; double the separator when the script must receive one literally.
+- Renamed the bounded nested-repository receipt list to `nested_repos_entered_sample` while retaining the exact `nested_repos_entered_total`, so a large workspace cannot make a sample look exhaustive.
 
 ### Fixed
 
 - Froze the destructive-guard invariant that dash-prefixed protected paths after the POSIX `--` option terminator remain deletion operands, including an executable capture witness that proves denial occurs before spawn.
+- Made grep distinguish capped scan scope from capped display and name the relevant output controls when an already-narrow query needs more per-file samples.
+- Added repository-owned source policy that keeps retained planner/dogfood state out of generic scans and denies recursive state or direct planner-database deletion before spawn.
 
 ## [0.8.0] - 2026-07-31
 

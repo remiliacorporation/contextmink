@@ -71,9 +71,10 @@ more output than the transcript should carry.
   include files matched by contextmink exclude globs, and `--with-git-ignored`
   only for files hidden by Git or `.ignore` rules. Broad scans cross nested Git
   repository roots by default, including tracked submodules and Git-ignored
-  sibling repositories, and disclose every crossed root in
-  `nested_repos_entered`. Pass `--skip-nested-repos` to stay inside each
-  explicit root; pass a nested repository explicitly when it is the target.
+  sibling repositories, and disclose the exact `nested_repos_entered_total`
+  plus a bounded `nested_repos_entered_sample`. Pass `--skip-nested-repos` to
+  stay inside each explicit root; pass a nested repository explicitly when it
+  is the target.
 - Read the `contextmink.receipt.v2` envelope structurally. `scope_complete:
   false` means totals cover only a bounded subset; `output_truncated: true`
   means the scope was inspected but payload was omitted or shortened. Inspect

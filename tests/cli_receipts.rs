@@ -873,6 +873,24 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
         "sample_matching_lines_per_file"
     ));
 
+    let human = run_contextmink_raw(
+        &root,
+        &[
+            "grep",
+            "needle",
+            "many.txt",
+            "--lines-per-file",
+            "1",
+            "--max-sample-lines",
+            "10",
+        ],
+    );
+    assert!(human.status.success());
+    let human_stdout = String::from_utf8(human.stdout).unwrap();
+    assert!(human_stdout.contains("grep display was capped"));
+    assert!(human_stdout.contains("--lines-per-file"));
+    assert!(!human_stdout.contains("output or scan"));
+
     let retained_as_context = parse_json_output(
         &root,
         &[
@@ -1856,7 +1874,9 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             .any(|path| path.as_str().unwrap().trim_start_matches("./")
                 == "vendor/sqlite-tool/README.md")
     );
-    let nested = without_flag["nested_repos_entered"].as_array().unwrap();
+    let nested = without_flag["nested_repos_entered_sample"]
+        .as_array()
+        .unwrap();
     assert_eq!(nested.len(), 1);
     assert_eq!(
         nested[0].as_str().unwrap().trim_start_matches("./"),
@@ -1883,7 +1903,13 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             .trim_start_matches("./")
             != "vendor/sqlite-tool/README.md")
     );
-    assert_eq!(skipped["nested_repos_entered"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        skipped["nested_repos_entered_sample"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 
     let with_flag = parse_json_output(
         &root,
@@ -1935,7 +1961,7 @@ fn tracked_submodule_style_repo_is_disclosed_and_skipped() {
     );
     assert_eq!(entered["nested_repos_entered_total"], 1);
     assert_eq!(
-        entered["nested_repos_entered"][0]
+        entered["nested_repos_entered_sample"][0]
             .as_str()
             .unwrap()
             .trim_start_matches("./"),
@@ -1982,7 +2008,7 @@ fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
     let expected = ["group/a-repo", "ignored/z-repo"];
     for _ in 0..4 {
         let receipt = parse_json_output(&root, &["--json", "files", ".", "--limit", "200"]);
-        let nested = receipt["nested_repos_entered"]
+        let nested = receipt["nested_repos_entered_sample"]
             .as_array()
             .unwrap()
             .iter()
@@ -1990,6 +2016,28 @@ fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
             .collect::<Vec<_>>();
         assert_eq!(nested, expected);
     }
+}
+
+#[test]
+fn nested_repo_receipt_names_its_bounded_sample() {
+    let root = fixture_root("nested-repo-receipt-sample");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    for index in 0..14 {
+        let repo = root.join("vendor").join(format!("repo-{index:02}"));
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::write(repo.join("README.md"), "nested repository\n").unwrap();
+    }
+
+    let receipt = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    assert_eq!(receipt["nested_repos_entered_total"], 14);
+    assert_eq!(
+        receipt["nested_repos_entered_sample"]
+            .as_array()
+            .unwrap()
+            .len(),
+        12
+    );
+    assert!(receipt.get("nested_repos_entered").is_none());
 }
 
 #[test]

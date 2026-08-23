@@ -127,7 +127,8 @@ fn project_template_requires_explicit_policy_adaptation() {
     assert!(guidance.contains("`--max-document-bytes`"));
     assert!(guidance.contains("do not invent stdout/stderr chronology"));
     assert!(guidance.contains("including tracked submodules and Git-ignored"));
-    assert!(guidance.contains("Pass `--skip-nested-repos` to stay inside each"));
+    assert!(guidance.contains("`--skip-nested-repos`"));
+    assert!(guidance.contains("explicit root"));
 }
 
 #[test]
@@ -150,6 +151,21 @@ fn setup_guidance_preserves_repository_owned_configuration() {
             "{name} must explain fresh-clone binary repair"
         );
     }
+}
+
+#[test]
+fn source_checkout_dogfoods_repository_owned_guard_policy_when_present() {
+    let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".contextmink.toml");
+    if !config_path.is_file() {
+        return;
+    }
+
+    let config = std::fs::read_to_string(config_path).unwrap();
+    assert!(config.contains("profile = \"contextmink\""));
+    assert!(config.contains("exclude_globs = [\"state/**\"]"));
+    assert!(config.contains("destructive_guard_recursive_delete_fragments = [\"state\"]"));
+    assert!(config.contains("papertiger.sqlite"));
+    assert!(config.contains("papertiger-mise.sqlite"));
 }
 
 #[test]
@@ -211,6 +227,31 @@ fn cross_check_rehearses_every_non_windows_release_target() {
     assert!(cross_check.contains("--install-targets"));
     assert!(cross_check.contains("rustup target add --toolchain"));
     assert!(cross_check.contains("--release --bins --target"));
+}
+
+#[test]
+fn source_verification_isolates_package_fingerprints() {
+    let verify = include_str!("../scripts/verify_source.sh");
+
+    assert!(verify.contains("cargo fmt --all -- --check"));
+    assert!(verify.contains("cargo test --locked --all-targets --all-features"));
+    assert!(
+        verify.contains(
+            "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings"
+        )
+    );
+    assert!(verify.contains("CONTEXTMINK_PACKAGE_TARGET_DIR"));
+    assert!(verify.contains("CARGO_TARGET_DIR=\"$package_target_dir\" cargo package --locked"));
+}
+
+#[test]
+fn release_verification_composes_pinned_independent_gates() {
+    let verify = include_str!("../scripts/verify_release.sh");
+
+    assert!(verify.contains("expected_actionlint=\"1.7.12\""));
+    assert!(verify.contains("actionlint -color .github/workflows/*.yml"));
+    assert!(verify.contains("bash scripts/verify_source.sh"));
+    assert!(verify.contains("bash scripts/cross_check.sh \"$@\""));
 }
 
 #[test]

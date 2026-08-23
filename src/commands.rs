@@ -26,7 +26,7 @@ const NESTED_REPOS_HUMAN_LIMIT: usize = 8;
 fn nested_repos_receipt_fields(receipt: &mut Receipt, nested: &[String]) {
     receipt.insert("nested_repos_entered_total", json!(nested.len()));
     receipt.insert(
-        "nested_repos_entered",
+        "nested_repos_entered_sample",
         json!(
             nested
                 .iter()
@@ -710,7 +710,7 @@ pub(crate) fn command_grep_with_matcher(
                         if !quiet {
                             writeln!(
                                 stdout,
-                                "[contextmink] capped sample lines at {}; narrow the query.",
+                                "[contextmink] capped sample lines at {}; narrow the query or raise --max-sample-lines only when every sample is needed.",
                                 caps.max_sample_lines
                             )?;
                         }
@@ -728,10 +728,16 @@ pub(crate) fn command_grep_with_matcher(
                 }
             }
         }
-        if !scope_complete || output_truncated {
+        if !scope_complete {
             writeln!(
                 stdout,
-                "[contextmink] capped grep output or scan; narrow the path or pattern before treating this as complete."
+                "[contextmink] grep scan scope was capped; narrow the roots or pattern before raising the named scope cap."
+            )?;
+        }
+        if output_truncated {
+            writeln!(
+                stdout,
+                "[contextmink] grep display was capped; narrow the query or raise only the named output control (--limit, --lines-per-file, --max-sample-lines, or --max-line-chars)."
             )?;
         }
         write_receipt_checked(cli, receipt)
