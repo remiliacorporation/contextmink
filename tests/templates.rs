@@ -307,7 +307,7 @@ fn cross_check_rehearses_every_non_windows_release_target() {
 }
 
 #[test]
-fn source_verification_isolates_package_fingerprints() {
+fn source_verification_isolates_package_and_msrv_fingerprints() {
     let verify = include_str!("../scripts/verify_source.sh");
 
     assert!(verify.contains("cargo fmt --all -- --check"));
@@ -322,6 +322,9 @@ fn source_verification_isolates_package_fingerprints() {
     );
     assert!(verify.contains("CONTEXTMINK_PACKAGE_TARGET_DIR"));
     assert!(verify.contains("CARGO_TARGET_DIR=\"$package_target_dir\" cargo package --locked"));
+    assert!(verify.contains("msrv_toolchain=\"1.95.0\""));
+    assert!(verify.contains("CONTEXTMINK_MSRV_TARGET_DIR"));
+    assert!(verify.contains("cargo +\"$msrv_toolchain\" check --locked"));
 }
 
 #[test]
