@@ -32,6 +32,30 @@ fn encode_base64(bytes: &[u8]) -> String {
     token
 }
 
+#[test]
+fn script_form_consumes_one_conventional_argument_separator() {
+    let root = temp_tree("script-separator");
+    let script = root.join("probe.sh");
+    fs::write(&script, "exit 0\n").unwrap();
+    let script_arg = script.to_string_lossy().into_owned();
+
+    let (_, argv) = assemble_argv(
+        "--script",
+        vec![script_arg.clone(), "--".to_owned(), "value".to_owned()],
+        &root,
+    )
+    .unwrap();
+    assert_eq!(argv, [script_arg.replace('\\', "/"), "value".to_owned()]);
+
+    let (_, argv) = assemble_argv(
+        "--script",
+        vec![script_arg, "--".to_owned(), "--".to_owned()],
+        &root,
+    )
+    .unwrap();
+    assert_eq!(argv[1], "--");
+}
+
 fn assemble_argv_b64(argv: &[&str]) -> Result<Vec<String>, String> {
     let token = encode_base64(argv.join("\0").as_bytes());
     assemble_argv("--argv-b64", vec![token], std::path::Path::new("."))

@@ -295,8 +295,8 @@ rewriting, and accepts argv through channels PowerShell cannot mangle:
 ```powershell
 # Direct command; slash-bearing args arrive verbatim:
 & tools\contextmink\bin\contextmink-bridge.exe -- <program> <args...>
-# Repository bash script, Git Bash discovered automatically:
-& tools\contextmink\bin\contextmink-bridge.exe --script scripts/some_tool.sh <args...>
+# Repository bash script, Git Bash discovered automatically; the separator is optional:
+& tools\contextmink\bin\contextmink-bridge.exe --script scripts/some_tool.sh -- <args...>
 # Lossless single-token argv channel (immune to PowerShell 5.1 quote loss):
 $argv = @('grep', '-n', 'he said "hi"', 'notes.md')
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [char]0)))
@@ -314,7 +314,9 @@ mode a path-like program (`./gradlew`, `bin/tool`) resolves against `--cwd`,
 matching POSIX exec semantics. A file whose first line begins `#!` enters Git
 Bash deterministically; a Bash script without a shebang requires
 explicit `--script`, whose path resolves from the bridge root instead of
-`--cwd`. Bare names in direct mode use the native Windows `PATH`; use
+`--cwd`. One optional `--` immediately after the script path is consumed as an
+argument separator; use two when the script itself must receive one. Bare names
+in direct mode use the native Windows `PATH`; use
 `--login` for utilities supplied by Git Bash (for example,
 `contextmink-bridge.exe --login -- perl --version`) instead of hardcoding a
 Git installation path. Destructive argv matching the safety

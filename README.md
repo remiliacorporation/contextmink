@@ -428,7 +428,9 @@ repositories whose scripts are Bash-first while the agent runs in PowerShell:
   path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Files whose
   first line begins `#!` enter Git Bash deterministically;
   `--script <path>` explicitly selects a Bash script and resolves it from the
-  bridge root. Bare commands in direct mode use the native Windows `PATH`;
+  bridge root. An optional `--` immediately after the script path is consumed
+  as the conventional argument separator; double it when the script itself
+  must receive a leading `--`. Bare commands in direct mode use the native Windows `PATH`;
   pass `--login` when the command is a utility supplied by Git Bash, such as
   `perl`. `--preserve-descendants` is the explicit exception for a
   successful child that intentionally launches a persistent GUI or service;

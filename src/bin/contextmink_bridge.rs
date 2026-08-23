@@ -18,7 +18,9 @@
 //! themselves (no hardcoded path needed on the agent side). Direct mode
 //! recognizes shebang files by their leading `#!` line before spawn; a file
 //! that is neither an executable nor a shebang script requires explicit
-//! `--script`.
+//! `--script`. A conventional `--` immediately after the script path is
+//! consumed as an argument separator; double it to pass a literal leading
+//! `--` to the script.
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -52,7 +54,7 @@ const SUPPRESS_ENV: &str = "CONTEXTMINK_BRIDGE_SUPPRESS_DUMP_WARNING";
 fn usage() -> String {
     "Usage:\n\
      \x20 contextmink-bridge [flags] -- <program> [args...]\n\
-     \x20 contextmink-bridge [flags] --script <script> [args...]\n\
+     \x20 contextmink-bridge [flags] --script <script> [--] [args...]\n\
      \x20 contextmink-bridge [flags] --argfile <file>\n\
      \x20 contextmink-bridge [flags] --argv-b64 <token>\n\
      \n\
@@ -85,7 +87,9 @@ fn usage() -> String {
      spelled as a path (./gradlew, sub/tool) resolves against --cwd; bare\n\
      names use the native PATH; use --login for Git Bash PATH utilities;\n\
      shebang scripts enter Git Bash deterministically.\n\
-     Use --script for an intentional Bash script without a shebang.\n\
+     Use --script for an intentional Bash script without a shebang. One\n\
+     optional -- after the script path is consumed as a separator; use two\n\
+     consecutive -- arguments when the script must receive one.\n\
      \n\
      Destructive-command deny-list: argv matching `git clean` is refused\n\
      before spawn (exit 64; nested bash/powershell/cmd payloads are scanned\n\
@@ -377,6 +381,11 @@ fn assemble_argv(
                 ));
             }
             let mut argv = vec![script.to_string_lossy().replace('\\', "/")];
+            let args = if args.first().is_some_and(|arg| arg == "--") {
+                &args[1..]
+            } else {
+                args
+            };
             argv.extend(args.iter().cloned());
             Ok((true, argv))
         }
