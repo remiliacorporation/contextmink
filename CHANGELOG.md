@@ -8,7 +8,8 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Added
 
-- `setup-project --skill-target auto|agents|claude|both|none` selects where the thin, tool-namespaced `contextmink` skill resides. First-install `auto` detects existing Agent Skills/Codex and Claude markers, resolves an unmarked project to `none`, and persists the concrete choice so upgrades do not re-detect it opportunistically.
+- `setup-project --skill-target auto|agents|claude|both|none` selects where the thin, tool-namespaced `contextmink` skill resides. First-install `auto` resolves existing Agent Skills and Claude markers or selects `none`, then persists the concrete choice so upgrades do not re-detect it opportunistically.
+- `auto` recognizes Codex, Pi, OMP, and OpenCode project markers as consumers of the shared `.agents/skills` target. Any harness that reads that path works without a harness-specific copy; setup manages only `.agents/skills/contextmink` and `.claude/skills/contextmink`. Pi users must trust project-local resources or pass `--approve` for a noninteractive run.
 - `tools/contextmink/project-install.json` records the resolved skill target, release-managed text hashes, and installer-created ignore policy; the ignored `tools/contextmink/bin/runtime-install.json` records exact host-binary hashes without making the tracked receipt platform-specific. `.contextmink.toml` remains repository-owned.
 - `uninstall-project` removes only hash-matching receipt-owned launchers, selected skills, integration text, host binaries, and an installer-owned Contextmink `.gitignore` block. It preserves `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, unrelated skills, preexisting ignore policy, and runtime files without proven ownership; modified receipt-owned files and project-local self-removal refuse before deletion.
 

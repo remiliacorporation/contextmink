@@ -11,8 +11,8 @@ release, the agent responsible for maintaining the target repository runs:
 The command installs platform-appropriate project-local binaries and launchers,
 generates a real profile, updates `.gitignore`, and installs the thin namespaced
 Contextmink skill for the selected harness paths. `--skill-target auto` detects
-existing Agent Skills/Codex and Claude markers on first install, resolves an
-unmarked project to `none`, and freezes that choice in
+existing Agent Skills, Codex, Pi, OMP, OpenCode, and Claude markers on first
+install, resolves an unmarked project to `none`, and freezes that choice in
 `tools/contextmink/project-install.json`; use
 `--skill-target agents|claude|both|none` for explicit selection or reselection.
 Deselected receipt-owned skills retire only while their hashes match; an
