@@ -12,6 +12,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Changed
 
+- Unreleased dogfood binaries now identify as `0.9.0-rc.1`, distinguishing the project-adaptable skill/setup and navigation changes from the tagged `0.8.0` release.
 - Replaced full-manual transplantation into always-loaded guidance with a concise broad-read discovery trigger; repository owners now adapt only shell, native-tool, nested-repository, exclusion, and destructive-path policy while the release-managed skill carries operational detail.
 - Made Rust outlines expose top-level enum variant headers while keeping tuple and struct variant payload fields hidden, so command enums and state machines are navigable without a broad source slice.
 - Made `contextmink-bridge --script <path> -- <args>` consume the conventional separator instead of forwarding a misleading leading `--`; double the separator when the script must receive one literally.
