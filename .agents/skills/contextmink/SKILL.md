@@ -1,6 +1,6 @@
 ---
 name: contextmink
-description: Use the project-local Contextmink CLI for broad or potentially high-output repository discovery, text search, file navigation, JSON or JSONL projection, read-only SQLite inspection, uncertain command capture, and destructive-command guard checks. Trigger when output cardinality is unknown or a known file needs more than one small exact window. Skip known-small direct reads and project-native compact or domain-query commands.
+description: Use the project-local Contextmink CLI before generic repository reads, searches, structured-data inspection, or command capture may produce uncertain or high output. Skip known-small direct reads and project-native compact or domain-query commands.
 ---
 
 # Use Contextmink

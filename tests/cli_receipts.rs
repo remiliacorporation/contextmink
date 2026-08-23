@@ -240,8 +240,9 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     fs::write(root.join("AGENTS.md"), "existing guidance\n").unwrap();
 
     let setup = parse_json_output(&root, &["--json", "setup-project", "."]);
-    assert_eq!(setup["schema"], "contextmink.project_setup.v1");
+    assert_eq!(setup["schema"], "contextmink.project_setup.v2");
     assert_eq!(setup["dry_run"], false);
+    assert_eq!(setup["ready"], true);
     assert_eq!(
         fs::read_to_string(root.join("AGENTS.md")).unwrap(),
         "existing guidance\n"
@@ -261,6 +262,29 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
         fs::read(root.join(".claude/skills/contextmink/SKILL.md")).unwrap()
     );
     assert!(root.join("scripts/contextmink").is_file());
+    assert!(root.join("scripts/contextmink.cmd").is_file());
+    assert!(
+        root.join("tools/contextmink/project-install.json")
+            .is_file()
+    );
+    let install_receipt: Value = serde_json::from_slice(
+        &fs::read(root.join("tools/contextmink/project-install.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(install_receipt["schema"], "contextmink.project_install.v1");
+    assert_eq!(
+        install_receipt["contextmink_version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(install_receipt["managed_gitignore_block"], true);
+    assert_eq!(install_receipt["managed_gitignore_file"], true);
+    assert!(
+        install_receipt["managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| !file["path"].as_str().unwrap().contains("changelog-writing"))
+    );
     assert!(
         fs::read_to_string(root.join(".contextmink.toml"))
             .unwrap()
@@ -305,12 +329,39 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
             .unwrap()
             .iter()
             .any(|action| {
-                action["path"] == "scripts/contextmink" && action["action"] == "replace"
+                action["path"] == "scripts/contextmink"
+                    && action["action"] == "replace"
+                    && action["requires_replace_managed"] == true
             })
     );
+    assert_eq!(upgrade_plan["ready"], false);
     assert_eq!(
         fs::read_to_string(root.join("scripts/contextmink")).unwrap(),
         "older launcher\n"
+    );
+}
+
+#[test]
+fn uninstall_project_removes_only_receipt_owned_integration() {
+    let root = fixture_root("uninstall-project-command");
+    fs::remove_file(root.join(".contextmink.toml")).unwrap();
+    fs::write(root.join("AGENTS.md"), "keep this guidance\n").unwrap();
+    parse_json_output(&root, &["--json", "setup-project", "."]);
+    let config = fs::read(root.join(".contextmink.toml")).unwrap();
+
+    let removal = parse_json_output(
+        &root,
+        &["--json", "uninstall-project", root.to_str().unwrap()],
+    );
+    assert_eq!(removal["schema"], "contextmink.project_uninstall.v1");
+    assert_eq!(removal["ready"], true);
+    assert!(!root.join(".agents/skills/contextmink/SKILL.md").exists());
+    assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
+    assert!(!root.join("tools/contextmink/project-install.json").exists());
+    assert_eq!(fs::read(root.join(".contextmink.toml")).unwrap(), config);
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "keep this guidance\n"
     );
 }
 

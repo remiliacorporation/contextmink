@@ -134,19 +134,25 @@ the target repository:
 
 On Windows PowerShell, use
 `& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
-the platform-appropriate release artifacts, installs the Bash launcher and the
-PowerShell diagnostic shim, generates a real project profile, adds the binary
-directory to `.gitignore`, and installs the Contextmink skill for open Agent
-Skills-compatible harnesses and Claude Code. The thin skill points to the
-canonical `tools/contextmink/agent_integration.md` reference. Setup deliberately does not
-edit `AGENTS.md` or `CLAUDE.md`: the maintaining agent must inspect the
-repository, add one concise discovery trigger, and adapt only project-owned
-shell, native-tool, nested-repository, exclusion, and destructive-path policy.
+the platform-appropriate release binaries, installs both project launchers,
+generates a real project profile, adds the binary directory to `.gitignore`,
+and installs the Contextmink skill for open Agent Skills-compatible harnesses
+and Claude Code. The thin, namespaced skill points to the canonical
+`tools/contextmink/agent_integration.md` reference; its body is loaded only when
+selected, while its short discovery description is the only resident skill
+metadata. Other tools can own adjacent namespaced skills without sharing or
+duplicating Contextmink policy. Setup never edits harness settings, hooks,
+`AGENTS.md`, or `CLAUDE.md`: the maintaining agent must inspect the repository,
+add one concise discovery trigger, and adapt only project-owned shell,
+native-tool, nested-repository, exclusion, and destructive-path policy.
 
-`setup-project` preflights every destination before writing. It is idempotent
-for the same release and requires `--replace-managed` to update divergent
-release-managed binaries, launchers, skills, or the integration reference. An
-existing
+`setup-project` preflights every destination before writing and records stable
+integration text, fixed runtime paths, and installer-created ignore policy in
+`tools/contextmink/project-install.json`. Receipt-matching files upgrade and
+retire automatically; `--replace-managed` is required only for a reviewed
+modified or pre-receipt managed destination. Dry-run JSON uses
+`contextmink.project_setup.v2`, with `ready` and per-action
+`requires_replace_managed` fields. An existing
 `.contextmink.toml` is repository-owned: setup validates it with the real
 configuration loader, reports `preserve_repository_owned`, and never compares
 or replaces it from the release template. Invalid configuration fails before
@@ -154,10 +160,26 @@ any file is written. A dry run reports required release-file replacements
 without granting permission to perform them.
 
 This is also the fresh-clone repair path. Repositories normally track their
-configuration, launchers, skills, and integration reference while ignoring
-`tools/contextmink/bin/`; running `setup-project` from an unpacked release
-preserves the tracked configuration and restores whichever host binaries are
-missing.
+configuration, launchers, skills, integration reference, and install receipt
+while ignoring `tools/contextmink/bin/`; running `setup-project` from an
+unpacked release preserves the tracked configuration and restores whichever
+host binaries are missing.
+
+The full project integration is deliberately the zero-ceremony default for
+agent-operated repositories. If a project wants only the executable and no
+harness discovery files, use the standalone binary install instead of
+`setup-project`. To remove a managed integration, run the matching or newer
+release binary from outside the project:
+
+```bash
+./contextmink uninstall-project /path/to/repository --dry-run
+./contextmink uninstall-project /path/to/repository
+```
+
+Removal requires the ownership receipt, refuses modified managed text, and
+preserves `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, and unrelated harness
+content. Review those repository-owned files afterward and remove a discovery
+trigger or configuration only when the project no longer wants it.
 
 After integration, verify from the repository root:
 
@@ -242,8 +264,12 @@ below is the short map.
   pragmas, and future write-shaped statements are rejected independently of
   the read-only file open.
 - `setup-project` — install a project-local release and print the remaining
-  agent-owned configuration and guidance work. Supports `--dry-run` and
-  explicit `--replace-managed` release upgrades.
+  agent-owned configuration and guidance work. Persists managed ownership,
+  supports `--dry-run`, and requires `--replace-managed` only for reviewed
+  unowned or modified destinations.
+- `uninstall-project` — remove receipt-owned launchers, skills, integration
+  reference, and runtime paths while preserving repository-owned configuration
+  and guidance. Supports `--dry-run` and refuses modified managed text.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument.
 - `capture` — execute non-interactive argv with child stdin closed and print

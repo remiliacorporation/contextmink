@@ -125,10 +125,15 @@ Adapt the installation to the project before copying generic policy:
    compatible with rerunning `setup-project` to restore missing host binaries;
    source vendoring or a reviewed multi-platform package policy is the
    hermetic alternative.
-6. Keep the release-managed Contextmink skill as the detailed discovery
-   envelope. Add one concise trigger to the existing always-loaded guidance;
-   preserve direct-command exceptions and project shell rules without pasting
-   the full generic reference into every prompt.
+6. Choose the integration depth deliberately. `setup-project` is the
+   deterministic agent integration: it adds one tool-namespaced Contextmink
+   skill to both shared Agent Skills and Claude discovery paths, without
+   editing harness settings or existing guidance. Its short description is
+   discoverable; the full body is loaded on selection. This is preferable to
+   auto-detecting one current harness in a repository that may be shared by
+   several. Use the standalone binary install instead when the project wants
+   no harness files. Do not setup-install general-purpose skills owned by
+   another tool or workflow.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -152,11 +157,17 @@ Adapt the installation to the project before copying generic policy:
    ```
 
    The command preflights every managed destination before the first write. It
-   installs the current platform binary, the Windows bridge and diagnostic
-   `.cmd` shim when applicable, the Bash launcher, a real-profile
+   installs the current platform binary, the Windows bridge when applicable,
+   both project launchers, a real-profile
    `.contextmink.toml`, `.gitignore` coverage for
    `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and the
-   Contextmink skill under `.agents/skills/` and `.claude/skills/`.
+   Contextmink skill under `.agents/skills/` and `.claude/skills/`. It also
+   writes `tools/contextmink/project-install.json`, a platform-neutral receipt
+   containing the Contextmink version, fixed runtime paths, canonical SHA-256
+   identities for release-managed text, and exact ownership of the additive
+   `.gitignore` block or file it created. The receipt never claims
+   `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, or unrelated
+   skills.
 
 3. Read every printed `next_actions` entry. Inspect and edit
    `.contextmink.toml` for this repository's generated/high-output trees and
@@ -193,11 +204,15 @@ Adapt the installation to the project before copying generic policy:
    missing ignored binaries are created.
 
 7. To upgrade, rerun the newer release with `--dry-run`. A valid existing
-   configuration must be reported as `preserve_repository_owned`. If
-   release-managed artifacts differ, the dry run reports `replace` without
-   changing them; apply with `--replace-managed`. This can replace binaries,
-   launchers, and the integration reference, but never `.contextmink.toml`.
-   Review and reintegrate guidance changes after every such replacement.
+   configuration must be reported as `preserve_repository_owned`.
+   Receipt-matching older text and runtime binaries upgrade without extra
+   authority, and obsolete receipt paths are removed only when their hashes
+   still match. A modified or pre-receipt destination reports
+   `requires_replace_managed: true` and makes the plan `ready: false`; inspect
+   it, then apply with `--replace-managed` if replacement is correct. Modified
+   retired paths always refuse and require deliberate manual resolution.
+   Setup never replaces `.contextmink.toml`. Review and reintegrate guidance
+   changes after every managed reference replacement.
 
 8. Optional: generate a Claude hook fragment from the installed binary:
 
@@ -211,6 +226,42 @@ Adapt the installation to the project before copying generic policy:
    output belongs in `.claude/settings.local.json`; commit it to shared
    `.claude/settings.json` only when the generated command paths are stable for
    every supported clone.
+
+### Remove the project-local integration
+
+Run removal from an unpacked matching or newer release outside the target
+project. The project-local binary cannot remove itself consistently on Windows,
+so `uninstall-project` refuses that invocation on every platform.
+
+```bash
+./contextmink uninstall-project /path/to/repository --dry-run
+./contextmink uninstall-project /path/to/repository
+```
+
+Windows PowerShell:
+
+```powershell
+& .\contextmink.exe uninstall-project C:\path\to\repository --dry-run
+& .\contextmink.exe uninstall-project C:\path\to\repository
+```
+
+The command requires `tools/contextmink/project-install.json`, removes only
+receipt-owned skills, launchers, integration text, fixed runtime paths, and an
+exact receipt-owned Contextmink `.gitignore` block, and prunes only empty
+Contextmink-owned directories. It refuses modified managed text before
+deletion. It preserves
+`.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, and unrelated
+skills; review those repository-owned files and remove any obsolete discovery
+trigger or policy deliberately.
+
+The 0.9.0 release is the first receipt-bearing Contextmink install. A prior
+`0.9.0-rc` setup may also have projected `changelog-writing`. Stable setup does
+not infer that an unreceipted general skill is Contextmink-owned. Review
+`.agents/skills/changelog-writing/SKILL.md`,
+`.agents/skills/changelog-writing/agents/openai.yaml`, and
+`.claude/skills/changelog-writing/SKILL.md`; remove them manually only if the
+repository has no independent reason to keep the skill. This one-time refusal
+to guess ownership is intentional.
 
 Maintaining-agent prompt:
 
@@ -361,13 +412,15 @@ copy of the Rust crate:
    quiet; callers can still pass an explicit file or subdirectory inside an
    excluded tree when that tree is the target.
 
-4. Project the release-managed Contextmink skill into the target repository's
+4. Project the project-local Contextmink skill into the target repository's
    harness discovery paths. Copy `templates/skills/contextmink/SKILL.md` to
    `.agents/skills/contextmink/SKILL.md` and
    `.claude/skills/contextmink/SKILL.md`; copy its `agents/openai.yaml` only to
    the matching `.agents` skill. Keep the two harness skill bodies
-   byte-identical. Refuse or explicitly review a divergent existing destination
-   instead of overwriting it silently.
+   byte-identical. In a source-vendored integration these copies are owned by
+   the target repository rather than a binary-install receipt. Refuse or
+   explicitly review a divergent existing destination instead of overwriting
+   it silently.
 
 5. Treat the instruction templates as integration references for the tool
    surfaces the target repository uses:
@@ -475,6 +528,11 @@ host mechanics the templates do not:
   fragments in `.contextmink.toml` and repository instructions.
 
 ## Maintenance
+
+For release-binary integration, keep
+`tools/contextmink/project-install.json` tracked beside the managed launchers,
+skills, and integration reference. Do not hand-edit its hashes. Run the newer
+release's `setup-project --dry-run` to inspect drift, upgrade, or retirement.
 
 For a vendored copy, compare or sync only the generic surface:
 

@@ -8,7 +8,9 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Added
 
-- `setup-project` installs a release-managed `contextmink` skill under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. Existing integrations should dry-run the new release, use `--replace-managed` only for reviewed divergent release-managed files, and reduce always-loaded Contextmink guidance to one discovery trigger; `.contextmink.toml` remains repository-owned and preserved.
+- `setup-project` installs a thin, tool-namespaced `contextmink` skill under `.agents/skills/` and `.claude/skills/`, plus Codex metadata. It does not edit harness settings or always-loaded guidance.
+- `tools/contextmink/project-install.json` records the release version, fixed runtime paths, managed-text hashes, and installer-created ignore policy. Later releases can upgrade, retire, or remove only receipt-owned surfaces; `.contextmink.toml` remains repository-owned.
+- `uninstall-project` removes receipt-owned launchers, skills, integration text, runtime paths, and an installer-owned Contextmink `.gitignore` block while preserving `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, unrelated skills, and preexisting ignore policy. Run it from an unpacked matching or newer release; modified managed text and project-local self-removal refuse before deletion.
 
 ### Changed
 
@@ -16,6 +18,8 @@ The release workflow extracts the section for the requested version and fails if
 - `files`, `dirs`, `grep`, and `grep-terms` receipts replace `nested_repos_entered` with the bounded `nested_repos_entered_sample` while retaining exact `nested_repos_entered_total`; machine consumers must update to the new field name.
 - `contextmink-bridge --script <path> -- <args>` consumes one conventional separator instead of forwarding it; pass two consecutive `--` arguments when the script must receive one.
 - Rust `outline` results include top-level enum variant headers while omitting tuple and struct variant payload fields.
+- `setup-project` JSON uses `contextmink.project_setup.v2`, with top-level `ready` and per-action `requires_replace_managed`. Both project launchers are installed on every host, and receipt-matching upgrades no longer require `--replace-managed`.
+- Existing pre-receipt integrations should dry-run 0.9.0 and authorize only reviewed divergent destinations. Repositories that ran a 0.9.0 release candidate must separately review any unreceipted `.agents/skills/changelog-writing/` or `.claude/skills/changelog-writing/` files; stable setup will not guess that a general-purpose skill is Contextmink-owned.
 
 ### Fixed
 
