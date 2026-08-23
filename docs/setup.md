@@ -125,8 +125,10 @@ Adapt the installation to the project before copying generic policy:
    compatible with rerunning `setup-project` to restore missing host binaries;
    source vendoring or a reviewed multi-platform package policy is the
    hermetic alternative.
-6. Merge the maintained instruction snippet into the existing guidance
-   hierarchy, preserving direct-command exceptions and project shell rules.
+6. Keep the release-managed Contextmink skill as the detailed discovery
+   envelope. Add one concise trigger to the existing always-loaded guidance;
+   preserve direct-command exceptions and project shell rules without pasting
+   the full generic reference into every prompt.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -153,8 +155,9 @@ Adapt the installation to the project before copying generic policy:
    installs the current platform binary, the Windows bridge and diagnostic
    `.cmd` shim when applicable, the Bash launcher, a real-profile
    `.contextmink.toml`, `.gitignore` coverage for
-   `/tools/contextmink/bin/`, and
-   `tools/contextmink/agent_integration.md`.
+   `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and thin
+   skills under `.agents/skills/contextmink/` and
+   `.claude/skills/contextmink/`.
 
 3. Read every printed `next_actions` entry. Inspect and edit
    `.contextmink.toml` for this repository's generated/high-output trees and
@@ -163,11 +166,17 @@ Adapt the installation to the project before copying generic policy:
    comparing it to the release template or replacing it. Invalid configuration
    fails before any setup write.
 
-4. Read `tools/contextmink/agent_integration.md`, inspect the existing guidance
-   hierarchy, and adapt the operational contract into `AGENTS.md`, `CLAUDE.md`,
-   or the repository's actual equivalent. Setup intentionally never edits agent
+4. Read the installed Contextmink skill and
+   `tools/contextmink/agent_integration.md`, inspect the existing guidance
+   hierarchy, and add one concise trigger to `AGENTS.md`, `CLAUDE.md`, or the
+   repository's actual equivalent. Setup intentionally never edits agent
    guidance because only the maintaining agent can reconcile shell rules,
-   project-native compact tools, and existing context policy correctly.
+   project-native compact tools, and existing context policy correctly. Use
+   this wording or an equivalent with the same boundary:
+
+   > Before broad or potentially high-output file, text, structured-data, or
+   > command-output reads, load the project Contextmink skill. Skip known-small
+   > direct reads and project-native compact or domain-query commands.
 
 5. Verify from the target repository root and a representative nested working
    directory:
@@ -409,8 +418,10 @@ hard errors.
 
 ## Instruction Rule
 
-Use the installed `tools/contextmink/agent_integration.md` as the integration
-reference. Release maintainers source it from the equivalent templates:
+Use the installed Contextmink skill as the discoverable operational envelope
+and `tools/contextmink/agent_integration.md` as its detailed integration
+reference. Release maintainers source the reference from the equivalent
+templates:
 
 - `templates/AGENTS.contextmink.md` for Codex-facing guidance.
 - `templates/CLAUDE.contextmink.md` for Claude-facing guidance.
@@ -418,18 +429,19 @@ reference. Release maintainers source it from the equivalent templates:
 Tests keep the two snippets equivalent so Codex and Claude guidance do not
 drift.
 
-The snippets include active-shell invocation guidance. Keep that split when
-merging: Bash-hosted sessions use the repo-local `scripts/contextmink`
+The reference includes active-shell invocation guidance. Keep that split when
+adapting the repository: Bash-hosted sessions use the repo-local `scripts/contextmink`
 launcher, Windows PowerShell sessions use the installed native binary for
 direct contextmink commands, and
 `contextmink-bridge.exe --script scripts/contextmink ...` is the PowerShell
 bridge for the Bash launcher or other Bash-first repository scripts. The policy
 content is otherwise shell-agnostic.
 
-Do not create a separate contextmink skill or slash command by default.
-Put the bounded-output rule in always-loaded project guidance so it applies
-before broad reads start. Use host-specific integration only when the host
-requires it.
+Setup installs byte-identical thin skills for `.agents/skills` consumers and
+Claude Code, plus Codex-facing `agents/openai.yaml` metadata. Do not fork their
+semantic body by harness. Keep only the discovery trigger in always-loaded
+guidance so the detailed contract is loaded before broad reads without taxing
+every prompt.
 
 ## Operational Notes
 

@@ -11,6 +11,8 @@ This file is the always-loaded repository contract. Load operational detail
 only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
+- **Bounded retrieval**: load the project Contextmink skill before broad or
+  potentially high-output generic reads; direct known-small reads remain direct.
 - **Project integration and release-managed files**: `docs/setup.md`.
 - **Durable local work**: load the project Papertiger skill, then query the live
   authority with `tools/papertiger/bin/papertiger[.exe]`.
@@ -84,7 +86,11 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
   downstream dogfood after changing retrieval, setup, bridge, capture, guard,
   or receipt behavior.
 
-## Durable Work Trigger
+## Capability Triggers
+
+Before broad or potentially high-output file, text, structured-data, or
+command-output reads, load the project Contextmink skill. Skip known-small
+direct reads and project-native compact or domain-query commands.
 
 Before editing multi-outcome or separate-commit work, or work matching an
 existing durable task, load the project Papertiger skill. Skip one bounded edit,

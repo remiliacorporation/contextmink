@@ -10,6 +10,28 @@ fn instruction_templates_are_policy_equivalent() {
 }
 
 #[test]
+fn agent_skill_templates_are_thin_and_harness_equivalent() {
+    let template = include_str!("../templates/skills/contextmink/SKILL.md");
+    let codex = include_str!("../.agents/skills/contextmink/SKILL.md");
+    let claude = include_str!("../.claude/skills/contextmink/SKILL.md");
+
+    assert_eq!(template, codex);
+    assert_eq!(template, claude);
+    assert!(template.contains("output cardinality is unknown"));
+    assert!(template.contains("Skip known-small direct reads"));
+    assert!(template.contains("grep-terms --term TERM"));
+    assert!(template.contains("contextmink.receipt.v2"));
+    assert!(
+        template.lines().count() < 120,
+        "skill must remain a thin envelope"
+    );
+
+    let metadata = include_str!("../templates/skills/contextmink/agents/openai.yaml");
+    assert!(metadata.contains("$contextmink"));
+    assert!(metadata.contains("Bound broad agent reads"));
+}
+
+#[test]
 fn setup_points_to_templates_instead_of_duplicating_policy() {
     let setup = include_str!("../docs/setup.md");
 
@@ -126,6 +148,8 @@ fn release_workflow_verifies_extracted_project_integration() {
         "setup-repair-smoke",
         "contextmink.receipt.v2",
         "agent_integration.md",
+        ".agents/skills/contextmink/SKILL.md",
+        ".claude/skills/contextmink/SKILL.md",
         "scripts/contextmink --json guard-check",
         "scripts/contextmink --json hook-snippet",
         "child_exit_code",

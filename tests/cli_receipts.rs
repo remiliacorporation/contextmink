@@ -234,7 +234,7 @@ fn parse_human_receipt(output: &str) -> Value {
 }
 
 #[test]
-fn setup_project_installs_agent_integration_without_editing_guidance() {
+fn setup_project_installs_agent_capability_without_editing_guidance() {
     let root = fixture_root("setup-project-command");
     fs::remove_file(root.join(".contextmink.toml")).unwrap();
     fs::write(root.join("AGENTS.md"), "existing guidance\n").unwrap();
@@ -249,6 +249,16 @@ fn setup_project_installs_agent_integration_without_editing_guidance() {
     assert!(
         root.join("tools/contextmink/agent_integration.md")
             .is_file()
+    );
+    assert!(root.join(".agents/skills/contextmink/SKILL.md").is_file());
+    assert!(
+        root.join(".agents/skills/contextmink/agents/openai.yaml")
+            .is_file()
+    );
+    assert!(root.join(".claude/skills/contextmink/SKILL.md").is_file());
+    assert_eq!(
+        fs::read(root.join(".agents/skills/contextmink/SKILL.md")).unwrap(),
+        fs::read(root.join(".claude/skills/contextmink/SKILL.md")).unwrap()
     );
     assert!(root.join("scripts/contextmink").is_file());
     assert!(
@@ -268,7 +278,10 @@ fn setup_project_installs_agent_integration_without_editing_guidance() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|action| action.as_str().unwrap().contains("agent_integration.md"))
+            .any(|action| action
+                .as_str()
+                .unwrap()
+                .contains("repository-guidance trigger"))
     );
 
     let second = parse_json_output(&root, &["--json", "setup-project", "."]);
