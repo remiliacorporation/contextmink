@@ -379,7 +379,7 @@ copy of the Rust crate:
 
    ```bash
    scripts/contextmink files . --limit 20
-   scripts/contextmink grep contextmink . --limit 5
+   scripts/contextmink grep --pattern contextmink . --limit 5
    ```
 
    The first source-backed run may build the release binary. Build output is

@@ -22,6 +22,7 @@ The release workflow extracts the section for the requested version and fails if
 - Repository `exclude_globs` apply only inside the owning configuration tree during ancestor or foreign-root scans, while built-in build and dependency exclusions continue across every explicit root.
 - `grep` text output distinguishes capped scan scope from capped display and names the relevant output controls when additional samples are required.
 - `grep`, `slice`, and `outline` reject common noncanonical forms with the exact canonical replacement instead of a generic parse failure.
+- Source-vendoring setup examples use the required `grep --pattern` form.
 - A missing `contextmink-bridge --script` path reports that relative paths resolve from the project root independently of `--cwd` and recommends a project-root-relative or absolute path.
 - Source packages exclude `.claude/settings*.json`, preventing repository harness preferences from entering package handoffs.
 
