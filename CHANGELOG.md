@@ -13,6 +13,7 @@ The release workflow extracts the section for the requested version and fails if
 ### Changed
 
 - Replaced full-manual transplantation into always-loaded guidance with a concise broad-read discovery trigger; repository owners now adapt only shell, native-tool, nested-repository, exclusion, and destructive-path policy while the release-managed skill carries operational detail.
+- Made Rust outlines expose top-level enum variant headers while keeping tuple and struct variant payload fields hidden, so command enums and state machines are navigable without a broad source slice.
 
 ## [0.8.0] - 2026-07-31
 

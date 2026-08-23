@@ -96,6 +96,29 @@ pub fn visible() {}
 }
 
 #[test]
+fn rust_document_classifier_maps_enum_variants_without_payload_fields() {
+    let source = r#"
+pub enum Command {
+    Files {
+        paths: Vec<PathBuf>,
+    },
+    Terms(
+        String,
+        usize,
+    ),
+    Quiet,
+    Explicit = 4,
+    r#Raw,
+}
+
+struct NotAnEnum {
+    Files: usize,
+}
+"#;
+    assert_eq!(document_hits("rust", source), vec![2, 3, 6, 10, 11, 12, 15]);
+}
+
+#[test]
 fn python_document_classifier_masks_triple_quoted_content() {
     let source = r#"
 """Module text.
