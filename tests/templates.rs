@@ -12,11 +12,7 @@ fn instruction_templates_are_policy_equivalent() {
 #[test]
 fn agent_skill_templates_are_thin_and_harness_equivalent() {
     let template = include_str!("../templates/skills/contextmink/SKILL.md");
-    let codex = include_str!("../.agents/skills/contextmink/SKILL.md");
-    let claude = include_str!("../.claude/skills/contextmink/SKILL.md");
-
-    assert_eq!(template, codex);
-    assert_eq!(template, claude);
+    let normalized_template = template.replace("\r\n", "\n");
     assert!(template.contains("output cardinality is unknown"));
     assert!(template.contains("Skip known-small direct reads"));
     assert!(template.contains("grep-terms --term TERM"));
@@ -29,6 +25,35 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
     let metadata = include_str!("../templates/skills/contextmink/agents/openai.yaml");
     assert!(metadata.contains("$contextmink"));
     assert!(metadata.contains("Bound broad agent reads"));
+
+    // Source checkouts install these convenience copies at the manifest root,
+    // while packaged and vendored tool subtrees intentionally contain only the
+    // reusable templates. Validate installed copies when present without making
+    // an unrelated consumer project recreate Contextmink's repository layout.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        ".agents/skills/contextmink/SKILL.md",
+        ".claude/skills/contextmink/SKILL.md",
+    ] {
+        let installed = root.join(relative);
+        if installed.is_file() {
+            assert_eq!(
+                std::fs::read_to_string(installed)
+                    .unwrap()
+                    .replace("\r\n", "\n"),
+                normalized_template
+            );
+        }
+    }
+    let installed_metadata = root.join(".agents/skills/contextmink/agents/openai.yaml");
+    if installed_metadata.is_file() {
+        assert_eq!(
+            std::fs::read_to_string(installed_metadata)
+                .unwrap()
+                .replace("\r\n", "\n"),
+            metadata.replace("\r\n", "\n")
+        );
+    }
 }
 
 #[test]
