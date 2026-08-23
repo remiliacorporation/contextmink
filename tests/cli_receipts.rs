@@ -1190,6 +1190,36 @@ fn capture_blocks_configured_protected_fragment_before_spawn() {
 }
 
 #[test]
+fn capture_preserves_dash_prefixed_protected_target_after_option_terminator() {
+    let root = fixture_root("capture-deny-dash-prefixed-protected-fragment");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "profile = \"test-profile\"\ndestructive_guard_recursive_delete_fragments = [\"-protected_cache\"]\n",
+    )
+    .unwrap();
+    let protected = root.join("-protected_cache");
+    fs::create_dir(&protected).unwrap();
+    let survivor = protected.join("survivor.txt");
+    fs::write(&survivor, "must survive\n").unwrap();
+
+    let output = run_contextmink_raw(
+        &root,
+        &["capture", "--", "rm", "-rf", "--", "-protected_cache"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("destructive command blocked"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("-protected_cache"), "stderr: {stderr}");
+    assert!(
+        survivor.is_file(),
+        "capture spawned the denied deletion command"
+    );
+}
+
+#[test]
 fn capture_uses_capture_receipt_shape() {
     let root = fixture_root("capture-receipt-shape");
     let bin = env!("CARGO_BIN_EXE_contextmink");

@@ -230,6 +230,7 @@ fn configured_recursive_deletion_of_protected_paths_is_denied() {
     denied_with_config(&["rm", "-r", "protected_cache"], &config);
     denied_with_config(&["rm", "-r", "-f", "F:/work/protected_cache"], &config);
     denied_with_config(&["rm", "-fR", "generated/protected_cache"], &config);
+    denied_with_config(&["rm", "-rf", "--", "-protected_cache"], &config);
     denied_with_config(
         &["rm", "--recursive", "--force", "protected_cache"],
         &config,
@@ -243,6 +244,7 @@ fn configured_recursive_deletion_of_protected_paths_is_denied() {
     denied_with_config(&["rmdir", "/s", "/q", "protected_cache"], &config);
     denied_with_config(&["del", "/s", "protected_cache\\notes"], &config);
     denied_with_config(&["git", "rm", "-r", "protected_cache"], &config);
+    denied_with_config(&["git", "rm", "-r", "--", "-protected_cache"], &config);
 }
 
 #[test]
@@ -250,6 +252,7 @@ fn configured_direct_deletion_of_protected_paths_is_denied() {
     let config = protected_config();
     let message = denied_with_config(&["rm", "-f", "db/critical.sqlite"], &config);
     assert!(message.contains("critical.sqlite"), "message: {message}");
+    denied_with_config(&["rm", "-f", "--", "-critical.sqlite"], &config);
     denied_with_config(&["rm", "project.gpr"], &config);
     denied_with_config(&["del", "F:\\repo\\project.gpr"], &config);
     denied_with_config(&["Remove-Item", "critical.sqlite"], &config);

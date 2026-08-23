@@ -16,6 +16,10 @@ The release workflow extracts the section for the requested version and fails if
 - Made Rust outlines expose top-level enum variant headers while keeping tuple and struct variant payload fields hidden, so command enums and state machines are navigable without a broad source slice.
 - Made `contextmink-bridge --script <path> -- <args>` consume the conventional separator instead of forwarding a misleading leading `--`; double the separator when the script must receive one literally.
 
+### Fixed
+
+- Froze the destructive-guard invariant that dash-prefixed protected paths after the POSIX `--` option terminator remain deletion operands, including an executable capture witness that proves denial occurs before spawn.
+
 ## [0.8.0] - 2026-07-31
 
 ### Added
