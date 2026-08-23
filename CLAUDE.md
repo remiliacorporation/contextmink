@@ -94,10 +94,10 @@ Before broad or potentially high-output file, text, structured-data, or
 command-output reads, load the project Contextmink skill. Skip known-small
 direct reads and project-native compact or domain-query commands.
 
-Before editing multi-outcome or separate-commit work, or work matching an
-existing durable task, load the project Papertiger skill. Skip one bounded edit,
-read-only review, disposable same-session steps, and domain-owned or shared-team
-lifecycle.
+Before the first edit or commit on multi-outcome or separate-commit work, or
+work matching an existing durable task, load the project Papertiger skill
+completely. Skip one bounded edit, read-only review, intermediate steps inside
+one independently reviewable outcome, and domain-owned or shared-team lifecycle.
 
 ## Verification
 

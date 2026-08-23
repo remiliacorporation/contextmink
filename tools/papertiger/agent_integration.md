@@ -11,7 +11,7 @@ validated tooling friction that should survive the session, record it without
 waiting for the operator to say "make a Papertiger task." Do not stop current
 in-scope work merely to hand off the new task unless it blocks or changes the
 authorized scope. Do not create tasks for speculative observations you have not
-reproduced, disposable same-session steps inside one durable outcome, or status
+reproduced, intermediate steps inside one independently reviewable outcome, or status
 reporting that belongs in a shared issue system.
 
 ## Authority
@@ -35,7 +35,7 @@ across multiple authorities.
   work clearly existed.
 - `init` is the only creation and migration command. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current authority schema is v7. Before migrating an older authority, use
+- The current authority schema is v8. Before migrating an older authority, use
   its matching release to archive its current export. Older dump files require
   their matching release, a temporary authority migration, and current-format
   re-export before import.
@@ -63,6 +63,7 @@ papertiger focus --json
 papertiger search "<terms>" --json
 papertiger show <task.seq> --json
 papertiger audit
+papertiger evidence verify --project-root <project-root> --json
 ```
 
 If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
@@ -72,6 +73,11 @@ eligible, returned, and omitted counts; when it is incomplete, follow its
 `continuation_command` rather than treating the visible entries as exhaustive.
 Planner read commands open the SQLite authority read-only by construction;
 they never initialize, migrate, or repair it.
+`evidence verify` is also read-only. It verifies stored `file:` locators from
+one stable byte read beneath the project root, rejects escapes and symlinks,
+and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
+schemes are reported, never counted as verified. Failed bindings include exact
+corrective argument vectors for their evented reopen-and-rebind workflow.
 `task.seq`, written as `N` or `#N`, is the only task identity and selector.
 Prefer bare `N`: it is portable across shells, while `#N` must be quoted where
 `#` begins a comment.
@@ -114,7 +120,13 @@ requires a standalone rationale and rolls back the task and both lifecycle
 events if readiness validation fails. `--intent-source`, `--result-source`, and
 `note --source` accept `user`, `agent`, or `external`; they describe who
 supplied stored meaning, independently of the recording `PAPERTIGER_ACTOR`.
-Omitting a source preserves explicit unspecified or legacy state.
+For a durable outcome requested directly by the user, pass
+`--intent-source user`; use `agent` for validated follow-up first identified by
+the agent and `external` only for meaning supplied by an external source.
+Omitting a genuinely unknown source stores no source on new text. Replacing
+intent that already has a source requires either a replacement
+`--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
+source.
 Use `edit <task.seq> --clear-intent-source --why <reason>` to correct a
 mistaken attribution without erasing the intent or its revision history.
 
@@ -144,9 +156,8 @@ phrases plus high-value fields deterministically. It searches done, retired,
 and rejected history by default. Use `--plan`, `--status`, or `--limit` to
 narrow it; there is no query language, external index, or semantic inference.
 
-When local archaeology benefits from a reverse link after creating a Git
-snapshot, resolve the full commit object ID in the owning repository and record
-it locally:
+When a local Git commit represents a task outcome, resolve the full object ID
+in the owning repository and record it inward before task completion:
 
 ```bash
 git rev-parse --verify 'HEAD^{commit}'
@@ -154,10 +165,11 @@ papertiger commit add <task.seq> <full-oid> --repo <repo-label>
 papertiger commit find <full-oid>
 ```
 
-This association is optional evidence for lookup. Papertiger does not invoke Git,
-infer repositories, track branches, scrape commit messages, or treat a commit
-as task completion. A commit may be partial or wrong; task results and gates
-remain the completion authority.
+Omit this association only when no commit represents the task outcome. The
+association remains lookup evidence, not completion authority. Papertiger does
+not invoke Git, infer repositories, track branches, scrape commit messages, or
+treat a commit as task completion. A commit may be partial or wrong; task
+results and gates remain the completion authority.
 
 The repository label defaults to `.` for the project root selected by this
 authority. Pass `--repo` only for a nested or external repository, using the
@@ -175,8 +187,8 @@ separate and accepts no replacement. A task with inbound replacements can only
 be retired into another live canonical task; rejection or bare retirement
 refuses rather than leaving a replacement chain that ends in dead work.
 
-Do not create Papertiger tasks for disposable same-session checklist steps
-inside one durable outcome. Create separate tasks when outcomes are independently
+Do not create Papertiger tasks for intermediate steps inside one independently
+reviewable outcome. Create separate tasks when outcomes are independently
 reviewable, separately committed, or have distinct decisions or proof—even if
 one session is expected to finish them. `in_progress` means work began and
 remains unfinished; it deliberately survives a dead or replaced session and
@@ -184,19 +196,28 @@ needs no reassignment. A fresh agent reads the task and continues it directly.
 Add a task note only when handoff context beyond the stored intent, result,
 gates, and history is genuinely useful.
 
-## Repository guidance discovery trip-wire
+## Repository guidance discovery trigger
 
 After reviewing this contract, keep one concise trigger in the repository-owned
 agent guidance; a bare link or generic "planning" label is too easy for some
 harnesses to ignore. Use this wording or an equivalent with the same boundaries:
 
-> Before editing multi-outcome or separate-commit work, or work matching an
-> existing durable task, load the project Papertiger skill. Skip one bounded
-> edit, read-only review, disposable same-session steps, and domain-owned or
-> shared-team lifecycle.
+> Before the first edit or commit on multi-outcome or separate-commit work, or
+> work matching an existing durable task, read
+> `<selected-skill-path>/papertiger/SKILL.md` completely and follow it. Skip one
+> bounded edit, read-only review, intermediate steps inside one independently
+> reviewable outcome, and domain-owned or shared-team lifecycle.
+
+Replace `<selected-skill-path>` with `.agents/skills` or `.claude/skills` only
+when that path was deliberately selected. A repository using another harness
+can point directly to `tools/papertiger/agent_integration.md` instead.
+
+When a request does not name Papertiger, describe its use in the final summary
+as the local tasklog. Keep `papertiger` in executable corrective commands,
+evidence paths, and authority facts where replacing it would reduce precision.
 
 `setup-project` never edits `AGENTS.md`, `CLAUDE.md`, or another repository-owned
-context file. The project owner must review and place this trip-wire; the managed
+context file. The project owner must review and place this trigger; the managed
 skill remains the canonical command and authority contract.
 
 ## Project-local installation
@@ -207,8 +228,9 @@ skill remains the canonical command and authority contract.
 - `tools/papertiger/agent_integration.md`
 - `tools/papertiger/project-install.json` (tracked version, authority path, and
   managed-text hashes; no platform-binary hash)
-- `.agents/skills/papertiger/SKILL.md`
-- `.claude/skills/papertiger/SKILL.md`
+- zero or more selected skill envelopes:
+  `.agents/skills/papertiger/SKILL.md` and
+  `.claude/skills/papertiger/SKILL.md`
 - additive Papertiger entries in `.gitignore`
 
 During a pre-receipt cutover, setup recognizes the prior vendor README only as
@@ -237,25 +259,45 @@ must be moved or deleted deliberately. An older release refuses to downgrade a
 newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
-The receipt hashes the managed text surfaces: the canonical contract and both
-skill envelopes. It also owns the host-local binary but does
+On a first install, the default `auto` selection follows existing harness
+markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
+residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
+select `both`; and an unmarked repository selects `none`. These markers only
+bootstrap common consumers before `.agents` exists. Explicit `agents`,
+`claude`, `both`, or `none` avoids detection; explicit `auto` reruns it. An
+upgrade with no `--skill-target` preserves the receipt's selected targets.
+Changing targets removes a deselected envelope only when its prior receipt hash
+still matches; local edits refuse retirement.
+
+The receipt hashes the managed text surfaces: the canonical contract and the
+selected skill envelopes. It also owns the host-local binary but does
 not put platform-specific binary bytes in that text hash list; each applied
 setup upgrades the binary to the exact bytes of the running release. Modified
 receipt-hashed text refuses unless the operator explicitly reviews replacement.
 
-The two skill paths are byte-identical thin discovery envelopes around this
+Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible
-harnesses including Codex, Pi, and OpenCode; `.claude/skills` serves Claude
-Code. Pi loads project skills only after project trust; for a noninteractive
-run, save that trust or pass `--approve`, otherwise project resources are
-ignored. Hermes requires an explicit `skills.external_dirs` entry for the
-project's `.agents/skills` directory. Filesystem permissions are its protection
-boundary: Hermes skill management may change or delete writable external
-skills, which a later receipt-checked setup will report as divergence. A
-same-named local Hermes skill takes precedence. Harnesses without Agent Skills
-should load a concise pointer from their project guidance. After setup changes
-a skill, start a fresh harness session if the active one does not rescan project
-skills. Do not fork the semantic body per harness.
+harnesses including Codex, Pi, OMP, and OpenCode; `.claude/skills` serves
+Claude Code. Auto detection never creates `.codex`, `.pi`, `.omp`, or
+`.opencode` skill copies. Pi loads project skills only after project trust; for
+a noninteractive run, save that trust or pass `--approve`, otherwise project
+resources are ignored. Hermes requires an explicit `skills.external_dirs`
+entry for the project's `.agents/skills` directory. Filesystem permissions are
+its protection boundary: Hermes skill management may change or delete writable
+external skills, which a later receipt-checked setup will report as
+divergence. A same-named local Hermes skill takes precedence. Harnesses without
+Agent Skills should load a concise pointer from their project guidance. After
+setup changes a skill, start a fresh harness session if the active one does not
+rescan project skills. Do not fork the semantic body per harness.
+
+`uninstall-project` is the inverse receipt-owned lifecycle. Run it from an
+external binary matching the receipt version, preview it first, and review all
+paths. It removes only matching receipt-owned text, a native binary whose bytes
+equal that external release, and finally the receipt. It refuses modified
+content and project-local self-deletion. Planner and Mise authorities, SQLite
+sidecars, Mise objects, repository guidance, unrelated skills, and the entire
+`.gitignore` policy remain in place; data disposal is a separate decision.
 
 ## Mise is an episodic external driver
 

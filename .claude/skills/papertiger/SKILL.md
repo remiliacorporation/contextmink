@@ -1,6 +1,6 @@
 ---
 name: papertiger
-description: Load this skill before editing whenever a request contains two or more independently reviewable outcomes, requires separate commits, matches an existing durable task, or reveals validated durable follow-up. Use the project-local Papertiger CLI to record or resume that work. Skip one bounded file edit, read-only review, disposable same-session steps, and domain-owned or shared team lifecycle.
+description: Load this skill before editing whenever a request contains two or more independently reviewable outcomes, requires separate commits, matches an existing durable task, or reveals validated durable follow-up. Use the project-local Papertiger CLI to record or resume that work. Skip one bounded file edit, read-only review, intermediate steps within one independently reviewable outcome, and domain-owned or shared team lifecycle.
 ---
 
 # Use Papertiger
@@ -23,17 +23,27 @@ plan is active. Use `show <task.seq> --json`, `search "<terms>" --json`, and
 `audit` as needed. These reads never initialize, migrate, or replace a missing
 or older planning authority and open SQLite read-only by construction; follow
 an exact refusal deliberately. Report the planner evidence or changed
-conclusion, not skill discovery, contract loading, binary-path resolution, or other
-routine read mechanics. Reserve "campaign" for Papertiger Mise; the ordinary
-planner uses a planning authority.
+conclusion, not skill discovery, contract loading, binary-path resolution, or
+other routine read mechanics. Reserve "campaign" for Papertiger Mise; the
+ordinary planner uses a planning authority.
+
+When the request does not name Papertiger, call it the local tasklog in the
+final summary. Keep `papertiger` in executable corrective commands, evidence
+paths, and authority facts where replacing it would reduce precision.
 
 Before the first mutation, initialization, migration, recovery, commit
 association, or Mise use in a project, read
 `../../../tools/papertiger/agent_integration.md` completely and follow its
 authority contract. Treat `task.seq` as a private selector: never put a
 Papertiger task number in a shared commit, pull request, changelog, or release
-note. Record an optional full commit object ID inside Papertiger when that
-local reverse lookup will help future archaeology.
+note.
+
+For a durable outcome requested directly by the user, pass
+`--intent-source user`; use `agent` for validated follow-up first identified by
+the agent and `external` only for meaning supplied by an external source. When
+a local commit represents a task outcome, resolve its full object ID and run
+`papertiger commit add <task.seq> <full-oid> --repo .` before task completion.
+Omit the association only when no commit represents that outcome.
 
 When implementation reveals durable follow-up or validated tooling friction,
 record it without waiting for the user to say "make a task". Continue the
