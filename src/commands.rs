@@ -363,6 +363,7 @@ pub(crate) fn command_grep(
     cli: &Cli,
     config: &ContextConfig,
     args: &[String],
+    explicit_paths: &[PathBuf],
     pattern_arg: Option<&str>,
     pattern_file: Option<&Path>,
     literal: bool,
@@ -376,17 +377,18 @@ pub(crate) fn command_grep(
     caps: &GrepCaps,
 ) -> Result<()> {
     let (pattern, effective_paths) = if pattern_arg.is_some() || pattern_file.is_some() {
-        (None, paths_or_current_dir(&string_args_to_paths(args)))
+        let mut paths = string_args_to_paths(args);
+        paths.extend_from_slice(explicit_paths);
+        (None, paths_or_current_dir(&paths))
     } else {
         let Some((pattern, paths)) = args.split_first() else {
             return Err(anyhow!(
                 "grep requires PATTERN, --pattern <pattern>, or --pattern-file <file>"
             ));
         };
-        (
-            Some(pattern.as_str()),
-            paths_or_current_dir(&string_args_to_paths(paths)),
-        )
+        let mut paths = string_args_to_paths(paths);
+        paths.extend_from_slice(explicit_paths);
+        (Some(pattern.as_str()), paths_or_current_dir(&paths))
     };
     let pattern =
         collect_single_text_source("grep pattern", pattern.or(pattern_arg), pattern_file, true)?;

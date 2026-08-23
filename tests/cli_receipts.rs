@@ -2375,6 +2375,53 @@ fn grep_pattern_flag_treats_all_positionals_as_paths() {
 }
 
 #[test]
+fn grep_accepts_explicit_path_flags_for_agent_intuition() {
+    let root = fixture_root("grep-path-flag");
+    fs::write(root.join("alpha.txt"), "needle\n").unwrap();
+    fs::write(root.join("beta.txt"), "needle\n").unwrap();
+
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "--pattern",
+            "needle",
+            "--path",
+            "alpha.txt",
+            "--path",
+            "beta.txt",
+        ],
+    );
+
+    assert_envelope(&json, "grep", "matching_files");
+    assert_eq!(result(&json)["shown"], 2);
+    assert_eq!(json["matching_files"][0]["path"], "alpha.txt");
+    assert_eq!(json["matching_files"][1]["path"], "beta.txt");
+}
+
+#[test]
+fn slice_accepts_visible_line_name_aliases() {
+    let root = fixture_root("slice-line-aliases");
+    let json = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "slice",
+            "sample.txt",
+            "--start-line",
+            "2",
+            "--end-line",
+            "3",
+        ],
+    );
+
+    assert_envelope(&json, "slice", "lines");
+    assert_eq!(json["start"], 2);
+    assert_eq!(json["end"], 3);
+}
+
+#[test]
 fn json_select_projects_array_fields_without_jq_filters() {
     let root = fixture_root("json-select");
 

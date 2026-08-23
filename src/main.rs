@@ -192,6 +192,7 @@ fn run_application() -> Result<()> {
         ),
         Command::Grep {
             args,
+            paths,
             pattern,
             pattern_file,
             literal,
@@ -215,6 +216,7 @@ fn run_application() -> Result<()> {
             &cli,
             &config,
             args,
+            paths,
             pattern.as_deref(),
             pattern_file.as_deref(),
             *literal,
