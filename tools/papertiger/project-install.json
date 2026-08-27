@@ -9,7 +9,7 @@
   "managed_files": [
     {
       "path": "tools/papertiger/agent_integration.md",
-      "sha256": "3f39bd071579ae50803f40edb966e56339690a43304ce7551b9b6a691b0908ce"
+      "sha256": "5dbe19d8c901aec35397e850e4a227157f1b5f4c5d00c93c181c4daf9b1e4b00"
     },
     {
       "path": ".agents/skills/papertiger/SKILL.md",
