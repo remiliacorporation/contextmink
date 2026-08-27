@@ -249,6 +249,24 @@ Replace `<selected-skill-path>` with `.agents/skills` or `.claude/skills` only
 when that path was deliberately selected. A repository using another harness
 can point directly to `tools/papertiger/agent_integration.md` instead.
 
+After installation, inspect the repository-owned discovery surface from the
+project root or any nested directory:
+
+```bash
+tools/papertiger/bin/papertiger inspect-project-guidance --json
+papertiger --project-root /path/to/project inspect-project-guidance --json
+```
+
+This command validates the project receipt and host runtime but never opens the
+planning authority. It reads only regular, non-symlink repository-root
+`AGENTS.md` and `CLAUDE.md`, with a fixed 64 KiB cap per file. The deterministic
+result distinguishes an exact selected-skill trigger, a generic
+Papertiger-skill trigger, `CLAUDE.md` indirection to `AGENTS.md`, an integration
+pointer, a bare mention, stale positive shell-launcher wording, absence, and
+bounded refusal. It reports exact byte identity when both files were read.
+These are lexical observations, not proof that a harness discovers or follows
+the guidance; nested guidance and imported semantics remain outside the result.
+
 When a request does not name Papertiger, describe its use in the final summary
 as the local tasklog. Keep `papertiger` in executable corrective commands,
 evidence paths, and authority facts where replacing it would reduce precision.
@@ -314,12 +332,22 @@ and the selected skill envelopes. It does not put platform-specific binary
 bytes in that clone-portable hash list. The separate ignored runtime receipt is
 written atomically after all other setup verification and records the exact
 installed binary path, byte count, and SHA-256. Dry-run JSON exposes the same
-`runtime_install` identity; ordinary receipt discovery refuses a missing,
+`runtime_install` identity. The `papertiger.project_setup.v5` result also embeds
+the bounded `project_guidance` observation used by
+`inspect-project-guidance`, without managing those repository files. Ordinary
+receipt discovery refuses a missing,
 malformed, or mismatched host receipt and directs the operator to run
 `setup-project` from a trusted external release. This is local identity, not a
 claim that independently linked Windows or other platform builds reproduce the
 same bytes. Modified receipt-hashed text still refuses unless the operator
 explicitly reviews replacement.
+During an upgrade, a current tracked receipt plus a valid prior runtime receipt
+that exactly matches the installed native binary proves ownership when the
+host receipt must change across release-version or contract changes. A
+non-identical existing host receipt whose ownership is malformed, mismatched,
+legacy, or otherwise unproved is reported in dry-run and requires a reviewed
+`--replace-managed`; a missing host receipt can be recreated without claiming
+an existing file.
 
 Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible
