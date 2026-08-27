@@ -30,7 +30,8 @@ between each other.
 The default authority is `state/papertiger.sqlite`. The native binary walks
 upward from the current directory to find the nearest
 `tools/papertiger/project-install.json`, verifies that its version matches the
-running binary, and resolves its recorded authority against that project root.
+running binary, verifies the host-local runtime receipt and installed binary
+identity, and resolves its recorded authority against that project root.
 When an intentional command runs from another repository, pass the global
 `--project-root <canonical-project-root>` option. It requires a receipt at that
 exact root and selects the receipt-bound authority without changing the
@@ -83,6 +84,7 @@ papertiger search "<terms>" --json
 papertiger show <task.seq> --json
 papertiger audit
 papertiger evidence verify --project-root <project-root> --json
+papertiger evidence verify --outcome failed --task-state open --limit 50 --json
 ```
 
 If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
@@ -92,11 +94,23 @@ eligible, returned, and omitted counts; when it is incomplete, follow its
 `continuation_command` rather than treating the visible entries as exhaustive.
 Planner read commands open the SQLite authority read-only by construction;
 they never initialize, migrate, or repair it.
-`evidence verify` is also read-only. It verifies stored `file:` locators from
+`evidence verify` is also read-only. Its summary always counts the complete
+selected task scope; `--outcome`, `--task-state`, and `--limit` bound only the
+detail projection and never narrow the exit-status claim. Exact status and
+unsupported-scheme counts identify resolver gaps in the summary. The default
+detail filter is `incomplete`, covering failed and unsupported bindings. Follow the
+structured continuation command while `has_more=true`; a cursor is bound to
+the root, filters, stored bindings, and live verification results and refuses
+after drift. The verifier hashes stored `file:` locators in bounded memory from
 one stable byte read beneath the project root, rejects escapes and symlinks,
 and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
 schemes are reported, never counted as verified. Failed bindings include exact
 corrective argument vectors for their evented reopen-and-rebind workflow.
+
+A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
+Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as
+evidence and record the repository's full commit object ID separately with
+`commit add`; neither identity substitutes for the other.
 `task.seq`, written as `N` or `#N`, is the only task identity and selector.
 Prefer bare `N`: it is portable across shells, while `#N` must be quoted where
 `#` begins a comment.
@@ -248,6 +262,8 @@ skill remains the canonical command and authority contract.
 `setup-project` owns only these managed files:
 
 - `tools/papertiger/bin/papertiger[.exe]` (host-local and ignored)
+- `tools/papertiger/bin/papertiger[.exe].runtime-install.json` (host-local and
+  ignored exact path, byte count, and SHA-256)
 - `tools/papertiger/agent_integration.md`
 - `tools/papertiger/project-install.json` (tracked version, authority path, and
   managed-text hashes; no platform-binary hash)
@@ -293,11 +309,17 @@ upgrade with no `--skill-target` preserves the receipt's selected targets.
 Changing targets removes a deselected envelope only when its prior receipt hash
 still matches; local edits refuse retirement.
 
-The receipt hashes the managed text surfaces: the canonical contract and the
-selected skill envelopes. It also owns the host-local binary but does
-not put platform-specific binary bytes in that text hash list; each applied
-setup upgrades the binary to the exact bytes of the running release. Modified
-receipt-hashed text refuses unless the operator explicitly reviews replacement.
+The tracked receipt hashes the managed text surfaces: the canonical contract
+and the selected skill envelopes. It does not put platform-specific binary
+bytes in that clone-portable hash list. The separate ignored runtime receipt is
+written atomically after all other setup verification and records the exact
+installed binary path, byte count, and SHA-256. Dry-run JSON exposes the same
+`runtime_install` identity; ordinary receipt discovery refuses a missing,
+malformed, or mismatched host receipt and directs the operator to run
+`setup-project` from a trusted external release. This is local identity, not a
+claim that independently linked Windows or other platform builds reproduce the
+same bytes. Modified receipt-hashed text still refuses unless the operator
+explicitly reviews replacement.
 
 Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible
@@ -317,10 +339,11 @@ rescan project skills. Do not fork the semantic body per harness.
 `uninstall-project` is the inverse receipt-owned lifecycle. Run it from an
 external binary matching the receipt version, preview it first, and review all
 paths. It removes only matching receipt-owned text, a native binary whose bytes
-equal that external release, and finally the receipt. It refuses modified
-content and project-local self-deletion. Planner and Mise authorities, SQLite
-sidecars, Mise objects, repository guidance, unrelated skills, and the entire
-`.gitignore` policy remain in place; data disposal is a separate decision.
+equal that external release, its exact runtime receipt, and finally the tracked
+receipt. It refuses modified content and project-local self-deletion. Planner
+and Mise authorities, SQLite sidecars, Mise objects, repository guidance,
+unrelated skills, and the entire `.gitignore` policy remain in place; data
+disposal is a separate decision.
 
 ## Mise is an episodic external driver
 
