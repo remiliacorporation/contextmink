@@ -16,13 +16,31 @@ reporting that belongs in a shared issue system.
 
 ## Authority
 
+Choose one canonical authority by the initiative or outcome that owns the
+work, not by whichever repository contains the next edited file. One outcome
+that spans repositories remains in that authority. If its repository changes
+are independently reviewable or separately committed, model them as separate
+tasks in the same authority and associate their commits with stable external
+repository labels. Loading another repository's Papertiger skill or editing
+that repository does not require a duplicate local task. Use a second
+authority only when the second project owns a genuinely independent durable
+outcome; independent authorities cannot express replacements or dependencies
+between each other.
+
 The default authority is `state/papertiger.sqlite`. The native binary walks
 upward from the current directory to find the nearest
 `tools/papertiger/project-install.json`, verifies that its version matches the
 running binary, and resolves its recorded authority against that project root.
-`PAPERTIGER_DB` or an explicit global `--db` deliberately overrides receipt
-discovery for operational use; do not accidentally split ordinary planning
-across multiple authorities.
+When an intentional command runs from another repository, pass the global
+`--project-root <canonical-project-root>` option. It requires a receipt at that
+exact root and selects the receipt-bound authority without changing the
+process working directory. `PAPERTIGER_DB` or an explicit global `--db`
+deliberately overrides receipt discovery for operational use; do not use a raw
+database override for ordinary project selection or split ordinary planning
+across multiple authorities. Ordinary commands refuse combining the receipt
+selector with a database override. `evidence verify` retains that combination
+only so an explicitly selected database can resolve `file:` locators beneath a
+supplied project root.
 
 - Many agents and harnesses may use one canonical SQLite authority in its
   planning worktree. Every connection receives one fixed 500 ms SQLite lock
@@ -59,6 +77,7 @@ Papertiger binary.
 
 ```bash
 papertiger status
+papertiger --project-root <canonical-project-root> status
 papertiger focus --json
 papertiger search "<terms>" --json
 papertiger show <task.seq> --json
@@ -195,6 +214,10 @@ remains unfinished; it deliberately survives a dead or replaced session and
 needs no reassignment. A fresh agent reads the task and continues it directly.
 Add a task note only when handoff context beyond the stored intent, result,
 gates, and history is genuinely useful.
+
+Repository boundaries do not change that rule. Keep those separate outcomes
+in the initiative's canonical authority unless another project truly owns an
+independent lifecycle. Do not mirror one task into every repository it touches.
 
 ## Repository guidance discovery trigger
 

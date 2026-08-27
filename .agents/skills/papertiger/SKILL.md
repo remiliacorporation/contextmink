@@ -18,6 +18,15 @@ verifies its release version, and binds its recorded authority. An explicit
 `--db` or `PAPERTIGER_DB` is an exceptional operator override, not ordinary
 project selection.
 
+Select the authority by the initiative or outcome that owns the work, not by
+the repository containing the next edited file. One cross-repository outcome
+stays in one canonical authority; separately reviewable repository changes can
+be separate tasks there. Loading another repository's skill or editing its
+files never requires a duplicate task in that repository's unsynchronized
+authority. From outside the canonical project, pass global
+`--project-root <canonical-project-root>` so the exact receipt selects the
+authority; use stable external `--repo` labels for commit associations.
+
 Start with `status`, then use `focus --plan <slug> --json` when more than one
 plan is active. Use `show <task.seq> --json`, `search "<terms>" --json`, and
 `audit` as needed. These reads never initialize, migrate, or replace a missing
