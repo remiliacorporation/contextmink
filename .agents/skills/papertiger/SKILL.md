@@ -14,7 +14,8 @@ Resolve the release-managed native binary at
 invoke that binary directly for every command. Do not route Papertiger through
 a shell script, another shell, or a process bridge. The binary walks upward
 from the current directory to find `tools/papertiger/project-install.json`,
-verifies its release version, and binds its recorded authority. An explicit
+verifies its release version plus the host-local runtime receipt and installed
+binary identity, and binds its recorded authority. An explicit
 `--db` or `PAPERTIGER_DB` is an exceptional operator override, not ordinary
 project selection.
 
