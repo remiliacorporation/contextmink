@@ -4,6 +4,16 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
+## [0.9.1] - 2026-08-28
+
+### Changed
+
+- Refreshed the project-local Papertiger integration so durable planning follows the current receipt-bound authority contract.
+
+### Fixed
+
+- Replaced host-local paths in packaged historical evidence with portable repository labels and placeholders.
+
 ## [0.9.0] - 2026-08-24
 
 ### Added

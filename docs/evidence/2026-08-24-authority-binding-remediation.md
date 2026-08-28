@@ -7,7 +7,7 @@ contract. The checks below were rerun before rebinding the gates to this file.
 
 ## Standalone repository continuity
 
-- `F:\AI\contextmink` remains the standalone Git authority with origin
+- The standalone Contextmink repository remains the Git authority with origin
   `https://github.com/remiliacorporation/contextmink.git`.
 - The originally associated standalone commit
   `174980effe67416725010b08877900b0deb869b3` resolves to a commit object.
@@ -22,16 +22,16 @@ contract. The checks below were rerun before rebinding the gates to this file.
 ## Retained vendor snapshot
 
 The downstream workspace receipt at
-`F:\AI\wow_modernclient\tools\contextmink\vendor_source.json` names standalone
+`<consumer-repository>/tools/contextmink/vendor_source.json` names standalone
 commit `0044934b5d69bf31e1a71baad61607853362a9f0`. That object resolves in the
 standalone repository.
 
 To avoid comparing the downstream snapshot with a moving branch, the recorded
 commit was checked out into a detached local clone whose origin was set to the
-canonical repository URL. From `F:\AI\wow_modernclient`, this command passed:
+canonical repository URL. From `<consumer-repository>`, this command passed:
 
 ```text
-scripts/sync_contextmink.sh --check F:/AI/contextmink-vendor-verify-20260824
+scripts/sync_contextmink.sh --check <detached-contextmink-checkout>
 Contextmink vendor matches committed source 0044934b5d69bf31e1a71baad61607853362a9f0
 ```
 
@@ -40,8 +40,8 @@ not modified.
 
 ## Vendored runtime smoke
 
-The exact retained vendor snapshot passed these current checks from
-`F:\AI\wow_modernclient`:
+The exact retained vendor snapshot passed these current checks from the
+downstream consumer repository:
 
 - `cargo build --locked --release --manifest-path tools/contextmink/Cargo.toml`
 - the workspace `scripts/contextmink` launcher returned a
