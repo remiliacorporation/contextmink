@@ -4,6 +4,14 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
+## [Unreleased]
+
+## [0.9.2] - 2026-08-29
+
+### Removed
+
+- Project setup and release packs no longer ship or install `scripts/contextmink.cmd`; Bash-hosted agents retain `scripts/contextmink`, while Windows PowerShell invokes the native binaries or `contextmink-bridge.exe` directly. Upgrading from a 0.9.1 receipt removes the old shim only while its recorded hash still matches and refuses modified repository content.
+
 ## [0.9.1] - 2026-08-29
 
 ### Changed

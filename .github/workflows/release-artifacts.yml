@@ -228,7 +228,7 @@ jobs:
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
-          test -f "${project}/scripts/contextmink.cmd"
+          test ! -e "${project}/scripts/contextmink.cmd"
           cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
           sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
           rm "${project}/.contextmink.toml.bak"
@@ -344,7 +344,7 @@ jobs:
           if (!(Test-Path "$project/.agents/skills/contextmink/agents/openai.yaml")) { throw "Codex skill metadata missing" }
           if (!(Test-Path $claudeSkill)) { throw "Claude contextmink envelope missing" }
           if ((Get-FileHash $agentSkill).Hash -ne (Get-FileHash $claudeSkill).Hash) { throw "contextmink skill envelopes diverged" }
-          if (!(Test-Path "$project/scripts/contextmink.cmd")) { throw "PowerShell diagnostic shim missing" }
+          if (Test-Path "$project/scripts/contextmink.cmd") { throw "retired PowerShell diagnostic shim was installed" }
           $projectBin = "$project/tools/contextmink/bin"
           $configPath = "$project/.contextmink.toml"
           $configText = (Get-Content -Raw -Path $configPath).Replace(
