@@ -260,7 +260,7 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     );
     assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
     assert!(root.join("scripts/contextmink").is_file());
-    assert!(root.join("scripts/contextmink.cmd").is_file());
+    assert!(!root.join("scripts/contextmink.cmd").exists());
     assert!(
         root.join("tools/contextmink/project-install.json")
             .is_file()

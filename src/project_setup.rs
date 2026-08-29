@@ -20,7 +20,6 @@ use receipt::{
 };
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
-const CMD_DIAGNOSTIC: &[u8] = include_bytes!("../templates/scripts/contextmink.cmd");
 const CONTEXTMINK_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
 const CONTEXTMINK_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
 const CONTEXTMINK_OPENAI_METADATA: &[u8] =
@@ -250,12 +249,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             relative_path: PathBuf::from("scripts/contextmink"),
             content: BASH_LAUNCHER.to_vec(),
             executable: true,
-            ownership: SetupFileOwnership::ReleaseManagedText,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from("scripts/contextmink.cmd"),
-            content: CMD_DIAGNOSTIC.to_vec(),
-            executable: false,
             ownership: SetupFileOwnership::ReleaseManagedText,
         },
         ManagedFile {
@@ -1686,11 +1679,7 @@ mod tests {
             CONTEXTMINK_OPENAI_METADATA
         );
         assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
-        assert!(
-            fs::read_to_string(project.join("scripts/contextmink.cmd"))
-                .unwrap()
-                .contains("requires Git Bash")
-        );
+        assert!(!project.join("scripts/contextmink.cmd").exists());
         if cfg!(windows) {
             assert_eq!(
                 fs::read(project.join("tools/contextmink/bin/contextmink-bridge.exe")).unwrap(),
@@ -1932,6 +1921,65 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_retires_receipt_owned_cmd_diagnostic() {
+        let (project, binary) = fixture("cmd-retirement");
+        setup_project(request(&project, &binary, false)).unwrap();
+        let retired_relative = Path::new("scripts/contextmink.cmd");
+        let retired = b"receipt-owned diagnostic shim\r\n";
+        fs::write(project.join(retired_relative), retired).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        install_receipt
+            .managed_files
+            .push(receipt::ManagedFileReceipt {
+                path: normalized_path(retired_relative),
+                sha256: managed_text_sha256(retired),
+            });
+        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
+
+        let result = setup_project(request(&project, &binary, false)).unwrap();
+        assert!(result.actions.iter().any(|action| {
+            action.path == retired_relative && action.action == SetupActionKind::RemoveRetired
+        }));
+        assert!(!project.join(retired_relative).exists());
+        cleanup(&project);
+    }
+
+    #[test]
+    fn upgrade_refuses_modified_receipt_owned_cmd_diagnostic() {
+        let (project, binary) = fixture("modified-cmd-retirement");
+        setup_project(request(&project, &binary, false)).unwrap();
+        let retired_relative = Path::new("scripts/contextmink.cmd");
+        fs::write(
+            project.join(retired_relative),
+            b"project-owned replacement\r\n",
+        )
+        .unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        install_receipt
+            .managed_files
+            .push(receipt::ManagedFileReceipt {
+                path: normalized_path(retired_relative),
+                sha256: managed_text_sha256(b"old receipt-owned shim\r\n"),
+            });
+        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
+
+        let dry_run = setup_project(request(&project, &binary, true)).unwrap();
+        assert!(!dry_run.ready);
+        assert!(dry_run.actions.iter().any(|action| {
+            action.path == retired_relative && action.action == SetupActionKind::ModifiedRefusal
+        }));
+        let error = setup_project(request(&project, &binary, false)).unwrap_err();
+        assert!(error.to_string().contains("modified retired managed file"));
+        assert_eq!(
+            fs::read(project.join(retired_relative)).unwrap(),
+            b"project-owned replacement\r\n"
+        );
+        cleanup(&project);
+    }
+
+    #[test]
     fn modified_retired_skill_refuses_without_deleting_current_files() {
         let (project, binary) = fixture("modified-retirement");
         setup_project(request(&project, &binary, false)).unwrap();
@@ -1980,7 +2028,6 @@ mod tests {
             INSTALL_RECEIPT_PATH,
             RUNTIME_RECEIPT_PATH,
             "scripts/contextmink",
-            "scripts/contextmink.cmd",
             "tools/contextmink/agent_integration.md",
             ".agents/skills/contextmink/SKILL.md",
             ".agents/skills/contextmink/agents/openai.yaml",

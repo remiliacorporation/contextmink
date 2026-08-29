@@ -25,6 +25,8 @@ pub(super) const MANAGED_RUNTIME_PATHS: &[&str] = &[
 
 const SUPPORTED_MANAGED_TEXT_PATHS: &[&str] = &[
     "scripts/contextmink",
+    // Retained only so a hash-bound 0.9.1 receipt can retire the obsolete
+    // PowerShell diagnostic shim without claiming unreceipted project files.
     "scripts/contextmink.cmd",
     "tools/contextmink/agent_integration.md",
     ".agents/skills/contextmink/SKILL.md",
