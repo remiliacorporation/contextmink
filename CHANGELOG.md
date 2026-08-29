@@ -4,11 +4,12 @@ All notable changes to contextmink are documented here. The format follows [Keep
 
 The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
 
-## [0.9.1] - 2026-08-28
+## [0.9.1] - 2026-08-29
 
 ### Changed
 
 - Refreshed the project-local Papertiger integration so durable planning follows the current receipt-bound authority contract.
+- Release archive manifests use `contextmink.release-manifest.v1` and bind `source_commit` to the exact source revision that produced each platform artifact.
 
 ### Fixed
 

@@ -95,9 +95,11 @@ command-output reads, load the project Contextmink skill. Skip known-small
 direct reads and project-native compact or domain-query commands.
 
 Before the first edit or commit on multi-outcome or separate-commit work, or
-work matching an existing durable task, load the project Papertiger skill
-completely. Skip one bounded edit, read-only review, intermediate steps inside
-one independently reviewable outcome, and domain-owned or shared-team lifecycle.
+work matching an existing durable task, read
+`.agents/skills/papertiger/SKILL.md` for shared agent harnesses or
+`.claude/skills/papertiger/SKILL.md` for Claude Code completely and follow it.
+Skip one bounded edit, read-only review, intermediate steps inside one
+independently reviewable outcome, and domain-owned or shared-team lifecycle.
 
 ## Verification
 
