@@ -266,6 +266,8 @@ fn release_workflow_verifies_extracted_project_integration() {
         "cargo +1.95.0 check --locked",
         "needs: [verify-source, build]",
         "integration-project",
+        "contextmink.release-manifest.v1",
+        "source_commit",
         "--json setup-project",
         "contextmink.project_setup.v2",
         "contextmink.project_uninstall.v1",
