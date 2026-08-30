@@ -307,10 +307,10 @@ fn shebang_autodetection_preserves_native_child_argv_across_git_bash() {
 fn version_and_help_identify_the_bridge() {
     let version = run_bridge(&["--version"]);
     assert!(version.status.success());
-    assert!(
-        String::from_utf8_lossy(&version.stdout).starts_with("contextmink-bridge 0."),
-        "stdout: {}",
-        String::from_utf8_lossy(&version.stdout)
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("contextmink-bridge {}", env!("CARGO_PKG_VERSION")),
+        "bridge version must match the package version"
     );
 
     let help = run_bridge(&["--help"]);

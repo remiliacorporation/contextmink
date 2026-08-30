@@ -6,6 +6,10 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-30
+
+This release advances the current CLI, bounded evidence receipts, configuration, and project-integration contracts to the next experimental minor line. It introduces no command or data-contract changes beyond 0.9.2.
+
 ## [0.9.2] - 2026-08-29
 
 ### Removed
