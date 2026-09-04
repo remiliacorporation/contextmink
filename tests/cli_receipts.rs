@@ -3380,6 +3380,116 @@ fn dirs_reports_bounded_recursive_file_counts() {
     assert!(dirs.iter().any(|dir| dir["path"] == "crates/alpha/src"));
 }
 
+#[cfg(windows)]
+#[test]
+fn inspection_accepts_ordinary_long_windows_paths() {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let root = fixture_root("long-windows-paths");
+    let tree = root.join("deep");
+    let mut directory = tree.clone();
+    while directory.as_os_str().encode_wide().count() < 300 {
+        directory.push("repository-component");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("résumé.txt");
+    fs::write(&file, "long-path-needle\n").unwrap();
+    let absolute = file.to_str().unwrap();
+    assert!(!absolute.starts_with(r"\\?\"));
+    let relative = file.strip_prefix(&root).unwrap().to_str().unwrap();
+    let forward = absolute.replace('\\', "/");
+    let verbatim = fs::canonicalize(&file).unwrap();
+    let dotted = directory
+        .join("..")
+        .join(directory.file_name().unwrap())
+        .join("résumé.txt");
+
+    for path in [
+        relative,
+        absolute,
+        &forward,
+        verbatim.to_str().unwrap(),
+        dotted.to_str().unwrap(),
+    ] {
+        let files = parse_json_output(
+            &root,
+            &["--json", "files", path, "--max-line-chars", "1024"],
+        );
+        assert_eq!(files["result"]["total"], 1, "{path}: {files}");
+        assert_eq!(files["scope_complete"], true);
+        assert_eq!(files["output_truncated"], false);
+        let grep = parse_json_output(
+            &root,
+            &["--json", "grep", path, "--pattern", "long-path-needle"],
+        );
+        assert_eq!(grep["matching_lines_total"], 1, "{path}: {grep}");
+        assert_eq!(grep["scope_complete"], true);
+        let terms = parse_json_output(
+            &root,
+            &["--json", "grep-terms", path, "--term", "long-path-needle"],
+        );
+        assert_eq!(terms["matching_lines_total"], 1, "{path}: {terms}");
+        assert_eq!(terms["scope_complete"], true);
+    }
+
+    // Walking a short root must also identify long descendant paths, and a
+    // hard-link alias must not inflate exact totals even with overlapping roots.
+    fs::hard_link(&file, directory.join("alias.txt")).unwrap();
+    for path in ["deep", tree.to_str().unwrap(), directory.to_str().unwrap()] {
+        let dirs = parse_json_output(
+            &root,
+            &[
+                "--json",
+                "dirs",
+                path,
+                "--depth",
+                "1",
+                "--max-line-chars",
+                "1024",
+            ],
+        );
+        assert_eq!(dirs["files_counted"], 1, "{path}: {dirs}");
+        assert_eq!(dirs["scope_complete"], true);
+        assert_eq!(dirs["output_truncated"], false);
+        let files = parse_json_output(&root, &["--json", "files", path, absolute]);
+        assert_eq!(files["result"]["total"], 1, "{path}: {files}");
+    }
+
+    let capped = parse_json_output(
+        &root,
+        &["--json", "files", absolute, "--max-line-chars", "80"],
+    );
+    assert_eq!(capped["result"]["total"], 1);
+    assert_eq!(capped["scope_complete"], true);
+    assert_eq!(capped["output_truncated"], true);
+
+    fs::remove_file(&file).unwrap();
+    for args in [
+        vec!["--json", "files", absolute],
+        vec!["--json", "dirs", absolute],
+        vec!["--json", "grep", absolute, "--pattern", "long-path-needle"],
+        vec![
+            "--json",
+            "grep-terms",
+            absolute,
+            "--term",
+            "long-path-needle",
+        ],
+    ] {
+        let output = run_contextmink_raw(&root, &args);
+        assert!(
+            !output.status.success(),
+            "a missing input must refuse: {args:?}"
+        );
+        assert!(!output.stderr.is_empty());
+        assert!(
+            output.stdout.is_empty(),
+            "a refusal must not emit a success receipt"
+        );
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn config_typos_fail_fast() {
     let root = fixture_root("config-typo");

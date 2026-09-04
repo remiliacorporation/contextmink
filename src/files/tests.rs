@@ -234,6 +234,28 @@ fn physical_file_aliases_keep_one_deterministic_path() {
     assert_eq!(collected.files, vec![first]);
 }
 
+#[test]
+fn identity_refuses_a_file_removed_after_enumeration() {
+    let fixture = Fixture::new("disappearing-identity");
+    let path = fixture.root.join("vanishing.txt");
+    fs::write(&path, "present\n").unwrap();
+    let enumerated = fs::read_dir(&fixture.root)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    super::file_identity(&enumerated).unwrap();
+    fs::remove_file(&path).unwrap();
+
+    let error = super::file_identity(&enumerated).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(error.to_string().contains("vanishing.txt"));
+}
+
 #[cfg(unix)]
 #[test]
 fn posix_backslashes_remain_filename_characters() {

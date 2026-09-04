@@ -830,45 +830,28 @@ fn file_identity(path: &Path) -> Result<FileIdentity> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt as _;
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
-            OPEN_EXISTING,
+            BY_HANDLE_FILE_INFORMATION, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, GetFileInformationByHandle,
         };
 
-        let wide = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let handle = unsafe {
-            CreateFileW(
-                wide.as_ptr(),
-                FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                std::ptr::null(),
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                std::ptr::null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(std::io::Error::last_os_error())
-                .with_context(|| format!("failed to open {} for identity", path.display()));
-        }
+        // Rust normalizes ordinary long Windows paths for the OS. Opening a
+        // raw UTF-16 path with CreateFileW bypasses that support and can report
+        // an existing candidate as missing. Keep attribute-only access and
+        // sharing, with the File owning the handle for the identity query.
+        let file = fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(path)
+            .with_context(|| format!("failed to open {} for identity", path.display()))?;
         let mut information = BY_HANDLE_FILE_INFORMATION::default();
-        let succeeded = unsafe { GetFileInformationByHandle(handle, &mut information) };
-        let information_error = (succeeded == 0).then(std::io::Error::last_os_error);
-        let close_succeeded = unsafe { CloseHandle(handle) };
-        if close_succeeded == 0 {
-            return Err(std::io::Error::last_os_error()).with_context(|| {
-                format!("failed to close identity handle for {}", path.display())
-            });
-        }
-        if let Some(error) = information_error {
-            return Err(error).with_context(|| format!("failed to identify {}", path.display()));
+        let succeeded =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+        if succeeded == 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to identify {}", path.display()));
         }
         Ok(FileIdentity::Windows {
             volume: information.dwVolumeSerialNumber,
