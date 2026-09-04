@@ -6,6 +6,10 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, `files`, `dirs`, `grep`, and `grep-terms` accept ordinary paths beyond `MAX_PATH` instead of reporting existing files as missing during identity checks. Physical file aliases still count once, and missing inputs still fail explicitly.
+
 ## [0.10.0] - 2026-08-30
 
 This release advances the current CLI, bounded evidence receipts, configuration, and project-integration contracts to the next experimental minor line. It introduces no command or data-contract changes beyond 0.9.2.
