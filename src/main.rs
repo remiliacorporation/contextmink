@@ -390,7 +390,7 @@ fn run_application() -> Result<()> {
         ),
         Command::JsonSelect {
             file,
-            array,
+            at,
             fields,
             keys,
             where_exact,
@@ -402,7 +402,7 @@ fn run_application() -> Result<()> {
             &cli,
             &config,
             file,
-            array.as_deref(),
+            at.as_deref(),
             fields,
             where_exact,
             where_contains,

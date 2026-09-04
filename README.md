@@ -266,7 +266,10 @@ below is the short map.
   `encoding` and `total_lines`.
 - `json-find` — locate JSON values by key, path, or summarized value. It uses
   the same strict JSON/JSONL input contract and materialization bound as
-  `json-select`.
+  `json-select`. Match paths and path filters use [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901.html):
+  `/items/0/name`, with `~0` for a tilde and `~1` for a slash in a key.
+  The empty pointer addresses the document root. JSONL is a logical array of
+  non-empty records, so `/12/result` addresses the thirteenth record's result.
 - `json-select` — project JSON or JSONL rows with `--fields` (bare key,
   JSON Pointer, or comma-separated list). `--where FIELD=VALUE` and
   `--where-contains FIELD=TEXT` filter rows; `--keys` reports the union of
@@ -280,6 +283,14 @@ below is the short map.
   and individual streamed records.
   Selector arguments are data and are never rewritten heuristically; use the
   canonical launcher or native bridge at an MSYS boundary.
+  `--at KEY_OR_POINTER` selects any value: objects and scalars yield one row,
+  while arrays yield their elements as rows. Pass a `json-find` match path
+  directly to `--at`, including pointers containing commas or whitespace;
+  `--at /result --keys` discovers a nested object's shape. This replaces the
+  former `--array` flag and the receipt's `array` field; receipts use `at`.
+  A missing `--at` target refuses. For UTF-8 JSONL, selection stays streaming
+  and validates later records too. Selector syntax is validated before any
+  inspection, including on empty input or when a preceding token is missing.
 - `sqlite` — read-only query against the positional DB file from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
@@ -345,7 +356,7 @@ scripts/contextmink outline capture_sidecar.json --limit 30
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
 scripts/contextmink json-select queue.jsonl --fields addr --where-contains name=Cache --limit 10
-scripts/contextmink json-select capture_sidecar.json --array entries --keys
+scripts/contextmink json-select capture_sidecar.json --at entries --keys
 scripts/contextmink sqlite state.sqlite --sql-file query.sql --limit 20
 scripts/contextmink sqlite state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')

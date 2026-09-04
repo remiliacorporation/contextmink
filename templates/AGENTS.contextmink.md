@@ -88,6 +88,10 @@ more output than the transcript should carry.
   caps. A no-match grep with
   `no_match_scope: "scanned_subset"` or a `json-select` with `all_null_fields`
   entries needs a narrower or corrected query, not a conclusion.
+  JSON fields use literal keys or JSON Pointers (`/result/total`, not dotted
+  shorthand). Pass `json-find` match paths directly to `json-select --at`;
+  combine `--at /result --keys` to discover a nested object. JSONL pointers
+  begin with the zero-based non-empty record index, such as `/12/result`.
 - Direct commands are fine when output is already known to be small or
   structurally bounded: `git status --short`, `git diff --stat`, a focused
   test command, a domain tool that emits compact records, or one exact file

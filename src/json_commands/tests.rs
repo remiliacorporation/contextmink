@@ -19,13 +19,6 @@ fn json_search_text_is_not_bounded_by_rendering_limits() {
 use serde_json::json;
 
 #[test]
-fn json_identifier_filter_matches_plain_keys_only() {
-    assert!(is_json_identifier("alpha_beta1"));
-    assert!(!is_json_identifier("1alpha"));
-    assert!(!is_json_identifier("alpha-beta"));
-}
-
-#[test]
 fn value_summary_keeps_large_json_structural() {
     let large = json!({
         "items": (0..120).map(|index| json!({"index": index})).collect::<Vec<_>>(),
@@ -48,5 +41,26 @@ fn value_summary_keeps_large_json_structural() {
 #[test]
 fn shape_mismatched_json_pointer_token_is_a_non_match() {
     let row = json!({"v": [9]});
-    assert_eq!(json_pointer_lookup(&row, "/v/x").unwrap(), None);
+    assert_eq!(json_select_field(&row, "/v/x").unwrap(), None);
+}
+
+#[test]
+fn json_pointer_escaping_and_array_indices_preserve_identity() {
+    let value = json!({"a/b": {"m~n": {"~1": 7}}, "items": [9], "01": 3});
+    assert_eq!(
+        json_select_field(&value, "/a~1b/m~0n/~01").unwrap(),
+        Some(&json!(7))
+    );
+    assert_eq!(json_select_field(&value, "/01").unwrap(), Some(&json!(3)));
+    for pointer in [
+        "/items/01",
+        "/items/+0",
+        "/items/-",
+        "/items/184467440737095516160",
+    ] {
+        assert_eq!(json_select_field(&value, pointer).unwrap(), None);
+    }
+    for pointer in ["/absent/~", "/absent/~9", "/items/x/~9"] {
+        assert!(json_select_field(&value, pointer).is_err());
+    }
 }

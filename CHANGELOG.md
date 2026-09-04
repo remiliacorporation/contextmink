@@ -6,8 +6,13 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Changed
+
+- `json-find` match paths and path filters use JSON Pointer syntax, such as `/items/0/name`, replacing dotted/bracket paths. `json-select --at` replaces `--array` and selects objects, arrays, or scalars directly from those pointers; its receipt field is `at`. JSONL pointers start with a zero-based non-empty record index, and UTF-8 JSONL selection validates the complete stream without materializing the file.
+
 ### Fixed
 
+- JSON selector syntax is validated before inspection, including empty inputs and pointers with a missing prefix. Noncanonical array indices such as `01` and `+1` no longer select an element; literal object keys keep their exact spelling.
 - `dirs` includes empty directories, preserves ancestor counts for overlapping roots, and counts hard-linked files once in each containing directory. Directory totals stay exact when `--max-files-counted` caps file counting; affected counts are explicitly marked as lower bounds. File inputs are refused with guidance to use `files`.
 - On Windows, `files`, `dirs`, `grep`, and `grep-terms` accept ordinary paths beyond `MAX_PATH` instead of reporting existing files as missing during identity checks. Physical file aliases still count once, and missing inputs still fail explicitly.
 

@@ -371,6 +371,43 @@ fn setup_project_skill_target_controls_and_freezes_harness_residence() {
 }
 
 #[test]
+fn installed_launcher_preserves_json_pointer_selection() {
+    let root = fixture_root("setup-pointer-launcher");
+    let setup = parse_json_output(&root, &["--json", "setup-project", "."]);
+    assert_eq!(setup["ready"], true);
+    let launcher = root.join("scripts/contextmink");
+    let file = root.join("sidecar.json");
+    let output = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "capture",
+            "--max-lines",
+            "120",
+            "--max-line-chars",
+            "1024",
+            "--",
+            launcher.to_str().unwrap(),
+            "--json",
+            "json-select",
+            file.to_str().unwrap(),
+            "--at",
+            "/textures/0/texture_type",
+        ],
+    );
+    assert_eq!(output["child_exit_code"], 0);
+    assert_eq!(output["output_truncated"], false);
+    let selected: Value = serde_json::from_str(output["stdout_text"].as_str().unwrap()).unwrap();
+    assert_eq!(selected["at"], "/textures/0/texture_type");
+    assert_eq!(selected["rows"][0]["value"], "\"diffuse\"");
+    let again = parse_json_output(&root, &["--json", "setup-project", ".", "--dry-run"]);
+    assert_eq!(again["ready"], true);
+    assert!(again["actions"].as_array().unwrap().iter().all(|action| {
+        action["action"] == "unchanged" || action["action"] == "preserve_repository_owned"
+    }));
+}
+
+#[test]
 fn setup_project_reports_unowned_deselected_skill_as_unready() {
     let root = fixture_root("setup-project-unowned-skill");
     fs::remove_file(root.join(".contextmink.toml")).unwrap();
@@ -2544,7 +2581,7 @@ fn json_select_projects_array_fields_without_jq_filters() {
             "--json",
             "json-select",
             "sidecar.json",
-            "--array",
+            "--at",
             "/textures",
             "--fields",
             "index",
@@ -2568,7 +2605,7 @@ fn json_select_accepts_comma_separated_fields() {
             "--json",
             "json-select",
             "sidecar.json",
-            "--array",
+            "--at",
             "/textures",
             "--fields",
             "index,path",
@@ -2620,7 +2657,7 @@ fn json_select_shape_mismatch_is_a_null_non_match() {
             "--json",
             "json-select",
             "heterogeneous.json",
-            "--array",
+            "--at",
             "$",
             "--fields",
             "/v/x",
@@ -3303,6 +3340,183 @@ fn json_select_reports_all_null_fields() {
         &["json-select", "rows.jsonl", "--fields", "typo_field"],
     );
     assert!(human.contains("warning: field(s) typo_field"));
+}
+
+#[test]
+fn json_find_pointers_select_exact_values_and_nested_shapes() {
+    let root = fixture_root("json-pointer-roundtrip");
+    fs::write(
+        root.join("pointers.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "a/b": 1, "a~b": 2, "a,b": 3, "a.b": 4, "": 5, " ": 6,
+            "line\nname": 7, "résumé": 8, "items": [{"value": "needle"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let found = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-find",
+            "pointers.json",
+            "--key-regex",
+            "^(a.*|value|résumé|line.*| |)$",
+        ],
+    );
+    assert_eq!(found["result"]["total"], 8);
+    for item in found["matches"].as_array().unwrap() {
+        let pointer = item["path"].as_str().unwrap();
+        let selected = parse_json_output(
+            &root,
+            &["--json", "json-select", "pointers.json", "--at", pointer],
+        );
+        assert_eq!(selected["rows"][0]["value"], item["value"], "{pointer}");
+        assert_eq!(selected["at"], pointer);
+        assert!(selected.get("array").is_none());
+    }
+    let shape = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "pointers.json",
+            "--at",
+            "/items/0",
+            "--keys",
+        ],
+    );
+    assert_eq!(shape["keys"][0]["key"], "value");
+    let scalar = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "pointers.json",
+            "--at",
+            "/items/0/value",
+        ],
+    );
+    assert_eq!(scalar["rows"][0]["value"], "\"needle\"");
+    let whole = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "pointers.json",
+            "--at",
+            "",
+            "--fields",
+            "a.b",
+        ],
+    );
+    assert_eq!(whole["rows"][0]["fields"]["a.b"], "4");
+    let human = run_contextmink(
+        &root,
+        &["json-find", "pointers.json", "--key-contains", "line"],
+    );
+    assert!(human.contains("\"/line\\nname\" = 7"));
+    let retired = run_contextmink_raw(&root, &["json-select", "pointers.json", "--array", "items"]);
+    assert!(!retired.status.success());
+    assert!(String::from_utf8_lossy(&retired.stderr).contains("replace `--array` with `--at`"));
+}
+
+#[test]
+fn jsonl_discovery_pointers_select_records_without_skipping_tail_validation() {
+    let root = fixture_root("jsonl-pointer-stream");
+    // The complete file exceeds the per-record materialization budget.
+    fs::write(
+        root.join("records.jsonl"),
+        "{\"value\":1}\n\n{\"value\":2}\n{\"value\":3}\n",
+    )
+    .unwrap();
+    let found = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-find",
+            "records.jsonl",
+            "--key-contains",
+            "value",
+            "--max-document-bytes",
+            "20",
+        ],
+    );
+    for (index, item) in found["matches"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(item["path"], format!("/{index}/value"));
+        let selected = parse_json_output(
+            &root,
+            &[
+                "--json",
+                "json-select",
+                "records.jsonl",
+                "--at",
+                item["path"].as_str().unwrap(),
+                "--max-document-bytes",
+                "20",
+            ],
+        );
+        assert_eq!(selected["rows"][0]["value"], item["value"]);
+        assert_eq!(selected["scope_complete"], true);
+    }
+    for pointer in ["/3", "/01", "/+1", "/0/missing", "1"] {
+        let output = run_contextmink_raw(&root, &["json-select", "records.jsonl", "--at", pointer]);
+        assert!(!output.status.success(), "{pointer}");
+        assert!(output.stdout.is_empty());
+    }
+    fs::write(root.join("records.jsonl"), "{\"value\":1}\nmalformed\n").unwrap();
+    let output = run_contextmink_raw(
+        &root,
+        &["--json", "json-select", "records.jsonl", "--at", "/0/value"],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("JSONL line 2"));
+}
+
+#[test]
+fn json_selector_syntax_is_validated_independently_of_data_and_filters() {
+    let root = fixture_root("json-pointer-validation");
+    fs::write(root.join("empty.jsonl"), "").unwrap();
+    fs::write(root.join("empty.json"), "{\"items\":[]}").unwrap();
+    for file in ["empty.jsonl", "empty.json", "sidecar.json"] {
+        for flag in ["--fields", "--where", "--where-contains", "--at"] {
+            let selector = if flag.starts_with("--where") {
+                "/missing/~9=x"
+            } else {
+                "/missing/~9"
+            };
+            let output =
+                run_contextmink_raw(&root, &["--json", "json-select", file, flag, selector]);
+            assert!(!output.status.success(), "{file} {flag}");
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("JSON pointer"));
+        }
+    }
+    let empty_array = run_contextmink_raw(
+        &root,
+        &[
+            "json-select",
+            "empty.json",
+            "--at",
+            "items",
+            "--fields",
+            "/~9",
+        ],
+    );
+    assert!(!empty_array.status.success());
+    let no_match = run_contextmink_raw(
+        &root,
+        &[
+            "json-select",
+            "sidecar.json",
+            "--where",
+            "missing=x",
+            "--where",
+            "/~9=x",
+        ],
+    );
+    assert!(!no_match.status.success());
 }
 
 #[test]
@@ -4172,7 +4386,7 @@ fn json_select_array_accepts_bare_top_level_key() {
             "--json",
             "json-select",
             "doc.json",
-            "--array",
+            "--at",
             "entries",
             "--fields",
             "id",
