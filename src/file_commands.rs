@@ -140,6 +140,7 @@ pub(crate) fn command_files(
             with_git_ignored,
             skip_nested_repos,
             max_selected_files,
+            directory_depth: None,
         },
     )?;
     let files = collected.files;
@@ -214,6 +215,20 @@ pub(crate) fn command_dirs(
             "dirs --max-files-counted must be greater than zero"
         ));
     }
+    let roots = paths
+        .iter()
+        .map(|root| {
+            let canonical = std::fs::canonicalize(root)
+                .with_context(|| format!("failed to resolve directory {}", root.display()))?;
+            if !canonical.is_dir() {
+                return Err(anyhow!(
+                    "dirs requires a directory: {}; pass its parent directory or use files for an explicit file",
+                    root.display()
+                ));
+            }
+            Ok((root.as_path(), canonical))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let collected = collect_files(
         paths,
         config,
@@ -225,54 +240,55 @@ pub(crate) fn command_dirs(
             with_git_ignored,
             skip_nested_repos,
             max_selected_files: max_files_counted,
+            directory_depth: Some(depth),
         },
     )?;
-    let root_prefixes: Vec<String> = paths
-        .iter()
-        .map(|root| {
-            display_path(root)
-                .trim_start_matches("./")
-                .trim_end_matches('/')
-                .to_owned()
-        })
-        .filter(|root| !root.is_empty() && root != ".")
-        .collect();
-    // Recursive file counts per directory, keyed by display path, bounded to
-    // `depth` levels below the matched root (or below the scan origin when
-    // the root is the current directory).
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for file in &collected.files {
-        let display = display_path(file);
-        let display = display.trim_start_matches("./");
-        let root_prefix = root_prefixes
+    // Resolve each root once, then translate its descendants without a second
+    // filesystem lookup per file. Aliased roots share counts and one stable
+    // display spelling; overlapping roots extend depth without losing parents.
+    let canonical_path = |path: &Path| -> Result<PathBuf> {
+        roots
             .iter()
-            .filter(|root| display == **root || display.starts_with(&format!("{root}/")))
-            .max_by_key(|root| root.len());
-        let (base, relative) = match root_prefix {
-            Some(root) => (
-                root.as_str(),
-                display
-                    .strip_prefix(root.as_str())
-                    .unwrap_or("")
-                    .trim_start_matches('/'),
-            ),
-            None => ("", display),
-        };
-        let components: Vec<&str> = relative.split('/').collect();
-        // The last component is the file name; ancestors are directories.
-        let dir_components = components.len().saturating_sub(1);
-        for level in 0..=min(dir_components, depth) {
-            let mut key = base.to_owned();
-            if level > 0 {
-                if !key.is_empty() {
-                    key.push('/');
-                }
-                key.push_str(&components[..level].join("/"));
-            }
-            let key = if key.is_empty() { ".".to_owned() } else { key };
-            *counts.entry(key).or_insert(0) += 1;
+            .filter_map(|(root, canonical)| match path.strip_prefix(root) {
+                Ok(relative) => Some((root.components().count(), canonical.join(relative))),
+                Err(_) => None, // This entry may belong to another explicit root.
+            })
+            .max_by_key(|(length, _)| *length)
+            .map(|(_, path)| path)
+            .ok_or_else(|| {
+                anyhow!(
+                    "directory summary entry escaped its scan roots: {}",
+                    path.display()
+                )
+            })
+    };
+    let mut directories: BTreeMap<PathBuf, (String, usize)> = BTreeMap::new();
+    for directory in &collected.directories {
+        let display = display_path(directory);
+        let display = display.trim_start_matches("./");
+        let display = if display.is_empty() { "." } else { display };
+        let entry = directories
+            .entry(canonical_path(directory)?)
+            .or_insert_with(|| (display.to_owned(), 0));
+        if display < entry.0.as_str() {
+            entry.0 = display.to_owned();
         }
     }
+    let mut counted_ancestors = std::collections::HashSet::new();
+    for (index, file) in collected.files.iter().enumerate() {
+        counted_ancestors.clear();
+        let aliases = collected.file_aliases.get(&index).into_iter().flatten();
+        for spelling in std::iter::once(file).chain(aliases) {
+            for ancestor in canonical_path(spelling)?.ancestors().skip(1) {
+                if let Some((_, count)) = directories.get_mut(ancestor)
+                    && counted_ancestors.insert(ancestor.to_path_buf())
+                {
+                    *count += 1;
+                }
+            }
+        }
+    }
+    let counts = directories.into_values().collect::<BTreeMap<_, _>>();
     let total_dirs = counts.len();
     let shown = min(total_dirs, max);
     let mut text_clamp = TextClamp::new(max_line_chars);
@@ -281,14 +297,19 @@ pub(crate) fn command_dirs(
         .take(shown)
         .map(|(dir, files)| {
             let path = text_clamp.clamp(dir);
-            let display = text_clamp.clamp(&format!("{dir} files={files}"));
+            let relation = if collected.selection_capped {
+                ">="
+            } else {
+                "="
+            };
+            let display = text_clamp.clamp(&format!("{dir} files{relation}{files}"));
             (path, display, *files)
         })
         .collect::<Vec<_>>();
     let mut receipt = Receipt::new(
         "dirs",
         config.profile.as_deref(),
-        ReceiptResult::new("dirs", total_dirs, collected.selection_capped, shown),
+        ReceiptResult::new("dirs", total_dirs, false, shown),
     );
     if collected.selection_capped {
         receipt.add_cap(ReceiptCap::scope("files_counted", Some(max_files_counted)));
@@ -299,8 +320,11 @@ pub(crate) fn command_dirs(
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("depth", json!(depth));
     receipt.insert("files_counted", json!(collected.files.len()));
+    receipt.insert(
+        "file_counts_are_lower_bounds",
+        json!(collected.selection_capped),
+    );
     nested_repos_receipt_fields(&mut receipt, &collected.nested_repos_entered);
-    let capped = !receipt.complete();
     if cli.json {
         receipt.insert(
             "dirs",
@@ -318,13 +342,19 @@ pub(crate) fn command_dirs(
         let mut stdout = io::stdout();
         writeln!(stdout, "[contextmink] dirs depth={depth}")?;
         if counts.is_empty() {
-            writeln!(stdout, "no_files")?;
+            writeln!(stdout, "no_directories")?;
         }
         for (_, display, _) in rendered_dirs {
             writeln!(stdout, "{display}")?;
         }
         write_nested_repos_note(&mut stdout, &collected.nested_repos_entered)?;
-        if capped {
+        if collected.selection_capped {
+            writeln!(
+                stdout,
+                "[contextmink] directory file counts are lower bounds; narrow the roots or raise --max-files-counted."
+            )?;
+        }
+        if receipt.output_truncated() {
             writeln!(
                 stdout,
                 "[contextmink] capped dirs output; narrow the path or lower --depth before treating this as complete."
@@ -440,6 +470,7 @@ pub(crate) fn command_grep_with_matcher(
             with_git_ignored,
             skip_nested_repos,
             max_selected_files: caps.max_content_files,
+            directory_depth: None,
         },
     )?;
     let candidate_file_scope_capped = collected.selection_capped;

@@ -3491,6 +3491,134 @@ fn inspection_accepts_ordinary_long_windows_paths() {
 }
 
 #[test]
+fn dirs_preserves_empty_directories_overlap_and_alias_counts() {
+    let root = fixture_root("dirs-structure");
+    fs::create_dir_all(root.join("tree/child/deep")).unwrap();
+    fs::create_dir_all(root.join("tree/empty")).unwrap();
+    fs::write(root.join("tree/child/deep/one.txt"), "one\n").unwrap();
+    fs::hard_link(
+        root.join("tree/child/deep/one.txt"),
+        root.join("tree/child/alias.txt"),
+    )
+    .unwrap();
+    let absolute = root.join("tree");
+    for paths in [
+        vec!["tree"],
+        vec!["tree", "tree/child"],
+        vec!["tree/child", "tree"],
+        vec!["./tree", absolute.to_str().unwrap(), "tree"],
+    ] {
+        let mut args = vec!["--json", "dirs", "--depth", "2"];
+        args.extend(paths);
+        let json = parse_json_output(&root, &args);
+        assert_eq!(json["files_counted"], 1);
+        assert_eq!(json["result"]["total"], 4);
+        assert_eq!(json["scope_complete"], true);
+        let rows = json["dirs"].as_array().unwrap();
+        for suffix in ["tree", "tree/child", "tree/child/deep", "tree/empty"] {
+            let row = rows
+                .iter()
+                .find(|row| row["path"].as_str().unwrap().ends_with(suffix))
+                .unwrap();
+            assert_eq!(
+                row["files"],
+                if suffix.ends_with("empty") { 0 } else { 1 },
+                "{args:?}: {json}"
+            );
+        }
+    }
+    let empty = parse_json_output(&root, &["--json", "dirs", "tree/empty"]);
+    assert_eq!(empty["result"]["total"], 1);
+    assert_eq!(empty["dirs"][0]["files"], 0);
+    let shallow = parse_json_output(&root, &["--json", "dirs", "tree", "--depth", "1"]);
+    assert_eq!(shallow["result"]["total"], 3);
+    let file = run_contextmink_raw(&root, &["dirs", "tree/child/alias.txt"]);
+    assert!(!file.status.success());
+    assert!(String::from_utf8_lossy(&file.stderr).contains("use files"));
+}
+
+#[test]
+fn dirs_keeps_directory_totals_exact_when_file_counts_are_capped() {
+    let root = fixture_root("dirs-count-cap");
+    for name in ["a", "b", "empty"] {
+        fs::create_dir_all(root.join("tree").join(name)).unwrap();
+    }
+    fs::write(root.join("tree/a/one.txt"), "one").unwrap();
+    fs::write(root.join("tree/b/two.txt"), "two").unwrap();
+    let args = ["--json", "dirs", "tree", "--max-files-counted", "1"];
+    let json = parse_json_output(&root, &args);
+    assert_eq!(json["scope_complete"], false);
+    assert_eq!(json["output_truncated"], false);
+    assert_eq!(json["result"]["total"], 4);
+    assert_eq!(json["result"]["total_is_lower_bound"], false);
+    assert_eq!(json["file_counts_are_lower_bounds"], true);
+    assert_eq!(json["files_counted"], 1);
+    let human = run_contextmink(&root, &["dirs", "tree", "--max-files-counted", "1"]);
+    assert!(human.contains("tree files>=1"));
+    assert!(human.contains("raise --max-files-counted"));
+    assert!(
+        !run_contextmink_raw(
+            &root,
+            &[
+                "--require-complete-scope",
+                "dirs",
+                "tree",
+                "--max-files-counted",
+                "1"
+            ]
+        )
+        .status
+        .success()
+    );
+}
+
+#[test]
+fn dirs_applies_excludes_and_nested_boundaries_to_empty_directories() {
+    let root = fixture_root("dirs-empty-policy");
+    for name in [
+        "empty",
+        "excluded",
+        "ignored",
+        "nested/.git",
+        "nested/child/deep",
+    ] {
+        fs::create_dir_all(root.join("tree").join(name)).unwrap();
+    }
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::write(root.join(".gitignore"), "tree/ignored/\n").unwrap();
+    fs::write(
+        root.join(".contextmink.toml"),
+        "exclude_globs = [\"tree/excluded/**\"]\n",
+    )
+    .unwrap();
+    let regular = parse_json_output(&root, &["--json", "dirs", "tree", "--depth", "2"]);
+    let rows = regular["dirs"].as_array().unwrap();
+    assert!(rows.iter().any(|row| row["path"] == "tree/empty"));
+    assert!(rows.iter().any(|row| row["path"] == "tree/nested/child"));
+    assert!(rows.iter().all(|row| {
+        !["tree/excluded", "tree/ignored", "tree/nested/child/deep"]
+            .contains(&row["path"].as_str().unwrap())
+    }));
+    let skipped = parse_json_output(&root, &["--json", "dirs", "tree", "--skip-nested-repos"]);
+    assert_eq!(skipped["result"]["total"], 2);
+    let included = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "dirs",
+            "tree",
+            "--depth",
+            "1",
+            "--with-git-ignored",
+            "--with-excluded",
+        ],
+    );
+    assert_eq!(included["result"]["total"], 5);
+    let explicit = parse_json_output(&root, &["--json", "dirs", "tree/excluded"]);
+    assert_eq!(explicit["result"]["total"], 1);
+}
+
+#[test]
 fn config_typos_fail_fast() {
     let root = fixture_root("config-typo");
     fs::write(

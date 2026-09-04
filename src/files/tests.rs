@@ -63,6 +63,7 @@ fn options<'a>(globs: &'a [String]) -> CollectOptions<'a> {
         with_git_ignored: false,
         skip_nested_repos: true,
         max_selected_files: usize::MAX,
+        directory_depth: None,
     }
 }
 
