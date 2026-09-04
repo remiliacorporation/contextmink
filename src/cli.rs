@@ -77,6 +77,11 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
     };
     let command = selected_subcommand(args)?;
 
+    if command == "json-select" && flag_present("--array") {
+        return Some(
+            "json-select uses `--at <KEY_OR_POINTER>` for arrays, objects, and scalars; replace `--array` with `--at`",
+        );
+    }
     if command == "grep" && flag_present("--path") {
         return Some(
             "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`",
@@ -542,9 +547,12 @@ pub(crate) enum Command {
         key_contains: Vec<String>,
         #[arg(long, help = "Match object keys with this regex")]
         key_regex: Option<String>,
-        #[arg(long, help = "Match JSON paths containing this text")]
+        #[arg(
+            long,
+            help = "Match JSON Pointers containing this text (for example /items/0/name)"
+        )]
         path_contains: Vec<String>,
-        #[arg(long, help = "Match JSON paths with this regex")]
+        #[arg(long, help = "Match JSON Pointers with this regex")]
         path_regex: Option<String>,
         #[arg(long, help = "Match summarized values containing this text")]
         value_contains: Vec<String>,
@@ -563,7 +571,7 @@ pub(crate) enum Command {
         )]
         max_document_bytes: u64,
     },
-    /// Project JSON root or array rows to bounded field summaries.
+    /// Select JSON values or array rows and print bounded field summaries.
     #[command(name = "json-select")]
     JsonSelect {
         #[arg(value_name = "FILE", help = "JSON or JSONL file to project")]
@@ -571,9 +579,9 @@ pub(crate) enum Command {
         #[arg(
             long,
             value_name = "KEY_OR_POINTER",
-            help = "Top-level key or JSON Pointer to an array to project; omit for the root"
+            help = "Select any value by key or JSON Pointer; arrays yield rows, objects/scalars yield one row. JSONL pointers start with a zero-based record index (for example /12/result)."
         )]
-        array: Option<String>,
+        at: Option<String>,
         #[arg(
             long = "fields",
             value_name = "KEY_OR_POINTERS",

@@ -409,7 +409,7 @@ fn launcher_finds_cargo_outside_non_login_path() {
 fn launcher_declares_json_pointer_filter_exclusions() {
     let launcher = include_str!("../templates/scripts/contextmink");
 
-    assert!(launcher.contains("--array | --fields)"));
+    assert!(launcher.contains("--at | --fields)"));
     assert!(launcher.contains("--where | --where-contains | --key-contains"));
     assert!(launcher.contains("--where=*/* | --where-contains=*/* | --key-contains=*/*"));
 }

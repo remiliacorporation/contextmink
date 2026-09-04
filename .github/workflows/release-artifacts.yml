@@ -224,6 +224,10 @@ jobs:
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"both"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/project-install.json"
           test -f "${project}/tools/contextmink/bin/runtime-install.json"
+          printf '{"result":{"total":17}}\n' > "${project}/selection.json"
+          (cd "${project}" && scripts/contextmink --json json-select selection.json --at /result/total) > "${verify_root}/pointer-smoke.json"
+          grep -Eq '"at"[[:space:]]*:[[:space:]]*"/result/total"' "${verify_root}/pointer-smoke.json"
+          grep -Eq '"value"[[:space:]]*:[[:space:]]*"17"' "${verify_root}/pointer-smoke.json"
           test -f "${project}/tools/contextmink/agent_integration.md"
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
@@ -346,6 +350,9 @@ jobs:
           if ((Get-FileHash $agentSkill).Hash -ne (Get-FileHash $claudeSkill).Hash) { throw "contextmink skill envelopes diverged" }
           if (Test-Path "$project/scripts/contextmink.cmd") { throw "retired PowerShell diagnostic shim was installed" }
           $projectBin = "$project/tools/contextmink/bin"
+          Set-Content -LiteralPath "$project/selection.json" -Value '{"result":{"total":17}}'
+          $pointerSmoke = (& "$projectBin/contextmink-bridge.exe" --script "$project/scripts/contextmink" -- --json json-select "$project/selection.json" --at /result/total | Out-String) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $pointerSmoke.at -ne "/result/total" -or $pointerSmoke.rows[0].value -ne "17") { throw "installed launcher JSON Pointer selection failed" }
           $configPath = "$project/.contextmink.toml"
           $configText = (Get-Content -Raw -Path $configPath).Replace(
             'exclude_globs = []',

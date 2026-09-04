@@ -149,14 +149,14 @@ pub(crate) fn command_json_find(
         .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"));
     let input_format = if is_jsonl_named {
         visit_jsonl_file(file, max_document_bytes, |index, row| {
-            inspect_value(&format!("$[{index}]"), &row);
+            inspect_value(&format!("/{index}"), &row);
             Ok(())
         })?;
         "jsonl"
     } else {
         let text = read_bounded_json_text(file, max_document_bytes)?.0;
         let (document, format) = parse_json_or_jsonl(file, &text, max_document_bytes)?;
-        inspect_value("$", &document);
+        inspect_value("", &document);
         format
     };
     let shown = rows.len();
@@ -197,7 +197,7 @@ pub(crate) fn command_json_find(
             writeln!(stdout, "no_matches")?;
         }
         for (path, value) in rows.iter().take(shown) {
-            writeln!(stdout, "{path} = {value}")?;
+            writeln!(stdout, "{} = {value}", serde_json::to_string(path)?)?;
         }
         if truncated {
             writeln!(
@@ -242,7 +242,7 @@ pub(crate) fn command_json_select(
     cli: &Cli,
     config: &ContextConfig,
     file: &Path,
-    array: Option<&str>,
+    at: Option<&str>,
     fields: &[String],
     where_exact: &[String],
     where_contains: &[String],
@@ -259,7 +259,8 @@ pub(crate) fn command_json_select(
             "json-select --max-value-chars must be greater than zero"
         ));
     }
-    let array = array.map(str::to_owned);
+    let at = at.map(str::to_owned);
+    let at_tokens = at.as_deref().map(json_selector_tokens).transpose()?;
     let fields = expand_json_select_fields(fields);
     if keys && !fields.is_empty() {
         return Err(anyhow!(
@@ -267,6 +268,15 @@ pub(crate) fn command_json_select(
         ));
     }
     let predicates = parse_where_predicates(where_exact, where_contains)?;
+
+    // Syntax is independent of the data: validate every token even when the
+    // file is empty, an earlier component is absent, or a filter matches no rows.
+    for selector in fields
+        .iter()
+        .chain(predicates.iter().map(|predicate| &predicate.field))
+    {
+        json_selector_tokens(selector)?;
+    }
 
     // Every selector that can silently produce nothing is typo-audited: a
     // field or predicate field that is null/missing in every scanned row is
@@ -290,58 +300,85 @@ pub(crate) fn command_json_select(
     let mut rows_scanned = 0usize;
     let mut rows_matched = 0usize;
     let input_format;
-    if is_jsonl_named && array.is_none() {
-        let mut consume_row = |_index: usize, row: Value| -> Result<()> {
-            rows_scanned += 1;
-            audit_fields(&row, &audited_fields, &mut field_seen_non_null)?;
-            if !row_matches_predicates(&row, &predicates)? {
-                return Ok(());
-            }
-            rows_matched += 1;
-            if keys {
-                collect_row_keys(&row, &mut key_stats, &mut non_object_rows);
-            } else if kept_rows.len() < max {
-                kept_rows.push(row);
+    let mut consume_row = |row: &Value| -> Result<()> {
+        rows_scanned += 1;
+        audit_fields(row, &audited_fields, &mut field_seen_non_null)?;
+        if !row_matches_predicates(row, &predicates)? {
+            return Ok(());
+        }
+        rows_matched += 1;
+        if keys {
+            collect_row_keys(row, &mut key_stats, &mut non_object_rows);
+        } else if kept_rows.len() < max {
+            kept_rows.push(row.clone());
+        }
+        Ok(())
+    };
+    if is_jsonl_named {
+        if at.as_deref().is_some_and(|selector| {
+            !selector.is_empty() && selector != "$" && !selector.starts_with('/')
+        }) {
+            return Err(anyhow!(
+                "json-select --at on JSONL requires a JSON Pointer, for example /0/result; use --fields to project each record"
+            ));
+        }
+        let target = at_tokens.as_deref().filter(|tokens| !tokens.is_empty())
+            .map(|tokens| {
+                let index = json_array_index(&tokens[0]).ok_or_else(|| anyhow!(
+                    "json-select --at on JSONL requires a zero-based record index, for example /0/result; use --fields to project each record"
+                ))?;
+                Ok::<_, anyhow::Error>((index, &tokens[1..]))
+            }).transpose()?;
+        let mut selected_record_seen = false;
+        visit_jsonl_file(file, max_document_bytes, |index, row| {
+            if let Some((target_index, tokens)) = target {
+                if index == target_index {
+                    selected_record_seen = true;
+                    let selected = json_tokens_lookup(&row, tokens).ok_or_else(|| {
+                        anyhow!(
+                            "json-select --at selector did not match: {}; use json-find to discover available pointers",
+                            at.as_deref().unwrap_or("")
+                        )
+                    })?;
+                    consume_selected_json(selected, &mut consume_row)?;
+                }
+            } else {
+                consume_row(&row)?;
             }
             Ok(())
-        };
-        visit_jsonl_file(file, max_document_bytes, &mut consume_row)?;
+        })?;
+        if target.is_some() && !selected_record_seen {
+            return Err(anyhow!(
+                "json-select --at record did not exist: {}; use json-find to discover available record pointers",
+                at.as_deref().unwrap_or("")
+            ));
+        }
         input_format = "jsonl";
     } else {
         let text = read_bounded_json_text(file, max_document_bytes)?.0;
         let (document, parsed_format) = parse_json_or_jsonl(file, &text, max_document_bytes)?;
         input_format = parsed_format;
-        let rows: Vec<&Value> = if let Some(pointer) = array.as_deref() {
-            let selected = json_select_field(&document, pointer)?
-                .ok_or_else(|| anyhow!("json-select --array selector did not match: {pointer}"))?;
-            selected
-                .as_array()
-                .ok_or_else(|| {
-                    anyhow!("json-select --array selector must resolve to an array: {pointer}")
-                })?
-                .iter()
-                .collect()
+        if let Some(tokens) = &at_tokens {
+            let selected = if at.as_deref().is_some_and(|selector| {
+                !selector.is_empty() && selector != "$" && !selector.starts_with('/')
+            }) {
+                document
+                    .as_object()
+                    .and_then(|object| object.get(at.as_deref().unwrap_or("")))
+            } else {
+                json_tokens_lookup(&document, tokens)
+            }
+            .ok_or_else(|| {
+                anyhow!(
+                    "json-select --at selector did not match: {}; use json-find to discover available pointers",
+                    at.as_deref().unwrap_or("")
+                )
+            })?;
+            consume_selected_json(selected, &mut consume_row)?;
         } else if input_format == "jsonl" {
-            document
-                .as_array()
-                .expect("JSONL parser returns an array")
-                .iter()
-                .collect()
+            consume_selected_json(&document, &mut consume_row)?;
         } else {
-            vec![&document]
-        };
-        for row in rows {
-            rows_scanned += 1;
-            audit_fields(row, &audited_fields, &mut field_seen_non_null)?;
-            if !row_matches_predicates(row, &predicates)? {
-                continue;
-            }
-            rows_matched += 1;
-            if keys {
-                collect_row_keys(row, &mut key_stats, &mut non_object_rows);
-            } else if kept_rows.len() < max {
-                kept_rows.push(row.clone());
-            }
+            consume_row(&document)?;
         }
     }
 
@@ -356,7 +393,7 @@ pub(crate) fn command_json_select(
             cli,
             config,
             file,
-            array.as_deref(),
+            at.as_deref(),
             input_format,
             &key_stats,
             non_object_rows,
@@ -405,7 +442,7 @@ pub(crate) fn command_json_select(
         ));
     }
     receipt.insert("path", json!(display_path(file)));
-    receipt.insert("array", json!(array.as_deref()));
+    receipt.insert("at", json!(at.as_deref()));
     receipt.insert("input_format", json!(input_format));
     receipt.insert("fields", json!(fields));
     receipt.insert("where", json!(where_labels));
@@ -425,7 +462,7 @@ pub(crate) fn command_json_select(
         emit_json_checked(cli, receipt)
     } else {
         let mut stdout = io::stdout();
-        let source = array.as_deref().unwrap_or(if input_format == "jsonl" {
+        let source = at.as_deref().unwrap_or(if input_format == "jsonl" {
             "jsonl"
         } else {
             "$"
@@ -526,7 +563,7 @@ fn render_json_select_keys(
     cli: &Cli,
     config: &ContextConfig,
     file: &Path,
-    array: Option<&str>,
+    at: Option<&str>,
     input_format: &str,
     key_stats: &std::collections::BTreeMap<String, JsonKeyStat>,
     non_object_rows: usize,
@@ -547,7 +584,7 @@ fn render_json_select_keys(
         receipt.add_cap(ReceiptCap::output("keys", Some(max)));
     }
     receipt.insert("path", json!(display_path(file)));
-    receipt.insert("array", json!(array));
+    receipt.insert("at", json!(at));
     receipt.insert("input_format", json!(input_format));
     receipt.insert("keys_mode", json!(true));
     receipt.insert("rows_scanned", json!(rows_scanned));
@@ -574,7 +611,7 @@ fn render_json_select_keys(
         writeln!(
             stdout,
             "[contextmink] json-select keys source={} rows={rows_matched}",
-            array.unwrap_or(if input_format == "jsonl" {
+            at.unwrap_or(if input_format == "jsonl" {
                 "jsonl"
             } else {
                 "$"
@@ -684,44 +721,63 @@ fn json_select_row(
 }
 
 fn json_select_field<'a>(row: &'a Value, selector: &str) -> Result<Option<&'a Value>> {
-    if selector == "$" || selector.starts_with('/') || selector.is_empty() {
-        return json_pointer_lookup(row, selector);
+    if !selector.is_empty() && selector != "$" && !selector.starts_with('/') {
+        return Ok(row.as_object().and_then(|object| object.get(selector)));
     }
-    Ok(row.as_object().and_then(|map| map.get(selector)))
+    Ok(json_tokens_lookup(row, &json_selector_tokens(selector)?))
 }
 
-fn json_pointer_lookup<'a>(value: &'a Value, pointer: &str) -> Result<Option<&'a Value>> {
-    if pointer.is_empty() || pointer == "$" {
-        return Ok(Some(value));
+fn json_selector_tokens(selector: &str) -> Result<Vec<String>> {
+    if selector.is_empty() || selector == "$" {
+        return Ok(Vec::new());
     }
-    if !pointer.starts_with('/') {
-        return Err(anyhow!(
-            "JSON pointer must be empty, $, or start with /: {pointer}"
-        ));
+    if !selector.starts_with('/') {
+        return Ok(vec![selector.to_owned()]);
     }
+    selector[1..]
+        .split('/')
+        .map(decode_json_pointer_token)
+        .collect()
+}
+
+fn json_array_index(token: &str) -> Option<usize> {
+    if token.is_empty()
+        || (token.len() > 1 && token.starts_with('0'))
+        || !token.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    token.parse().ok() // guardrail: allow-ignore-result overflow denotes a nonexistent array element
+}
+
+fn json_tokens_lookup<'a>(value: &'a Value, tokens: &[String]) -> Option<&'a Value> {
     let mut current = value;
-    for raw_token in pointer[1..].split('/') {
-        let token = decode_json_pointer_token(raw_token)?;
+    for token in tokens {
         match current {
             Value::Object(map) => {
-                let Some(next) = map.get(&token) else {
-                    return Ok(None);
-                };
-                current = next;
+                current = map.get(token)?;
             }
             Value::Array(values) => {
-                let Ok(index) = token.parse::<usize>() else {
-                    return Ok(None);
-                };
-                let Some(next) = values.get(index) else {
-                    return Ok(None);
-                };
-                current = next;
+                current = values.get(json_array_index(token)?)?;
             }
-            _ => return Ok(None),
+            _ => return None,
         }
     }
-    Ok(Some(current))
+    Some(current)
+}
+
+fn consume_selected_json(
+    value: &Value,
+    consume: &mut impl FnMut(&Value) -> Result<()>,
+) -> Result<()> {
+    if let Value::Array(rows) = value {
+        for row in rows {
+            consume(row)?;
+        }
+    } else {
+        consume(value)?;
+    }
+    Ok(())
 }
 
 fn decode_json_pointer_token(token: &str) -> Result<String> {
@@ -760,20 +816,14 @@ fn walk_json<'a>(
     match value {
         Value::Object(map) => {
             for (child_key, child) in map {
-                let child_path = if is_json_identifier(child_key) {
-                    format!("{path}.{child_key}")
-                } else {
-                    format!(
-                        "{path}[{}]",
-                        serde_json::to_string(child_key).unwrap_or_default()
-                    )
-                };
+                let token = child_key.replace('~', "~0").replace('/', "~1");
+                let child_path = format!("{path}/{token}");
                 walk_json(&child_path, Some(child_key.as_str()), child, visit);
             }
         }
         Value::Array(values) => {
             for (index, child) in values.iter().enumerate() {
-                let child_path = format!("{path}[{index}]");
+                let child_path = format!("{path}/{index}");
                 walk_json(&child_path, None, child, visit);
             }
         }
@@ -847,17 +897,6 @@ fn json_fits_budget(value: &Value, nodes: &mut usize, string_chars: &mut usize) 
             .all(|value| json_fits_budget(value, nodes, string_chars)),
         Value::Null | Value::Bool(_) | Value::Number(_) => true,
     }
-}
-
-fn is_json_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
-    }
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 #[cfg(test)]
