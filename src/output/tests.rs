@@ -43,7 +43,6 @@ fn receipt_v2_derives_completion_from_structured_caps() {
 
     assert!(!receipt.scope_complete());
     assert!(receipt.output_truncated());
-    assert!(!receipt.complete());
 
     let value = receipt.into_value();
     assert_eq!(value["schema"], json!("contextmink.receipt.v2"));
@@ -71,7 +70,6 @@ fn receipt_without_caps_is_complete() {
     let receipt = Receipt::new("files", None, ReceiptResult::new("files", 5, false, 5));
     assert!(receipt.scope_complete());
     assert!(!receipt.output_truncated());
-    assert!(receipt.complete());
 
     let value = receipt.into_value();
     assert_eq!(value["profile"], Value::Null);

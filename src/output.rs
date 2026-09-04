@@ -233,10 +233,6 @@ impl Receipt {
             .any(|cap| cap.boundary == ReceiptCapBoundary::Output)
     }
 
-    pub(crate) fn complete(&self) -> bool {
-        self.scope_complete() && !self.output_truncated()
-    }
-
     pub(crate) fn into_value(self) -> Value {
         let scope_complete = self.scope_complete();
         let output_truncated = self.output_truncated();

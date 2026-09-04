@@ -218,7 +218,12 @@ choices are covered in [docs/setup.md](docs/setup.md).
 below is the short map.
 
 - `dirs` — directory overview with recursive file counts, `--depth` levels
-  deep. Orientation before `files` or `grep`.
+  deep, including admitted empty directories. Overlapping roots retain ancestor
+  counts; each physical file counts once per directory even when it has aliases
+  in different subtrees. `--max-files-counted` limits counting, not directory
+  enumeration: directory totals stay exact, while capped file counts use
+  `files>=N` and `file_counts_are_lower_bounds: true` with incomplete scope.
+  Directory inputs are required; use `files` to inspect an explicit file.
 - `files` — list candidate files. `--glob`, `--path-contains`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
   Enumeration deduplicates physical file identity (including hard links,

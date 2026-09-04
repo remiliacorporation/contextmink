@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +24,11 @@ pub(crate) struct CollectedFiles {
     /// Nested Git repository roots crossed during the scan, including tracked
     /// submodules and Git-ignored sibling repositories, as display paths.
     pub(crate) nested_repos_entered: Vec<String>,
+    /// Admitted directories within the requested depth, including empty ones.
+    pub(crate) directories: Vec<PathBuf>,
+    /// Additional spellings of selected physical files, retained only for
+    /// directory counts so an alias in another subtree is counted there too.
+    pub(crate) file_aliases: HashMap<usize, Vec<PathBuf>>,
 }
 
 pub(crate) struct CollectOptions<'a> {
@@ -34,6 +39,7 @@ pub(crate) struct CollectOptions<'a> {
     pub(crate) with_git_ignored: bool,
     pub(crate) skip_nested_repos: bool,
     pub(crate) max_selected_files: usize,
+    pub(crate) directory_depth: Option<usize>,
 }
 
 /// How many directory levels below a pruned (git-ignored) directory the
@@ -64,6 +70,7 @@ pub(crate) fn collect_files(
     let mut state = CollectState {
         files: Vec::new(),
         nested_repos_entered: Vec::new(),
+        directories: Vec::new(),
     };
     for root in paths {
         if root.is_file() {
@@ -100,16 +107,28 @@ pub(crate) fn collect_files(
     // exact and a capped list is the sorted prefix, deterministic no matter
     // how walk order interleaved.
     state.files.sort();
-    let mut identities = HashSet::new();
+    let mut identities = HashMap::new();
+    let mut file_aliases: HashMap<usize, Vec<PathBuf>> = HashMap::new();
     let mut deduplicated = Vec::with_capacity(state.files.len());
     for path in state.files {
-        if identities.insert(file_identity(&path)?) {
-            deduplicated.push(path);
+        let next_index = deduplicated.len();
+        match identities.entry(file_identity(&path)?) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(next_index);
+                deduplicated.push(path);
+            }
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                if options.directory_depth.is_some() && *entry.get() < options.max_selected_files {
+                    file_aliases.entry(*entry.get()).or_default().push(path);
+                }
+            }
         }
     }
     state.files = deduplicated;
     state.nested_repos_entered.sort();
     state.nested_repos_entered.dedup();
+    state.directories.sort();
+    state.directories.dedup();
     let total_seen = state.files.len();
     let selection_capped = total_seen > options.max_selected_files;
     if selection_capped {
@@ -120,6 +139,8 @@ pub(crate) fn collect_files(
         total_seen,
         selection_capped,
         nested_repos_entered: state.nested_repos_entered,
+        directories: state.directories,
+        file_aliases,
     })
 }
 
@@ -223,6 +244,7 @@ struct ExplicitExcludedRoots {
 struct CollectState {
     files: Vec<PathBuf>,
     nested_repos_entered: Vec<String>,
+    directories: Vec<PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -272,6 +294,7 @@ fn walk_root(
     // The walk always completes, so candidate totals are exact.
     struct WalkBatch {
         files: Vec<PathBuf>,
+        directories: Vec<PathBuf>,
         visited_dirs: Option<HashSet<PathBuf>>,
         nested_repos_entered: Vec<PathBuf>,
         error: Option<ignore::Error>,
@@ -302,6 +325,7 @@ fn walk_root(
             batches: &batches,
             batch: Some(WalkBatch {
                 files: Vec::new(),
+                directories: Vec::new(),
                 visited_dirs: probe_ignored_repo_roots.then(HashSet::new),
                 nested_repos_entered: Vec::new(),
                 error: None,
@@ -333,6 +357,15 @@ fn walk_root(
                             return ignore::WalkState::Skip;
                         }
                         batch.nested_repos_entered.push(path.clone());
+                    }
+                    // Use the explicit scan root, including during the ignored
+                    // repository supplement, rather than restarting depth at
+                    // each nested repository boundary.
+                    if options.directory_depth.is_some_and(|depth| {
+                        path.strip_prefix(&worker_mapper.scan_root)
+                            .is_ok_and(|relative| relative.components().count() <= depth)
+                    }) {
+                        batch.directories.push(path.clone());
                     }
                     if probe_ignored_repo_roots {
                         batch
@@ -373,6 +406,7 @@ fn walk_root(
     let mut error = None;
     for mut batch in batches {
         files.append(&mut batch.files);
+        state.directories.append(&mut batch.directories);
         state.nested_repos_entered.extend(
             batch
                 .nested_repos_entered
