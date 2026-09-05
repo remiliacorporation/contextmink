@@ -52,16 +52,28 @@ supplied project root.
 - Ensure the database plus `-journal`, `-wal`, and `-shm` sidecars are ignored
   before `init`. Never replace a missing authority with a fresh one when prior
   work clearly existed.
-- `init` is the only creation and migration command. Read commands never
+- `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current authority schema is v8. Before migrating an older authority, use
-  its matching release to archive its current export. Older dump files require
+- The current planner authority schema is v9. Before migrating an older authority,
+  archive its export with the matching release and create a standalone SQLite
+  recovery file with the new release's `--db <source> backup --output <new-path>`.
+  Older dump files require
   their matching release, a temporary authority migration, and current-format
   re-export before import.
+  Current dumps use `papertiger.dump.v8`; schema v9 preserves former-plan
+  event identity and adds inward external references. Mise's schema is independent.
 - `export` is transfer and recovery, not a second live authority.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
+- `backup --output <new-path> --json` creates a consistent standalone SQLite
+  recovery file, including committed WAL data. It supports planner schemas 1–9
+  without migration or new events, refuses foreign authorities and existing
+  destinations or sidecars, and reports the output hash and original schema.
+  Historical evidence is preserved without semantic validation; this can retain
+  legacy records that a matching release's JSON import refuses. Inspect recovery
+  copies with the matching release's `--db`; never use one as a second live
+  authority. Restoration is a deliberate operator action.
 
 Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own
@@ -129,6 +141,24 @@ an assignee, claim, lease, session handle, or liveness signal. Write `--why`
 for anything a future session could question, using language that stands alone
 without chat context.
 
+When the event author's model is known, pass `--model <model-id>` or set
+`PAPERTIGER_MODEL`. This is explicit caller-reported attribution, separate from
+the recorder actor and `user|agent|external` meaning source. Use the author's
+known model identifier, not a guessed identity based on a harness name or
+writing style. Omit unknown attribution; never backfill historical events.
+`activity.created_event.model` identifies the recorded creation author;
+`activity.completed_event.model` identifies the current completion author.
+For other dispositions use `activity.status_event.model`. Neither timestamps
+nor model labels prove ownership, productivity, or reviewer quality.
+
+For scripted mutation chains, pass `--json`. `papertiger.mutation.v1` contains
+`changed` and the exact emitted `events`; each entry includes the event and
+its task/plan snapshots captured inside the committed transaction. Obtain
+created task selectors from `events[].task.seq`. Failed mutations produce no
+success receipt, and idempotent operations may emit an empty event list with
+`changed=false`. Never recover a task number by parsing human prose. `init`
+retains its separate human-readable migration output.
+
 For multi-paragraph durable text, use the same `<field>-file <path|->` pattern:
 `--intent-file`, `--why-file`, `--result-file`, or `note --text-file`. `-` reads
 stdin. One command may consume stdin for only one field; inline and file forms
@@ -169,6 +199,15 @@ currently done. Their actor fields identify the transition author, not who
 should work next. `last_event` records the latest task, dependency, or gate
 event. Use `list --sort activity` when recency is useful; do not interpret
 event times as duration, productivity, or submission data.
+
+Task context v6 is the single work-record surface: full selected-task details,
+compact related-task summaries, and twelve recent events with a history cursor
+when older events remain. Use `show <related-seq> --json` for that task's full
+context. `schema` emits the bundled JSON Schema for context, status, task list,
+event log, dump, and mutation receipts without opening an authority. Every
+field is provider-local; stored prose and locators require editorial review
+before external publication. There is no automatic publication renderer or
+provider-discovery protocol.
 
 `log --json` returns full event identity and an `event-v1` cursor bound to the
 exact history prefix. Use `--after-cursor` for new events and
@@ -219,6 +258,28 @@ task and renders the replacement; it never redirects silently. Rejection stays
 separate and accepts no replacement. A task with inbound replacements can only
 be retired into another live canonical task; rejection or bare retirement
 refuses rather than leaving a replacement chain that ends in dead work.
+
+Duplication is represented by that replacement relationship, not another
+status. Use `retire <duplicate> --into <canonical> --why <reason>` and state
+the overlap. Use rejection for an approach that should not be pursued.
+
+Rehome work with `move-plan <N>... --plan <destination> --why <reason>`.
+Supply every task connected by parent, dependency, or replacement links;
+a partial selection refuses with all missing selectors. The destination must
+be active. The operation preserves task state and all obligations, and records
+before/after plan revisions without rewriting old events. Scoped exports carry
+current member tasks, their full histories, and required former-plan definitions.
+
+Use `reference add <N> <locator> --kind <pull_request|issue|review|adr|input|other>`
+for inward artifact associations. Locators must be scheme-qualified with no
+literal whitespace; percent-encode spaces. Optional `--sha256` and `--note`
+retain a claimed byte identity and context. `reference list <N>` and
+`reference find <locator>` retrieve them; `reference remove <N> <locator>
+--kind <kind> --why <reason>` preserves the removed value in history before
+rebinding. References may annotate terminal tasks, never fetch external data,
+import status, or satisfy proof. Reference hashes are not part of gate/blocker
+`evidence verify`; verify producer inputs independently. The existing validated
+Mise projection remains the typed producer boundary.
 
 Do not create Papertiger tasks for intermediate steps inside one independently
 reviewable outcome. Create separate tasks when outcomes are independently
