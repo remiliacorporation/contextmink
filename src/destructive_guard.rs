@@ -187,6 +187,9 @@ fn deny_command(
         }
         if configured_rules_active && subcommand.eq_ignore_ascii_case("rm") {
             let git_rm_args = &args[subcommand_index + 1..];
+            if git_rm_preserves_worktree(git_rm_args) {
+                return None;
+            }
             let targets = path_operands("git-rm", git_rm_args);
             if git_rm_args
                 .iter()
@@ -271,6 +274,35 @@ fn deny_command(
         return Some(protected_delete_message(fragment));
     }
     None
+}
+
+// Only recognize documented, unambiguous options. In particular, an option
+// value or a filename after `--` must never confer a file-preserving mode.
+fn git_rm_preserves_worktree(args: &[String]) -> bool {
+    let mut preserves_worktree = false;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--" => break,
+            "--cached" | "--dry-run" => preserves_worktree = true,
+            "--force" | "--quiet" | "--ignore-unmatch" | "--sparse" | "--pathspec-file-nul" => {}
+            "--pathspec-from-file" => {
+                if args.next().is_none() {
+                    return false;
+                }
+            }
+            value if value.starts_with("--pathspec-from-file=") => {}
+            value if value.starts_with('-') => {
+                let flags = &value[1..];
+                if flags.is_empty() || !flags.chars().all(|flag| "fnrq".contains(flag)) {
+                    return false;
+                }
+                preserves_worktree |= flags.contains('n');
+            }
+            _ => {}
+        }
+    }
+    preserves_worktree
 }
 
 fn deny_shell_payload(

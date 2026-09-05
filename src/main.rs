@@ -523,6 +523,14 @@ fn run_application() -> Result<()> {
                 "decision": outcome,
                 "message": message,
                 "executed": false,
+                "policy_scope": "contextmink_only",
+                "policy_root": config.policy_root,
+                "configured_rules": {
+                    "recursive_delete_fragments": config.destructive_guard.recursive_delete_fragments,
+                    "delete_fragments": config.destructive_guard.delete_fragments,
+                },
+                "override_applied": false,
+                "scope_note": "Evaluates Contextmink rules only. Host approval policies are not evaluated; allow is not authorization to execute.",
             });
             if cli.json {
                 output::emit_json(report)
@@ -538,6 +546,7 @@ fn run_application() -> Result<()> {
                 if let Some(message) = report["message"].as_str() {
                     writeln!(stdout, "{message}")?;
                 }
+                writeln!(stdout, "{}", report["scope_note"].as_str().unwrap())?;
                 Ok(())
             }
         }
