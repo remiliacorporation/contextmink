@@ -39,6 +39,47 @@ fn allowed_with_config(args: &[&str], config: &DestructiveGuardConfig) {
 }
 
 #[test]
+fn git_rm_file_preserving_modes_are_distinct_from_deletion() {
+    let config = protected_config();
+    for flags in ["--cached", "--dry-run", "-n", "-rfn"] {
+        allowed_with_config(&["git", "rm", flags, "--", "critical.sqlite"], &config);
+    }
+    allowed_with_config(
+        &["git", "rm", "--cached", "-r", "--", "protected_cache"],
+        &config,
+    );
+    // Paths and option values named like safety flags do not change the mode.
+    for command in [
+        vec!["git", "rm", "--", "--cached", "critical.sqlite"],
+        vec![
+            "git",
+            "rm",
+            "--pathspec-from-file",
+            "--dry-run",
+            "critical.sqlite",
+        ],
+        vec!["git", "rm", "--pathspec-from-file=-n", "critical.sqlite"],
+        vec!["git", "rm", "--unknown", "--cached", "critical.sqlite"],
+        vec!["git", "rm", "-r", "protected_cache"],
+        vec!["git", "rm", "critical.sqlite"],
+    ] {
+        denied_with_config(&command, &config);
+    }
+    denied_with_config(
+        &[
+            "sh",
+            "-c",
+            "git rm --cached critical.sqlite; rm critical.sqlite",
+        ],
+        &config,
+    );
+    denied_with_config(
+        &["sh", "-c", "git rm --cached $(rm critical.sqlite)"],
+        &config,
+    );
+}
+
+#[test]
 fn git_clean_is_denied_in_every_spelling() {
     let message = denied(&["git", "clean", "-fdX", "-e", "keep.sqlite"]);
     assert!(message.contains("git clean"), "message: {message}");

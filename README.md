@@ -332,6 +332,15 @@ below is the short map.
   `guard-check -- <argv...>`) —
   explain the guard decision without spawning the input. Default output is a
   readable decision line; add `--json` for `contextmink.guard_check.v1`.
+  Reports identify the Contextmink-only policy scope, configuration root and
+  active protected fragments. They do not evaluate host approval policies or
+  authorize execution, and do not apply the destructive override environment
+  variable. Direct shell calls outside Contextmink are not governed by this
+  diagnostic.
+  Git `rm --cached` preserves working files (but changes the index), and Git
+  `rm -n`/`--dry-run` does not remove files; these modes are exempt from file
+  deletion checks when their options are unambiguous. Options after `--` are
+  filenames. The built-in prohibition on `git clean` remains unchanged.
 
 Global flags: `--json` emits one JSON object for machine consumption;
 `--fail-if-truncated` exits nonzero on capped output;

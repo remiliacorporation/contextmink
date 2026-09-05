@@ -722,6 +722,79 @@ fn malformed_discovered_hook_policy_fails_closed() {
 }
 
 #[test]
+fn capture_git_rm_cached_preserves_protected_working_file() {
+    let root = fixture_root("capture-git-index-only");
+    fs::write(
+        root.join(".contextmink.toml"),
+        "destructive_guard_delete_fragments = [\"critical.sqlite\"]\n",
+    )
+    .unwrap();
+    let bytes = b"durable working file\n";
+    fs::write(root.join("critical.sqlite"), bytes).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["add", "--", "critical.sqlite"],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let diagnostic = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "guard-check",
+            "--",
+            "git",
+            "rm",
+            "--cached",
+            "--",
+            "critical.sqlite",
+        ],
+    );
+    assert_eq!(diagnostic["decision"], "allow");
+    assert_eq!(
+        diagnostic["configured_rules"]["delete_fragments"][0],
+        "critical.sqlite"
+    );
+    assert!(diagnostic["policy_root"].as_str().is_some());
+    run_contextmink(
+        &root,
+        &[
+            "capture",
+            "--",
+            "git",
+            "rm",
+            "--cached",
+            "--",
+            "critical.sqlite",
+        ],
+    );
+    assert_eq!(fs::read(root.join("critical.sqlite")).unwrap(), bytes);
+    let index = Command::new("git")
+        .current_dir(&root)
+        .args(["ls-files", "--", "critical.sqlite"])
+        .output()
+        .unwrap();
+    assert!(index.status.success());
+    assert!(index.stdout.is_empty());
+    let deletion = run_contextmink_raw(
+        &root,
+        &["capture", "--", "git", "rm", "--", "critical.sqlite"],
+    );
+    assert!(!deletion.status.success());
+    assert!(String::from_utf8_lossy(&deletion.stderr).contains("critical.sqlite"));
+    assert_eq!(fs::read(root.join("critical.sqlite")).unwrap(), bytes);
+}
+
+#[test]
 fn guard_check_explains_commands_without_spawning_them() {
     let root = fixture_root("guard-check");
     let denied = parse_json_output(
@@ -736,6 +809,15 @@ fn guard_check_explains_commands_without_spawning_them() {
     assert_eq!(denied["schema"], "contextmink.guard_check.v1");
     assert_eq!(denied["decision"], "deny");
     assert_eq!(denied["executed"], false);
+    assert_eq!(denied["policy_scope"], "contextmink_only");
+    assert_eq!(denied["override_applied"], false);
+    assert!(denied["configured_rules"]["delete_fragments"].is_array());
+    assert!(
+        denied["scope_note"]
+            .as_str()
+            .unwrap()
+            .contains("not authorization")
+    );
     assert!(denied["message"].as_str().unwrap().contains("git clean"));
 
     let allowed = parse_json_output(
