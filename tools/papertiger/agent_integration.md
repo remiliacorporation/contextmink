@@ -418,10 +418,13 @@ legacy, or otherwise unproved is reported in dry-run and requires a reviewed
 `--replace-managed`; a missing host receipt can be recreated without claiming
 an existing file.
 
-Selected skill paths are byte-identical thin discovery envelopes around this
-canonical contract. `.agents/skills` serves open Agent Skills-compatible
-harnesses including Codex, Pi, OMP, and OpenCode; `.claude/skills` serves
-Claude Code. Auto detection never creates `.codex`, `.pi`, `.omp`, or
+The canonical skill under `.agents/skills` is a discovery envelope around this
+contract. `.claude/skills` contains a thin router with metadata inherited from
+that skill and a relative link to it. Claude selection resolves to both paths
+so the router always has its canonical dependency; receipt-owned full Claude
+copies upgrade to routers. `.agents/skills` serves open Agent Skills-compatible
+harnesses including Codex, Pi, OMP, and OpenCode. Auto detection never creates
+`.codex`, `.pi`, `.omp`, or
 `.opencode` skill copies. Pi loads project skills only after project trust; for
 a noninteractive run, save that trust or pass `--approve`, otherwise project
 resources are ignored. Hermes requires an explicit `skills.external_dirs`
