@@ -406,6 +406,81 @@ fn launcher_finds_cargo_outside_non_login_path() {
 }
 
 #[test]
+fn launcher_builds_workspace_member_at_the_path_it_executes() {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    let base = std::env::var_os("CARGO_TARGET_TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let root = base.join(format!(
+        "contextmink workspace launcher {}",
+        std::process::id()
+    ));
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    let scripts = root.join("scripts");
+    let tool = root.join("tools/contextmink");
+    fs::create_dir_all(&scripts).unwrap();
+    fs::create_dir_all(tool.join("src/bin")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nresolver = \"3\"\nmembers = [\"tools/contextmink\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        tool.join("Cargo.toml"),
+        "[package]\nname = \"contextmink\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tool.join("src/main.rs"),
+        "fn main() { println!(\"workspace build\"); }\n",
+    )
+    .unwrap();
+    fs::write(tool.join("src/bin/contextmink-bridge.rs"), "fn main() {}\n").unwrap();
+    let launcher = scripts.join("contextmink");
+    fs::write(&launcher, include_str!("../scripts/contextmink")).unwrap();
+
+    #[cfg(windows)]
+    let bash = git_bash();
+    #[cfg(not(windows))]
+    let bash = PathBuf::from("bash");
+    let executable = |name: &str| {
+        tool.join("target/release")
+            .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+    };
+    for bridge_active in ["1", "0"] {
+        let output = Command::new(&bash)
+            .arg(&launcher)
+            .current_dir(&scripts)
+            .env("CONTEXTMINK_BRIDGE_ACTIVE", bridge_active)
+            .env("CARGO_TARGET_DIR", root.join("ambient-target"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "workspace launcher failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "workspace build"
+        );
+        assert!(executable("contextmink").is_file());
+        assert_eq!(
+            executable("contextmink-bridge").is_file(),
+            bridge_active == "0"
+        );
+    }
+    assert!(!root.join("ambient-target").exists());
+    assert!(!root.join("target").exists());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn launcher_declares_json_pointer_filter_exclusions() {
     let launcher = include_str!("../templates/scripts/contextmink");
 
@@ -415,21 +490,23 @@ fn launcher_declares_json_pointer_filter_exclusions() {
 }
 
 #[cfg(windows)]
+fn git_bash() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    [
+        PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"),
+        PathBuf::from(r"C:\Program Files\Git\usr\bin\bash.exe"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+    .expect("launcher tests require Git Bash")
+}
+
+#[cfg(windows)]
 #[test]
 fn launcher_preserves_json_pointer_filter_values() {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
-
-    fn git_bash() -> PathBuf {
-        [
-            PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"),
-            PathBuf::from(r"C:\Program Files\Git\usr\bin\bash.exe"),
-        ]
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-        .expect("launcher tests require Git Bash")
-    }
 
     fn run(launcher: &Path, root: &Path, args: &[&str]) -> Output {
         Command::new(git_bash())

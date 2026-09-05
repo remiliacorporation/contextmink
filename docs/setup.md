@@ -426,7 +426,10 @@ copy of the Rust crate:
    ```
 
    The launcher uses `tools/contextmink/target/release/contextmink(.exe)` when
-   it builds from source. For release binary installs, use Project Binary
+   it builds from source. It passes that tool's target directory explicitly to
+   Cargo, including when the crate belongs to a parent workspace or the shell
+   sets `CARGO_TARGET_DIR`. The workspace still owns its lockfile and profiles.
+   For release binary installs, use Project Binary
    Integration instead.
 
 3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
