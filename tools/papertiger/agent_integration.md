@@ -5,6 +5,13 @@ separate commits, dependencies, external blockers, decisions, probes, or proof
 obligations that merit durable identity and cold-resume context. This can apply
 even when the operator requests all outcomes in one session.
 
+The vendored skill contains the ordinary enter, resume, record, and completion
+workflow. Agents do not need this entire reference before an ordinary task
+mutation. Read it completely for installation, migration, recovery, transfer,
+or changing authority selection; load the relevant section for less common
+operations. An existing durable task takes precedence over the bounded-edit or
+read-only skip: continue its record without creating a second task.
+
 Use that judgment proactively. When authorized development exposes a deferred
 defect, external dependency, consequential unresolved decision, proof debt, or
 validated tooling friction that should survive the session, record it without
@@ -303,8 +310,9 @@ harnesses to ignore. Use this wording or an equivalent with the same boundaries:
 > Before the first edit or commit on multi-outcome or separate-commit work, or
 > work matching an existing durable task, read
 > `<selected-skill-path>/papertiger/SKILL.md` completely and follow it. Skip one
-> bounded edit, read-only review, intermediate steps inside one independently
-> reviewable outcome, and domain-owned or shared-team lifecycle.
+> new bounded edits or read-only reviews without a durable outcome, intermediate
+> steps, and domain-owned or shared-team lifecycle. Resume existing durable work
+> even for a small step.
 
 Replace `<selected-skill-path>` with `.agents/skills` or `.claude/skills` only
 when that path was deliberately selected. A repository using another harness
@@ -449,6 +457,12 @@ The consumer owns `state/papertiger-mise.sqlite`,
 `state/papertiger-mise-objects/`, and campaign workspaces. The release binary
 is part of the frozen outer judge and must not change during the campaign.
 Read `MISE.md` from the same release before campaign admission.
+
+`papertiger-mise guide` supplies the matching driver's concise operating path;
+`guide --reference` emits its full bundled `MISE.md`. Start from `status`, then
+`campaign inspect <id>` to discover retained candidate, trial, cohort, and
+reservation identities without querying SQLite. These are discovery records;
+reopen the specific CAS evidence before using a result.
 
 Mise nominations are evidence, never planning completion, integration,
 promotion, or deployment authority. Historical and domain-shadow evidence is

@@ -539,8 +539,9 @@ exists only in the shared Agent Skills copy. The
 source checkout's changelog-writing skill is repository-local development
 guidance and is not installed into consumer repositories. Do not fork the
 Contextmink semantic body by harness. Keep only its discovery trigger in
-always-loaded guidance so the detailed integration contract is loaded before
-broad reads without taxing every prompt.
+always-loaded guidance so the skill is selected for uncertain-output reads.
+Ordinary retrieval uses the skill and command help; the detailed integration
+reference is loaded for setup, policy changes, or unfamiliar receipt semantics.
 
 ## Operational Notes
 

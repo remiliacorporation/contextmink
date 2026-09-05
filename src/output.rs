@@ -233,6 +233,26 @@ impl Receipt {
             .any(|cap| cap.boundary == ReceiptCapBoundary::Output)
     }
 
+    /// Name only the display controls actually exhausted by this grep. Raising
+    /// the file limit cannot restore lines omitted within a displayed file.
+    pub(crate) fn grep_output_cap_arguments(&self) -> Vec<&'static str> {
+        self.caps
+            .iter()
+            .filter_map(|cap| {
+                if cap.boundary != ReceiptCapBoundary::Output {
+                    return None;
+                }
+                match cap.dimension {
+                    "matching_files" => Some("--limit"),
+                    "sample_matching_lines_per_file" => Some("--lines-per-file"),
+                    "sample_lines" => Some("--max-sample-lines"),
+                    "line_characters" => Some("--max-line-chars"),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn into_value(self) -> Value {
         let scope_complete = self.scope_complete();
         let output_truncated = self.output_truncated();
@@ -250,6 +270,12 @@ impl Receipt {
         );
         map.insert("caps".to_string(), json!(self.caps));
         map.insert("result".to_string(), json!(self.result));
+        if matches!(self.command.as_str(), "grep" | "grep-terms") && output_truncated {
+            map.insert(
+                "output_cap_arguments".to_owned(),
+                json!(self.grep_output_cap_arguments()),
+            );
+        }
         for (key, value) in self.fields {
             map.insert(key, value);
         }

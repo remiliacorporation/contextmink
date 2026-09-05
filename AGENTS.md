@@ -100,6 +100,8 @@ work matching an existing durable task, read
 `.claude/skills/papertiger/SKILL.md` for Claude Code completely and follow it.
 Skip one bounded edit, read-only review, intermediate steps inside one
 independently reviewable outcome, and domain-owned or shared-team lifecycle.
+Resume an existing durable task even when its next step is a bounded edit or
+read-only check.
 
 ## Verification
 

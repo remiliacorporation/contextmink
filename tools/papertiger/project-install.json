@@ -9,15 +9,15 @@
   "managed_files": [
     {
       "path": "tools/papertiger/agent_integration.md",
-      "sha256": "1b7fb54ca5eefe754626d8c425d269400b5c448792014322118f7035d0aea3b1"
+      "sha256": "8ac9ac4cdbcd430a5a3d870d2839f92dcca8b4dd9fbd42c1740671d4961e1290"
     },
     {
       "path": ".agents/skills/papertiger/SKILL.md",
-      "sha256": "b328a9e9e32eca5c26f09b1af8353e5586eef54a622a55c99c22ec513b1b6fdc"
+      "sha256": "c72140e705e46cfda848cad2effe4c20dadea77cec070299622e06d30bd22554"
     },
     {
       "path": ".claude/skills/papertiger/SKILL.md",
-      "sha256": "b328a9e9e32eca5c26f09b1af8353e5586eef54a622a55c99c22ec513b1b6fdc"
+      "sha256": "c72140e705e46cfda848cad2effe4c20dadea77cec070299622e06d30bd22554"
     }
   ]
 }
