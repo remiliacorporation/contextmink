@@ -54,6 +54,111 @@ fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
 }
 
 #[test]
+fn grep_reports_the_exhausted_control_and_widening_it_recovers_matches() {
+    let root = fixture_root("grep-recovery-control");
+    fs::write(root.join("matches.txt"), "hit\nhit\nhit\nhit\nhit\n").unwrap();
+    let capped = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "matches.txt",
+            "--pattern",
+            "hit",
+            "--limit",
+            "20",
+            "--lines-per-file",
+            "2",
+        ],
+    );
+    assert_eq!(
+        capped["output_cap_arguments"],
+        serde_json::json!(["--lines-per-file"])
+    );
+    assert_eq!(capped["matching_lines_total"], 5);
+    assert_eq!(capped["sample_lines_shown"], 2);
+    let complete = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "grep",
+            "matches.txt",
+            "--pattern",
+            "hit",
+            "--limit",
+            "20",
+            capped["output_cap_arguments"][0].as_str().unwrap(),
+            "5",
+        ],
+    );
+    assert_eq!(complete["complete"], true);
+    assert_eq!(complete["sample_lines_shown"], 5);
+    assert!(complete.get("output_cap_arguments").is_none());
+}
+
+#[test]
+fn slice_remaining_ranges_reconstruct_the_requested_window_including_tail() {
+    let root = fixture_root("slice-recovery-window");
+    let file = root.join("pages.txt");
+    fs::write(
+        &file,
+        (1..=10).map(|n| format!("row {n}\n")).collect::<String>(),
+    )
+    .unwrap();
+    for selection in [vec!["--range", "2:9"], vec!["--tail", "8"]] {
+        let args = [
+            &["--json", "slice", "pages.txt", "--max-lines", "3"][..],
+            &selection,
+        ]
+        .concat();
+        let mut page = parse_json_output(&root, &args);
+        let mut found = Vec::new();
+        loop {
+            found.extend(
+                page["lines"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["line"].as_u64().unwrap()),
+            );
+            let Some(range) = page.get("remaining_range").and_then(Value::as_str) else {
+                break;
+            };
+            page = parse_json_output(
+                &root,
+                &[
+                    "--json",
+                    "slice",
+                    "pages.txt",
+                    "--max-lines",
+                    "3",
+                    "--range",
+                    range,
+                ],
+            );
+        }
+        found.sort_unstable();
+        let expected = if selection[0] == "--tail" {
+            (3..=10).collect::<Vec<_>>()
+        } else {
+            (2..=9).collect::<Vec<_>>()
+        };
+        assert_eq!(found, expected);
+        assert_eq!(page["complete"], true);
+    }
+    fs::write(file, "a line whose characters will be clipped\n").unwrap();
+    let clipped = parse_json_output(
+        &root,
+        &["--json", "slice", "pages.txt", "--max-line-chars", "8"],
+    );
+    assert_eq!(clipped["output_truncated"], true);
+    assert!(
+        clipped.get("remaining_range").is_none(),
+        "text clipping is not line pagination"
+    );
+}
+
+#[test]
 fn non_receipt_commands_reject_irrelevant_global_flags() {
     let root = fixture_root("non-receipt-flags");
     let strict = run_contextmink_raw(

@@ -756,7 +756,8 @@ pub(crate) fn command_grep_with_matcher(
         if output_truncated {
             writeln!(
                 stdout,
-                "[contextmink] grep display was capped; narrow the query or raise only the named output control (--limit, --lines-per-file, --max-sample-lines, or --max-line-chars)."
+                "[contextmink] grep display was capped; narrow the query or adjust only the exhausted display controls: {}.",
+                receipt.grep_output_cap_arguments().join(", ")
             )?;
         }
         write_receipt_checked(cli, receipt)
@@ -1004,6 +1005,27 @@ pub(crate) fn command_slice(
     receipt.insert("start", json!(plan.start));
     receipt.insert("end", json!(displayed_end));
     receipt.insert("total_lines", json!(total_lines));
+    // Continue only the omitted portion of this requested window. Character
+    // clipping is a separate cap and must not be mistaken for line pagination.
+    let remaining_range = if plan.output_truncated {
+        Some(match request {
+            SliceWindowRequest::Inclusive { end, .. } => {
+                format!("{}:{}", displayed_end + 1, min(end, total_lines))
+            }
+            SliceWindowRequest::Tail { lines } => {
+                format!(
+                    "{}:{}",
+                    total_lines - min(lines, total_lines) + 1,
+                    plan.start - 1
+                )
+            }
+        })
+    } else {
+        None
+    };
+    if let Some(range) = &remaining_range {
+        receipt.insert("remaining_range", json!(range));
+    }
     // The line visitor inspects the complete decoded scope; the field only
     // exists when something was found, so clean files cost nothing.
     if !suspects.is_empty() {
@@ -1031,7 +1053,10 @@ pub(crate) fn command_slice(
         if plan.output_truncated {
             writeln!(
                 stdout,
-                "[contextmink] capped slice at {max_lines} lines; request a narrower range."
+                "[contextmink] capped slice at {max_lines} lines; continue the omitted window with --range {}.",
+                remaining_range
+                    .as_deref()
+                    .expect("truncated line window has a remaining range")
             )?;
         }
         if !suspects.is_empty() {

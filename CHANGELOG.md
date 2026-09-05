@@ -6,7 +6,13 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Added
+
+- Capped `grep` and `grep-terms` receipts expose `output_cap_arguments`, naming the display controls that were exhausted. Capped line slices expose `remaining_range` so callers can retrieve the omitted window without increasing the line cap.
+
 ### Changed
+
+- The vendored skill distinguishes search file limits from per-file line limits, follows omitted slice ranges, and enters nested JSON through `--at`. Directory orientation is optional when a narrower target is already known; `dirs --depth` limits displayed levels rather than traversal cost.
 
 - `json-find` match paths and path filters use JSON Pointer syntax, such as `/items/0/name`, replacing dotted/bracket paths. `json-select --at` replaces `--array` and selects objects, arrays, or scalars directly from those pointers; its receipt field is `at`. JSONL pointers start with a zero-based non-empty record index, and UTF-8 JSONL selection validates the complete stream without materializing the file.
 

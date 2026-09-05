@@ -397,7 +397,13 @@ stdout.
 
 Search receipts use `result.unit: "matching_files"` and add
 `matching_lines_total`, candidate/content admission telemetry, and skip
-counts. Candidate enumeration always completes, so `candidate_files_total` is
+counts. When display caps are reached, `output_cap_arguments` names only the
+exhausted controls: for example, `--lines-per-file` rather than `--limit` when
+matches within a displayed file were omitted. Narrow the query before raising
+the corresponding control. Line slices report `remaining_range` when the
+requested window exceeds the line cap; pass it to `slice FILE --range ...` to
+continue. It does not recover character-clipped text or promise a file snapshot.
+Candidate enumeration always completes, so `candidate_files_total` is
 exact; `--max-content-files`, `--max-content-bytes`,
 `--max-matching-files`, or an oversized skipped file add a scope cap and make
 the match-side totals lower bounds. `no_match_scope` says whether a no-match verdict covered the
