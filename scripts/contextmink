@@ -110,9 +110,9 @@ if [[ "$needs_build" -eq 1 ]]; then
     if [[ "$bridge_active" == "1" ]]; then
       # The running bridge executable is locked on Windows. Rebuild only the
       # requested main binary; a direct launcher run refreshes both binaries.
-      "$cargo_bin" build --quiet --release --bin contextmink --manifest-path "$tool/Cargo.toml" 1>&2
+      "$cargo_bin" build --quiet --release --bin contextmink --manifest-path "$tool/Cargo.toml" --target-dir "$tool/target" 1>&2
     else
-      "$cargo_bin" build --quiet --release --bins --manifest-path "$tool/Cargo.toml" 1>&2
+      "$cargo_bin" build --quiet --release --bins --manifest-path "$tool/Cargo.toml" --target-dir "$tool/target" 1>&2
     fi
     bin="$target_bin"
   fi
