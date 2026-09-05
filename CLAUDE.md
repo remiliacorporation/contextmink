@@ -66,9 +66,11 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 - `templates/AGENTS.contextmink.md` and
   `templates/CLAUDE.contextmink.md` are equivalent integration references.
 - `scripts/contextmink` and `templates/scripts/contextmink` stay byte-identical.
-- Give each setup-managed skill one canonical template and keep installed
-  harness copies byte-identical. Keep the Contextmink skill a thin discovery
-  envelope around the canonical integration reference.
+- Give each setup-managed skill one template and install its canonical file
+  under `.agents/skills`.
+  Claude skills are thin routers with inherited discovery metadata and a link
+  to the canonical file. Keep the Contextmink skill a discovery envelope around
+  the canonical integration reference.
 - When setup-managed surfaces change, update setup preflight, idempotence,
   replacement, release-package, and extracted-install tests in the same change.
 - The Windows bridge and `capture` share process-boundary and destructive-guard

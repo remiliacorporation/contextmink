@@ -31,19 +31,33 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
     // reusable templates. Validate installed copies when present without making
     // an unrelated consumer project recreate Contextmink's repository layout.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for relative in [
-        ".agents/skills/contextmink/SKILL.md",
-        ".claude/skills/contextmink/SKILL.md",
-    ] {
-        let installed = root.join(relative);
-        if installed.is_file() {
-            assert_eq!(
-                std::fs::read_to_string(installed)
+    let installed = root.join(".agents/skills/contextmink/SKILL.md");
+    if installed.is_file() {
+        assert_eq!(
+            std::fs::read_to_string(installed)
+                .unwrap()
+                .replace("\r\n", "\n"),
+            normalized_template
+        );
+    }
+    let router = root.join(".claude/skills/contextmink/SKILL.md");
+    if router.is_file() {
+        let text = std::fs::read_to_string(&router)
+            .unwrap()
+            .replace("\r\n", "\n");
+        let metadata = normalized_template.split_once("\n---\n").unwrap().0;
+        assert!(text.starts_with(&format!("{metadata}\n---\n")));
+        assert!(text.contains("../../../.agents/skills/contextmink/SKILL.md"));
+        assert_eq!(
+            std::fs::canonicalize(
+                router
+                    .parent()
                     .unwrap()
-                    .replace("\r\n", "\n"),
-                normalized_template
-            );
-        }
+                    .join("../../../.agents/skills/contextmink/SKILL.md")
+            )
+            .unwrap(),
+            std::fs::canonicalize(root.join(".agents/skills/contextmink/SKILL.md")).unwrap()
+        );
     }
     let installed_metadata = root.join(".agents/skills/contextmink/agents/openai.yaml");
     if installed_metadata.is_file() {
@@ -138,7 +152,7 @@ fn source_vendor_guidance_projects_the_contextmink_skill() {
         "Select `agents`, `claude`, `both`, or `none`",
         "freeze the concrete choice",
         "vendor hash still matches",
-        "byte-identical",
+        "canonical skill",
         "explicitly review a divergent",
         "existing destination instead of overwriting",
     ] {
