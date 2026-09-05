@@ -174,12 +174,23 @@ fn contextmink_skill_files(target: SkillTarget) -> Vec<ManagedFile> {
     if target.installs_claude() {
         files.push(ManagedFile {
             relative_path: PathBuf::from(".claude/skills/contextmink/SKILL.md"),
-            content: CONTEXTMINK_SKILL.to_vec(),
+            content: claude_skill_router(),
             executable: false,
             ownership: SetupFileOwnership::ReleaseManagedText,
         });
     }
     files
+}
+
+fn claude_skill_router() -> Vec<u8> {
+    let canonical = std::str::from_utf8(CONTEXTMINK_SKILL)
+        .expect("bundled skill is UTF-8")
+        .replace("\r\n", "\n");
+    let (frontmatter, _) = canonical
+        .split_once("\n---\n")
+        .expect("bundled skill has complete frontmatter");
+    format!("{frontmatter}\n---\n\nRead and follow [the canonical skill](../../../.agents/skills/contextmink/SKILL.md).\n")
+        .into_bytes()
 }
 
 struct PreflightFile {
@@ -953,10 +964,10 @@ fn resolve_skill_target(
     installed: Option<SkillTarget>,
 ) -> Result<SkillTarget> {
     if requested != SkillTarget::Auto {
-        return Ok(requested);
+        return Ok(canonical_skill_target(requested));
     }
     if let Some(installed) = installed {
-        return Ok(installed);
+        return Ok(canonical_skill_target(installed));
     }
     let agents = harness_directory_exists(root, SHARED_AGENT_SKILLS_DIRECTORIES)?
         || harness_directory_exists(root, COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES)?
@@ -966,9 +977,17 @@ fn resolve_skill_target(
     Ok(match (agents, claude) {
         (true, true) => SkillTarget::Both,
         (true, false) => SkillTarget::Agents,
-        (false, true) => SkillTarget::Claude,
+        (false, true) => SkillTarget::Both,
         (false, false) => SkillTarget::None,
     })
+}
+
+fn canonical_skill_target(target: SkillTarget) -> SkillTarget {
+    if target == SkillTarget::Claude {
+        SkillTarget::Both
+    } else {
+        target
+    }
 }
 
 fn harness_directory_exists(root: &Path, markers: &[&str]) -> Result<bool> {
@@ -1456,8 +1475,8 @@ mod tests {
             (
                 "auto-claude",
                 &["CLAUDE.md"][..],
-                SkillTarget::Claude,
-                false,
+                SkillTarget::Both,
+                true,
                 true,
             ),
             (
@@ -1524,6 +1543,48 @@ mod tests {
         assert_eq!(result.resolved_skill_target, SkillTarget::None);
         assert!(!project.join(".agents/skills/contextmink/SKILL.md").exists());
         assert!(!project.join(".claude/skills/contextmink/SKILL.md").exists());
+        cleanup(&project);
+    }
+
+    #[test]
+    fn claude_selection_installs_canonical_skill_and_upgrades_owned_full_copy() {
+        let (project, binary) = fixture("canonical-claude-router");
+        let mut selected = request(&project, &binary, false);
+        selected.skill_target = SkillTarget::Claude;
+        let installed = setup_project(selected).unwrap();
+        assert_eq!(installed.resolved_skill_target, SkillTarget::Both);
+        let canonical = project.join(".agents/skills/contextmink/SKILL.md");
+        let router = project.join(".claude/skills/contextmink/SKILL.md");
+        let expected = fs::read(&router).unwrap();
+        let router_text = String::from_utf8(expected.clone()).unwrap();
+        assert!(router_text.contains("../../../.agents/skills/contextmink/SKILL.md"));
+        assert_eq!(
+            fs::canonicalize(
+                router
+                    .parent()
+                    .unwrap()
+                    .join("../../../.agents/skills/contextmink/SKILL.md")
+            )
+            .unwrap(),
+            fs::canonicalize(&canonical).unwrap()
+        );
+        assert!(expected.len() < fs::metadata(&canonical).unwrap().len() as usize);
+        fs::write(&router, CONTEXTMINK_SKILL).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        receipt
+            .managed_files
+            .iter_mut()
+            .find(|file| file.path == ".claude/skills/contextmink/SKILL.md")
+            .unwrap()
+            .sha256 = managed_text_sha256(CONTEXTMINK_SKILL);
+        fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
+        let preview = setup_project(request(&project, &binary, true)).unwrap();
+        assert!(preview.ready);
+        assert_eq!(fs::read(&router).unwrap(), CONTEXTMINK_SKILL);
+        setup_project(request(&project, &binary, false)).unwrap();
+        assert_eq!(fs::read(router).unwrap(), expected);
+        assert_eq!(fs::read(canonical).unwrap(), CONTEXTMINK_SKILL);
         cleanup(&project);
     }
 
@@ -1672,7 +1733,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/contextmink/SKILL.md")).unwrap(),
-            CONTEXTMINK_SKILL
+            claude_skill_router()
         );
         assert_eq!(
             fs::read(project.join(".agents/skills/contextmink/agents/openai.yaml")).unwrap(),
