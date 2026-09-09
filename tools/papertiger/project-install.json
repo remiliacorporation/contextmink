@@ -1,6 +1,6 @@
 {
   "schema": "papertiger.project_install.v2",
-  "papertiger_version": "0.12.1",
+  "papertiger_version": "0.13.0",
   "authority_path": "state/papertiger.sqlite",
   "skill_targets": [
     "agents",
@@ -9,11 +9,11 @@
   "managed_files": [
     {
       "path": "tools/papertiger/agent_integration.md",
-      "sha256": "1626833c09da639fbd11c897d3a424eb3720f959c4917831abd036a4d89c8d6a"
+      "sha256": "48dce5858949bff25bd6675fe5587606fc4560cbf760a63c7ea0035a6f586ef2"
     },
     {
       "path": ".agents/skills/papertiger/SKILL.md",
-      "sha256": "c72140e705e46cfda848cad2effe4c20dadea77cec070299622e06d30bd22554"
+      "sha256": "be209ed80c3033481a765ae904c76de6c8feaa8d134014e99af3ffb83960a82d"
     },
     {
       "path": ".claude/skills/papertiger/SKILL.md",

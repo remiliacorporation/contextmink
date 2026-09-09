@@ -44,8 +44,14 @@ Inspect a rejected task's rationale before reviving its approach.
 ## Keep the record aligned with the work
 
 Set `PAPERTIGER_ACTOR` to a concise author label before mutations. Set
-`PAPERTIGER_MODEL` only when the author's model identifier is known. Neither is
-ownership or a session lease. `in_progress` survives an interrupted session;
+`PAPERTIGER_MODEL` and optional `PAPERTIGER_REASONING_EFFORT` from the exact model
+variant and configured effort known to this execution context (for example,
+`gpt-6-astra` and `high`). Resolve them once from explicit context or readily
+available session metadata, then reuse until settings change; no extra model
+call or repeated user question is needed. Omit unknown values and never infer
+settings from a harness name, prose, or a parent's overridden configuration.
+These are event provenance, not ownership or a session lease.
+`in_progress` survives an interrupted session;
 read its context and continue without reassignment.
 
 ```text
