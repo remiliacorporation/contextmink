@@ -158,6 +158,21 @@ writing style. Omit unknown attribution; never backfill historical events.
 For other dispositions use `activity.status_event.model`. Neither timestamps
 nor model labels prove ownership, productivity, or reviewer quality.
 
+Before the first mutation in an execution context, identify the exact model
+variant and configured reasoning effort from explicit context or readily
+available session metadata. Supply `--model gpt-6-astra --reasoning-effort high`,
+for example, or set `PAPERTIGER_MODEL` and `PAPERTIGER_REASONING_EFFORT` in the
+command environment. Reuse known values until the execution configuration
+changes; do not make an extra model call or ask the user for every mutation.
+The reasoning effort is a separate caller-reported identifier, requires a model,
+and is exposed as `reasoning_effort` alongside `model` on events and activity.
+Do not substitute a family name when the exact variant is available, infer
+effort from prose, or let a child inherit a parent's identity after an override.
+When exact settings are unavailable, record only what is known and omit effort.
+Papertiger does not inspect private harness logs or contact a model provider.
+Existing history remains unchanged; absent effort reads as null, and no database
+migration is required.
+
 For scripted mutation chains, pass `--json`. `papertiger.mutation.v1` contains
 `changed` and the exact emitted `events`; each entry includes the event and
 its task/plan snapshots captured inside the committed transaction. Obtain
