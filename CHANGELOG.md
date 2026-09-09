@@ -6,11 +6,17 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-09
+
 ### Added
 
 - Capped `grep` and `grep-terms` receipts expose `output_cap_arguments`, naming the display controls that were exhausted. Capped line slices expose `remaining_range` so callers can retrieve the omitted window without increasing the line cap.
 
 ### Changed
+
+- Claude skill installation routes to the canonical `.agents/skills/contextmink/SKILL.md`; selecting Claude installs that dependency and upgrades receipt-owned full copies.
+
+- The destructive-command guard permits `git rm --cached` because it preserves working files. Direct argv and shell-command checks expose their inspection boundary and corrective actions.
 
 - The vendored skill distinguishes search file limits from per-file line limits, follows omitted slice ranges, and enters nested JSON through `--at`. Directory orientation is optional when a narrower target is already known; `dirs --depth` limits displayed levels rather than traversal cost.
 
