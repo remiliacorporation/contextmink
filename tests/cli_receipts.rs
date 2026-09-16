@@ -54,6 +54,165 @@ fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
 }
 
 #[test]
+fn object_entries_keep_identity_shape_and_projection_limits() {
+    let root = fixture_root("object-entries");
+    let document = serde_json::json!({"instructions": {
+        "9/2~x": {"address": 92, "disassembly": "move"},
+        "10": {"address": null, "disassembly": "a".repeat(100)},
+        "scalar": 7,
+        "empty": {}
+    }});
+    fs::write(root.join("map.json"), document.to_string()).unwrap();
+    let value = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions",
+            "--entries",
+            "--fields",
+            "address,disassembly",
+            "--max-value-chars",
+            "20",
+        ],
+    );
+    assert_eq!(value["rows_scanned"], 4);
+    assert_eq!(value["scope_complete"], true);
+    assert_eq!(value["output_truncated"], true);
+    let rows = value["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["key"], "10"); // lexical source-key order, not numeric interpretation
+    assert_eq!(rows[0]["null_fields"], serde_json::json!(["address"]));
+    assert_eq!(rows[1]["pointer"], "/instructions/9~12~0x");
+    assert_eq!(rows[1]["fields"]["address"], "92");
+    assert_eq!(rows[3]["value_type"], "number");
+    assert_eq!(
+        rows[3]["missing_fields"],
+        serde_json::json!(["address", "disassembly"])
+    );
+    let selected = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            rows[1]["pointer"].as_str().unwrap(),
+            "--fields",
+            "address",
+        ],
+    );
+    assert_eq!(selected["rows"][0]["fields"]["address"], "92");
+    let limited = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "instructions",
+            "--entries",
+            "--limit",
+            "1",
+        ],
+    );
+    assert_eq!(limited["result"]["total"], 4);
+    assert_eq!(limited["result"]["shown"], 1);
+    let keys = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions",
+            "--entries",
+            "--keys",
+        ],
+    );
+    assert_eq!(keys["entries"], true);
+    assert_eq!(keys["rows_scanned"], 4);
+    let filtered = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions",
+            "--entries",
+            "--where",
+            "address=92",
+        ],
+    );
+    assert_eq!(filtered["rows"][0]["key"], "9/2~x");
+    assert_eq!(filtered["rows_scanned"], 4);
+    let ordinary = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions",
+            "--fields",
+            "address",
+        ],
+    );
+    assert_eq!(ordinary["rows_scanned"], 1);
+    assert_eq!(ordinary["all_null_fields"], serde_json::json!(["address"]));
+    let empty = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions/empty",
+            "--entries",
+        ],
+    );
+    assert_eq!(empty["result"]["total"], 0);
+    let invalid = run_contextmink_raw(
+        &root,
+        &[
+            "json-select",
+            "map.json",
+            "--at",
+            "/instructions/scalar",
+            "--entries",
+        ],
+    );
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("requires an object"));
+    fs::write(
+        root.join("map.jsonl"),
+        format!("{}\n{}\n", document, document),
+    )
+    .unwrap();
+    let jsonl = parse_json_output(
+        &root,
+        &[
+            "--json",
+            "json-select",
+            "map.jsonl",
+            "--at",
+            "/1/instructions",
+            "--entries",
+            "--fields",
+            "address",
+        ],
+    );
+    assert_eq!(jsonl["rows"][1]["pointer"], "/1/instructions/9~12~0x");
+    assert!(
+        !run_contextmink_raw(&root, &["json-select", "map.jsonl", "--entries"])
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn capped_capture_reports_finished_execution_without_replay_advice() {
     let root = fixture_root("capture-no-replay");
     for code in [0, 7] {

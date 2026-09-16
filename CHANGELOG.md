@@ -8,6 +8,7 @@ The release workflow extracts the section for the requested version and fails if
 
 ### Added
 
+- `json-select --entries` projects the children of a selected object while retaining each exact key, escaped JSON Pointer and value type. Existing field filters, row/value caps and shape inspection apply; JSONL requires selection of one owning record with `--at`.
 - Capture receipts include `executable`: on Windows the observed spawned image comes from its process handle. Other platforms and failed observations disclose that identity was not observed; native executable selection remains unchanged.
 
 ### Fixed
