@@ -11,28 +11,45 @@ on:
         description: "Create a GitHub Release and attach archives"
         required: false
         type: boolean
-        default: true
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   verify-source:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Require master for publication
-        if: inputs.create_release
+      - name: Validate release inputs and notes
         shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+          CREATE_RELEASE: ${{ inputs.create_release }}
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/master" ]]; then
-            echo "public releases must be dispatched from refs/heads/master, got ${GITHUB_REF}" >&2
-            exit 1
-          fi
+          bash scripts/validate_release_dispatch.sh "$VERSION" "$CREATE_RELEASE" "$RELEASE_REF"
+          python3 scripts/test_release_notes.py
+          python3 scripts/render_release_notes.py "$VERSION" > "$RUNNER_TEMP/release_body.md"
+
+      - name: Retain reviewed release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes-contextmink-${{ inputs.artifact_version }}
+          path: ${{ runner.temp }}/release_body.md
+          if-no-files-found: error
 
       - name: Install pinned Rust 1.97.1
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
+          toolchain: 1.97.1
           components: clippy, rustfmt
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-source
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -48,15 +65,20 @@ jobs:
         env:
           CARGO_TARGET_DIR: target/package-check
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-msrv
       - name: Check minimum supported Rust version
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.95.0 --profile minimal
-          cargo +1.95.0 check --locked
+        run: cargo +1.95.0 check --locked
 
   build:
-    needs: verify-source
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -89,12 +111,18 @@ jobs:
             archive_ext: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
 
-      - name: Install Rust target
-        run: rustup target add ${{ matrix.target }}
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-${{ matrix.target }}
 
       - name: Resolve release names
         id: names
@@ -102,19 +130,21 @@ jobs:
         run: |
           set -euo pipefail
           version="${RAW}"
-          crate_version="$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)"
-          if [[ "${version}" != "${crate_version}" ]]; then
-            echo "artifact_version ${version} does not match Cargo.toml ${crate_version}" >&2
-            exit 1
-          fi
+          bash scripts/validate_release_dispatch.sh "$version" "$CREATE_RELEASE" "$RELEASE_REF"
           bundle="contextmink-${version}-${PLATFORM}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "bundle=${bundle}" >> "$GITHUB_OUTPUT"
           echo "archive=${bundle}.${ARCHIVE_EXT}" >> "$GITHUB_OUTPUT"
         env:
+          CREATE_RELEASE: ${{ inputs.create_release }}
+          RELEASE_REF: ${{ github.ref }}
           RAW: ${{ inputs.artifact_version }}
           PLATFORM: ${{ matrix.platform }}
           ARCHIVE_EXT: ${{ matrix.archive_ext }}
+
+      - name: Test native behavior
+        if: matrix.platform == 'windows-x86_64' || matrix.platform == 'macos-arm64'
+        run: cargo test --locked --all-targets --all-features --target ${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }}
@@ -441,7 +471,7 @@ jobs:
           & $binary --json uninstall-project $noSkillProject | Out-Null
           if (Test-Path "$noSkillProject/tools/contextmink/project-install.json") { throw "no-skill uninstall left the project receipt" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: contextmink-release-${{ steps.names.outputs.version }}-${{ matrix.platform }}
           path: |
@@ -451,13 +481,13 @@ jobs:
 
   publish-release:
     if: inputs.create_release
-    needs: [verify-source, build]
+    needs: [verify-source, msrv, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Resolve release version
         id: ver
@@ -470,7 +500,7 @@ jobs:
         env:
           RAW: ${{ inputs.artifact_version }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-assets
           pattern: contextmink-release-${{ steps.ver.outputs.version }}-*
@@ -479,120 +509,10 @@ jobs:
       - name: List downloaded assets
         run: ls -lh release-assets/
 
-      - name: Guard CHANGELOG.md against mojibake
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Release bodies are extracted verbatim from CHANGELOG.md, so a
-          # PowerShell/CP1252 double-encode would ship publicly and silently.
-          # This mirrors contextmink's own encoding detector: a run is
-          # proof-grade mojibake when its characters map to CP1252 bytes that
-          # re-decode as valid multi-byte UTF-8. A 2-byte run is trusted only
-          # with a Latin-1 lead or when it clusters, so ordinary typography
-          # does not trip it. Raw C1 controls are always a defect in authored
-          # text.
-          python3 - CHANGELOG.md <<'PY'
-          import sys
-
-          # CP1252 0x80-0x9F specials, keyed by Unicode code point so this
-          # gate does not embed the very characters it guards against.
-          SPECIALS = {cp: byte for byte, cp in {
-              0x80:0x20AC, 0x82:0x201A, 0x83:0x0192, 0x84:0x201E, 0x85:0x2026,
-              0x86:0x2020, 0x87:0x2021, 0x88:0x02C6, 0x89:0x2030, 0x8A:0x0160,
-              0x8B:0x2039, 0x8C:0x0152, 0x8E:0x017D, 0x91:0x2018, 0x92:0x2019,
-              0x93:0x201C, 0x94:0x201D, 0x95:0x2022, 0x96:0x2013, 0x97:0x2014,
-              0x98:0x02DC, 0x99:0x2122, 0x9A:0x0161, 0x9B:0x203A, 0x9C:0x0153,
-              0x9E:0x017E, 0x9F:0x0178,
-          }.items()}
-
-          def cp1252_byte(ch):
-              o = ord(ch)
-              if 0xA0 <= o <= 0xFF:
-                  return o
-              return SPECIALS.get(o)
-
-          def scan(text):
-              chars = list(text)
-              runs, c1 = [], 0
-              i = 0
-              while i < len(chars):
-                  ch = chars[i]
-                  o = ord(ch)
-                  if 0x80 <= o <= 0x9F:
-                      c1 += 1
-                      i += 1
-                      continue
-                  lead = cp1252_byte(ch)
-                  if lead is None:
-                      i += 1
-                      continue
-                  cont = 1 if 0xC2 <= lead <= 0xDF else 2 if 0xE0 <= lead <= 0xEF else 3 if 0xF0 <= lead <= 0xF4 else 0
-                  if cont == 0:
-                      i += 1
-                      continue
-                  seq = [lead]
-                  for k in range(1, cont + 1):
-                      if i + k >= len(chars):
-                          break
-                      b = cp1252_byte(chars[i + k])
-                      if b is None or not (0x80 <= b <= 0xBF):
-                          break
-                      seq.append(b)
-                  if len(seq) != cont + 1:
-                      i += 1
-                      continue
-                  try:
-                      dec = bytes(seq).decode('utf-8')
-                  except UnicodeDecodeError:
-                      i += 1
-                      continue
-                  strong = cont >= 2 or lead in (0xC2, 0xC3)
-                  runs.append([i, cont + 1, strong, ''.join(chars[i:i+cont+1]), dec])
-                  i += cont + 1
-              kept = []
-              for j, r in enumerate(runs):
-                  end = r[0] + r[1]
-                  neighbor = (j > 0 and runs[j-1][0] + runs[j-1][1] == r[0]) or \
-                             (j+1 < len(runs) and runs[j+1][0] == end)
-                  if r[2] or neighbor:
-                      kept.append(r)
-              return kept, c1
-
-          text = open(sys.argv[1], encoding='utf-8').read()
-          kept, c1 = scan(text)
-          if kept or c1:
-              print(f"::error::{sys.argv[1]} carries encoding artifacts: "
-                    f"{len(kept)} double-encoded run(s), {c1} raw C1 control(s)")
-              for r in kept[:5]:
-                  line = text[:r[0]].count('\n') + 1
-                  print(f"  line {line}: {r[3]!r} is double-encoded UTF-8 for {r[4]!r}")
-              sys.exit(1)
-          print("CHANGELOG.md encoding is clean")
-          PY
-
-      - name: Extract release notes from CHANGELOG.md
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Keep a Changelog headings: "## [x.y.z] - date". Capture the body
-          # up to the next "## " heading; fail if the section is missing so a
-          # release can never ship without written notes.
-          awk -v heading="## [${VERSION}]" '
-            index($0, heading) == 1 { found = 1; next }
-            /^## / { if (found) exit }
-            found { print }
-          ' CHANGELOG.md > release_body.md
-          if [ ! -s release_body.md ]; then
-            echo "CHANGELOG.md has no section for ${VERSION}; add one before releasing." >&2
-            exit 1
-          fi
-          {
-            echo ""
-            echo "Prebuilt CLI archives for Windows x64, macOS Intel, macOS ARM, and Linux x64. Each archive includes the contextmink binary, changelog, setup docs, templates, licenses, and a manifest; the Windows archive also carries contextmink-bridge. Every archive has an adjacent SHA-256 checksum asset."
-          } >> release_body.md
-          cat release_body.md
+      - name: Render release notes
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ inputs.artifact_version }}
+        run: python3 scripts/render_release_notes.py "$VERSION" > release_body.md
 
       - name: Create GitHub Release
         env:

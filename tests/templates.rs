@@ -273,12 +273,12 @@ fn release_workflow_verifies_extracted_project_integration() {
         "tar -xzf",
         "Expand-Archive",
         "verify-source",
-        "refs/heads/master",
+        "scripts/validate_release_dispatch.sh",
         "cargo test --locked --all-targets --all-features",
         "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
         "CARGO_TARGET_DIR: target/package-check",
         "cargo +1.95.0 check --locked",
-        "needs: [verify-source, build]",
+        "needs: [verify-source, msrv, build]",
         "integration-project",
         "contextmink.release-manifest.v1",
         "source_commit",
@@ -325,8 +325,8 @@ fn workflows_use_the_repository_toolchain_and_classify_prereleases() {
     let pinned = "1.97.1";
 
     assert!(toolchain.contains(&format!("channel = \"{pinned}\"")));
-    assert!(ci.contains(&format!("dtolnay/rust-toolchain@{pinned}")));
-    assert!(release.contains(&format!("dtolnay/rust-toolchain@{pinned}")));
+    assert!(ci.contains(&format!("toolchain: {pinned}")));
+    assert!(release.contains(&format!("toolchain: {pinned}")));
     assert!(!ci.contains("dtolnay/rust-toolchain@stable"));
     assert!(!release.contains("dtolnay/rust-toolchain@stable"));
 

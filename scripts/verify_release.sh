@@ -19,5 +19,9 @@ fi
 echo "contextmink release verify: GitHub workflow schema" >&2
 actionlint -color .github/workflows/*.yml
 
+python3 scripts/test_release_notes.py
+version=$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)
+bash scripts/validate_release_dispatch.sh "$version" false refs/heads/onno/local-verification
+python3 scripts/render_release_notes.py "$version" >/dev/null
 bash scripts/verify_source.sh
 bash scripts/cross_check.sh "$@"
