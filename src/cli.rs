@@ -578,6 +578,11 @@ pub(crate) enum Command {
         file: PathBuf,
         #[arg(
             long,
+            help = "Project each entry of the selected object; retain exact source key and JSON Pointer. JSONL requires --at /RECORD/object."
+        )]
+        entries: bool,
+        #[arg(
+            long,
             value_name = "KEY_OR_POINTER",
             help = "Select any value by key or JSON Pointer; arrays yield rows, objects/scalars yield one row. JSONL pointers start with a zero-based record index (for example /12/result)."
         )]

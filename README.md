@@ -636,3 +636,13 @@ exit code, wait for completion, then inspect those files with `slice --tail`,
 character windows or `json-select`. `capture --receipt-out` stores the receipt
 and bounded displayed text, not omitted original output. A display cap is not a
 reason to repeat execution.
+
+### Keyed object records
+
+`json-select FILE --at /instructions --entries --fields address,disassembly`
+projects an object of keyed records without enumerating opaque keys first. Each
+JSON row adds the exact `key`, reusable escaped `pointer`, `value_type`, and
+separate `missing_fields`/`null_fields`. Keys use deterministic lexical order;
+scalar and null children are retained. `--keys` inspects child shapes, and filters
+apply to each child value. Default object selection still produces one row.
+For JSONL, select a record explicitly, for example `--at /1/instructions`.

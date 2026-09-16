@@ -391,6 +391,7 @@ fn run_application() -> Result<()> {
         ),
         Command::JsonSelect {
             file,
+            entries,
             at,
             fields,
             keys,
@@ -404,6 +405,7 @@ fn run_application() -> Result<()> {
             &config,
             file,
             at.as_deref(),
+            *entries,
             fields,
             where_exact,
             where_contains,

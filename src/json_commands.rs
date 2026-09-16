@@ -243,6 +243,7 @@ pub(crate) fn command_json_select(
     config: &ContextConfig,
     file: &Path,
     at: Option<&str>,
+    entries: bool,
     fields: &[String],
     where_exact: &[String],
     where_contains: &[String],
@@ -261,6 +262,13 @@ pub(crate) fn command_json_select(
     }
     let at = at.map(str::to_owned);
     let at_tokens = at.as_deref().map(json_selector_tokens).transpose()?;
+    let parent_pointer = at_tokens
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .fold(String::new(), |path, token| {
+            format!("{path}/{}", encode_pointer_token(token))
+        });
     let fields = expand_json_select_fields(fields);
     if keys && !fields.is_empty() {
         return Err(anyhow!(
@@ -294,13 +302,14 @@ pub(crate) fn command_json_select(
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"));
     let mut kept_rows: Vec<Value> = Vec::new();
+    let mut kept_entries: Vec<Option<(String, String)>> = Vec::new();
     let mut key_stats: std::collections::BTreeMap<String, JsonKeyStat> =
         std::collections::BTreeMap::new();
     let mut non_object_rows = 0usize;
     let mut rows_scanned = 0usize;
     let mut rows_matched = 0usize;
     let input_format;
-    let mut consume_row = |row: &Value| -> Result<()> {
+    let mut consume_row = |row: &Value, entry: Option<(String, String)>| -> Result<()> {
         rows_scanned += 1;
         audit_fields(row, &audited_fields, &mut field_seen_non_null)?;
         if !row_matches_predicates(row, &predicates)? {
@@ -311,6 +320,7 @@ pub(crate) fn command_json_select(
             collect_row_keys(row, &mut key_stats, &mut non_object_rows);
         } else if kept_rows.len() < max {
             kept_rows.push(row.clone());
+            kept_entries.push(entry);
         }
         Ok(())
     };
@@ -329,6 +339,11 @@ pub(crate) fn command_json_select(
                 ))?;
                 Ok::<_, anyhow::Error>((index, &tokens[1..]))
             }).transpose()?;
+        if entries && target.is_none() {
+            return Err(anyhow!(
+                "json-select --entries on JSONL requires --at /RECORD/object; select the owning record first"
+            ));
+        }
         let mut selected_record_seen = false;
         visit_jsonl_file(file, max_document_bytes, |index, row| {
             if let Some((target_index, tokens)) = target {
@@ -340,10 +355,10 @@ pub(crate) fn command_json_select(
                             at.as_deref().unwrap_or("")
                         )
                     })?;
-                    consume_selected_json(selected, &mut consume_row)?;
+                    consume_selection(selected, entries, &parent_pointer, &mut consume_row)?;
                 }
             } else {
-                consume_row(&row)?;
+                consume_row(&row, None)?;
             }
             Ok(())
         })?;
@@ -374,11 +389,20 @@ pub(crate) fn command_json_select(
                     at.as_deref().unwrap_or("")
                 )
             })?;
-            consume_selected_json(selected, &mut consume_row)?;
+            consume_selection(selected, entries, &parent_pointer, &mut consume_row)?;
         } else if input_format == "jsonl" {
-            consume_selected_json(&document, &mut consume_row)?;
+            if entries {
+                return Err(anyhow!(
+                    "json-select --entries on JSONL requires --at /RECORD/object; select the owning record first"
+                ));
+            }
+            consume_selected_json(&document, &mut |row| consume_row(row, None))?;
         } else {
-            consume_row(&document)?;
+            if entries {
+                consume_selection(&document, true, "", &mut consume_row)?;
+            } else {
+                consume_row(&document, None)?;
+            }
         }
     }
 
@@ -395,6 +419,7 @@ pub(crate) fn command_json_select(
             file,
             at.as_deref(),
             input_format,
+            entries,
             &key_stats,
             non_object_rows,
             rows_scanned,
@@ -444,6 +469,9 @@ pub(crate) fn command_json_select(
     receipt.insert("path", json!(display_path(file)));
     receipt.insert("at", json!(at.as_deref()));
     receipt.insert("input_format", json!(input_format));
+    if entries {
+        receipt.insert("entries", json!(true));
+    }
     receipt.insert("fields", json!(fields));
     receipt.insert("where", json!(where_labels));
     receipt.insert("rows_scanned", json!(rows_scanned));
@@ -455,7 +483,26 @@ pub(crate) fn command_json_select(
                 kept_rows
                     .iter()
                     .enumerate()
-                    .map(|(index, row)| json_select_row(index, row, &fields, max_value_chars))
+                    .map(|(index, row)| {
+                        let mut projected = json_select_row(index, row, &fields, max_value_chars)?;
+                        if let Some((key, pointer)) = &kept_entries[index] {
+                            projected["key"] = json!(key);
+                            projected["pointer"] = json!(pointer);
+                            projected["value_type"] = json!(json_value_type_name(row));
+                            let mut missing = Vec::new();
+                            let mut null_fields = Vec::new();
+                            for field in &fields {
+                                match json_select_field(row, field)? {
+                                    None => missing.push(field),
+                                    Some(Value::Null) => null_fields.push(field),
+                                    Some(_) => {}
+                                }
+                            }
+                            projected["missing_fields"] = json!(missing);
+                            projected["null_fields"] = json!(null_fields);
+                        }
+                        Ok(projected)
+                    })
                     .collect::<Result<Vec<_>>>()?
             ),
         );
@@ -479,6 +526,15 @@ pub(crate) fn command_json_select(
             writeln!(stdout, "no_rows")?;
         }
         for (index, row) in kept_rows.iter().enumerate() {
+            if let Some((key, pointer)) = &kept_entries[index] {
+                writeln!(
+                    stdout,
+                    "entry key={} pointer={} type={}",
+                    json!(key),
+                    json!(pointer),
+                    json_value_type_name(row)
+                )?;
+            }
             if fields.is_empty() {
                 writeln!(
                     stdout,
@@ -490,7 +546,13 @@ pub(crate) fn command_json_select(
             let mut parts = Vec::with_capacity(fields.len());
             for field in &fields {
                 let summary = json_select_field(row, field.as_str())?.map_or_else(
-                    || "null".to_owned(),
+                    || {
+                        if entries {
+                            "missing".to_owned()
+                        } else {
+                            "null".to_owned()
+                        }
+                    },
                     |value| value_summary(value, max_value_chars).text,
                 );
                 parts.push(format!("{field}={summary}"));
@@ -565,6 +627,7 @@ fn render_json_select_keys(
     file: &Path,
     at: Option<&str>,
     input_format: &str,
+    entries: bool,
     key_stats: &std::collections::BTreeMap<String, JsonKeyStat>,
     non_object_rows: usize,
     rows_scanned: usize,
@@ -586,6 +649,9 @@ fn render_json_select_keys(
     receipt.insert("path", json!(display_path(file)));
     receipt.insert("at", json!(at));
     receipt.insert("input_format", json!(input_format));
+    if entries {
+        receipt.insert("entries", json!(true));
+    }
     receipt.insert("keys_mode", json!(true));
     receipt.insert("rows_scanned", json!(rows_scanned));
     receipt.insert("rows_matching", json!(rows_matched));
@@ -816,7 +882,7 @@ fn walk_json<'a>(
     match value {
         Value::Object(map) => {
             for (child_key, child) in map {
-                let token = child_key.replace('~', "~0").replace('/', "~1");
+                let token = encode_pointer_token(child_key);
                 let child_path = format!("{path}/{token}");
                 walk_json(&child_path, Some(child_key.as_str()), child, visit);
             }
@@ -901,3 +967,31 @@ fn json_fits_budget(value: &Value, nodes: &mut usize, string_chars: &mut usize) 
 
 #[cfg(test)]
 mod tests;
+
+fn encode_pointer_token(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
+}
+
+fn consume_selection(
+    value: &Value,
+    entries: bool,
+    parent: &str,
+    consume: &mut impl FnMut(&Value, Option<(String, String)>) -> Result<()>,
+) -> Result<()> {
+    if !entries {
+        return consume_selected_json(value, &mut |row| consume(row, None));
+    }
+    let object = value.as_object().ok_or_else(|| anyhow!(
+        "json-select --entries requires an object at the selected pointer; use --at to select an object or omit --entries"
+    ))?;
+    for (key, child) in object {
+        consume(
+            child,
+            Some((
+                key.clone(),
+                format!("{parent}/{}", encode_pointer_token(key)),
+            )),
+        )?;
+    }
+    Ok(())
+}
