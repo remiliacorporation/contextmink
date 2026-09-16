@@ -309,7 +309,7 @@ pub(crate) fn command_json_select(
     let mut rows_scanned = 0usize;
     let mut rows_matched = 0usize;
     let input_format;
-    let mut consume_row = |row: &Value, entry: Option<(String, String)>| -> Result<()> {
+    let mut consume_row = |row: &Value, entry: Option<&str>| -> Result<()> {
         rows_scanned += 1;
         audit_fields(row, &audited_fields, &mut field_seen_non_null)?;
         if !row_matches_predicates(row, &predicates)? {
@@ -320,7 +320,13 @@ pub(crate) fn command_json_select(
             collect_row_keys(row, &mut key_stats, &mut non_object_rows);
         } else if kept_rows.len() < max {
             kept_rows.push(row.clone());
-            kept_entries.push(entry);
+            // Allocate identities only for displayed rows, after filtering and the cap.
+            kept_entries.push(entry.map(|key| {
+                (
+                    key.to_owned(),
+                    format!("{parent_pointer}/{}", encode_pointer_token(key)),
+                )
+            }));
         }
         Ok(())
     };
@@ -355,7 +361,7 @@ pub(crate) fn command_json_select(
                             at.as_deref().unwrap_or("")
                         )
                     })?;
-                    consume_selection(selected, entries, &parent_pointer, &mut consume_row)?;
+                    consume_selection(selected, entries, &mut consume_row)?;
                 }
             } else {
                 consume_row(&row, None)?;
@@ -389,7 +395,7 @@ pub(crate) fn command_json_select(
                     at.as_deref().unwrap_or("")
                 )
             })?;
-            consume_selection(selected, entries, &parent_pointer, &mut consume_row)?;
+            consume_selection(selected, entries, &mut consume_row)?;
         } else if input_format == "jsonl" {
             if entries {
                 return Err(anyhow!(
@@ -399,7 +405,7 @@ pub(crate) fn command_json_select(
             consume_selected_json(&document, &mut |row| consume_row(row, None))?;
         } else {
             if entries {
-                consume_selection(&document, true, "", &mut consume_row)?;
+                consume_selection(&document, true, &mut consume_row)?;
             } else {
                 consume_row(&document, None)?;
             }
@@ -975,8 +981,7 @@ fn encode_pointer_token(token: &str) -> String {
 fn consume_selection(
     value: &Value,
     entries: bool,
-    parent: &str,
-    consume: &mut impl FnMut(&Value, Option<(String, String)>) -> Result<()>,
+    consume: &mut impl FnMut(&Value, Option<&str>) -> Result<()>,
 ) -> Result<()> {
     if !entries {
         return consume_selected_json(value, &mut |row| consume(row, None));
@@ -985,13 +990,7 @@ fn consume_selection(
         "json-select --entries requires an object at the selected pointer; use --at to select an object or omit --entries"
     ))?;
     for (key, child) in object {
-        consume(
-            child,
-            Some((
-                key.clone(),
-                format!("{parent}/{}", encode_pointer_token(key)),
-            )),
-        )?;
+        consume(child, Some(key))?;
     }
     Ok(())
 }
