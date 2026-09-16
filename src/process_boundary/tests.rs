@@ -69,6 +69,70 @@ fn bash_relay_never_places_raw_hostile_argv_on_the_startup_command_line() {
 }
 
 #[test]
+fn bash_relay_preserves_zero_empty_and_literal_arguments() {
+    let root = temp_tree("relay-argument-cardinality");
+    // A command with no arguments must also pass the non-script relay branch.
+    let bash = if cfg!(target_os = "macos") {
+        PathBuf::from("/bin/bash")
+    } else {
+        locate_bash().unwrap()
+    };
+    let mut no_args = Command::new(&bash);
+    append_bash_argv_relay(&mut no_args, &[bash.to_string_lossy().into_owned()], false);
+    let output = no_args.current_dir(&root).output().unwrap();
+    assert!(
+        output.status.success(),
+        "zero-argument command stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let script = root.join("arguments.sh");
+    fs::write(
+        &script,
+        "printf '%s\\n' \"$#\"\nfor arg; do printf '<%s>\\n' \"$arg\"; done\nexit 7\n",
+    )
+    .unwrap();
+    for args in [
+        vec![],
+        vec![String::new()],
+        vec![String::new(), "two words".into(), "@args;$()héλ".into()],
+    ] {
+        for explicit_script in [true, false] {
+            // Exercise both relay branches; command mode starts Bash as its child.
+            let mut argv = if explicit_script {
+                vec![script.to_string_lossy().into_owned()]
+            } else {
+                vec![
+                    locate_bash().unwrap().to_string_lossy().into_owned(),
+                    script.to_string_lossy().into_owned(),
+                ]
+            };
+            argv.extend(args.iter().cloned());
+            // Keep coverage on the system shell even if Homebrew Bash is on PATH.
+            let bash = if cfg!(target_os = "macos") {
+                PathBuf::from("/bin/bash")
+            } else {
+                locate_bash().unwrap()
+            };
+            let mut command = Command::new(bash);
+            append_bash_argv_relay(&mut command, &argv, explicit_script);
+            let output = command.current_dir(&root).output().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(7),
+                "relay stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let mut expected = format!("{}\n", args.len());
+            for arg in &args {
+                expected.push_str(&format!("<{arg}>\n"));
+            }
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        }
+    }
+}
+
+#[test]
 fn caller_project_policy_wins_for_a_global_binary() {
     let install = temp_tree("global-install");
     let project = temp_tree("global-project");

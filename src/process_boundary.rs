@@ -33,10 +33,12 @@ for encoded in "$@"; do
     decode_hex "$encoded"
     args+=("$REPLY")
 done
+# Bash before 4.4 treats an empty array as unset under nounset. The guarded
+# expansion supplies zero arguments while preserving an explicitly empty one.
 if [[ $execution_mode == script ]]; then
-    exec "$BASH" "$program" "${args[@]}"
+    exec "$BASH" "$program" ${args[@]+"${args[@]}"}
 fi
-exec "$program" "${args[@]}""#;
+exec "$program" ${args[@]+"${args[@]}"}"#;
 
 pub(crate) struct PreparedCommand {
     pub(crate) command: Command,
