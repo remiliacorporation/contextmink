@@ -22,6 +22,7 @@ Existing commands and the `contextmink.receipt.v2` envelope remain compatible. R
 
 ### Fixed
 
+- Bash script capture and the shared command relay accept zero arguments on macOS's system Bash without an `unbound variable` failure. Explicit empty arguments and literal argument contents are preserved.
 - Capped capture guidance states that omitted bytes cannot be recovered from the receipt and directs callers to existing producer logs. Rerunning requires known replay safety and authorization.
 
 ## [0.11.0] - 2026-09-09
