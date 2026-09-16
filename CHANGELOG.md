@@ -6,14 +6,23 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-16
+
+Existing commands and the `contextmink.receipt.v2` envelope remain compatible. Rerun the new release's `setup-project` to upgrade binaries and agent guidance while preserving repository configuration.
+
 ### Added
 
-- `json-select --entries` projects the children of a selected object while retaining each exact key, escaped JSON Pointer and value type. Existing field filters, row/value caps and shape inspection apply; JSONL requires selection of one owning record with `--at`.
-- Capture receipts include `executable`: on Windows the observed spawned image comes from its process handle. Other platforms and failed observations disclose that identity was not observed; native executable selection remains unchanged.
+- `json-select --entries` projects children of a selected object with each exact key, reusable escaped JSON Pointer, value type, and distinct missing/null field lists. Field filters, row/value caps and `--keys` apply to the children. JSONL requires `--at /RECORD/object`; without `--entries`, objects remain single rows.
+- Capture receipts include `executable`, reporting the spawned Windows process image from its handle. The image may be an interpreter, not a later child executable. Other platforms and failed observations explicitly report `unobserved`; native executable selection is unchanged.
+
+### Changed
+
+- Keyed-record projection constructs key and pointer strings only for retained rows, avoiding allocations for filtered or capped rows while preserving counts and addresses.
+- Installed agent guidance covers keyed-record navigation, narrow scan roots, aggregate batch output, and retention of producer logs when complete command output may be needed. Value caps do not shorten exact keys or pointers.
 
 ### Fixed
 
-- Capped capture guidance directs callers to existing producer logs and makes any rerun conditional on known replay safety and authorization. It explicitly states that the receipt cannot recover omitted bytes.
+- Capped capture guidance states that omitted bytes cannot be recovered from the receipt and directs callers to existing producer logs. Rerunning requires known replay safety and authorization.
 
 ## [0.11.0] - 2026-09-09
 

@@ -595,9 +595,17 @@ retain host-specific compiler wrappers or logs.
 
 Before handing a commit to the public artifact workflow, run
 `scripts/verify_release.sh` (through `contextmink-bridge --script` on Windows).
-It requires pinned actionlint `1.7.12`, runs the isolated native source gate,
+It requires Python 3 and pinned actionlint `1.7.12`, validates release notes and
+dispatch inputs, runs the isolated native source gate,
 then executes the complete Zig rehearsal. Pass `--install-targets` only when
 explicitly authorizing repair of missing pinned-toolchain components.
+
+The GitHub Release Artifacts workflow defaults to building without publication.
+Set `artifact_version` to the crate version with a dated changelog section.
+Source, MSRV, and native platform jobs run concurrently; publication requires all
+of them to pass and an explicit `create_release=true` dispatch from `master`.
+Each build retains rendered notes, four native archives, and adjacent SHA-256
+files. The archive manifest identifies the source commit used for verification.
 
 Keep package verification in a separate Cargo target directory. `cargo package`
 verifies the staged source tree under `target/package`; sharing its fingerprints
