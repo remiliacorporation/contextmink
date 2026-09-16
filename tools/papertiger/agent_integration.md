@@ -61,20 +61,21 @@ supplied project root.
   work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v9. Before migrating an older authority,
+- The current planner authority schema is v10. Before migrating an older authority,
   archive its export with the matching release and create a standalone SQLite
   recovery file with the new release's `--db <source> backup --output <new-path>`.
   Older dump files require
   their matching release, a temporary authority migration, and current-format
   re-export before import.
-  Current dumps use `papertiger.dump.v8`; schema v9 preserves former-plan
-  event identity and adds inward external references. Mise's schema is independent.
+  Current dumps use `papertiger.dump.v9`; schema v10 adds advisory pickup
+  context. Existing in-progress tasks retain unknown session identity; migration
+  never guesses ownership from actors. Mise's schema is independent.
 - `export` is transfer and recovery, not a second live authority.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
 - `backup --output <new-path> --json` creates a consistent standalone SQLite
-  recovery file, including committed WAL data. It supports planner schemas 1–9
+  recovery file, including committed WAL data. It supports planner schemas 1–10
   without migration or new events, refuses foreign authorities and existing
   destinations or sidecars, and reports the output hash and original schema.
   Historical evidence is preserved without semantic validation; this can retain
@@ -152,6 +153,46 @@ a shared commit, pull request, changelog, release note, or public artifact. Such
 prose must stand alone. When a shared issue or artifact is relevant, record its
 stable URL or evidence locator in Papertiger; local planning identity never
 flows outward.
+
+## Concurrent pickup without reservations
+
+Set `PAPERTIGER_SESSION` once to a unique identity for this agent session, or
+pass global `--session <id>`; reuse it across commands. Give concurrent agents
+different identities even when they use the same model or actor. Do not create
+an identity per CLI invocation. Identity accepts 1–128 ASCII letters, digits,
+`.`, `_`, `:`, and `-`, starting with a letter or digit. Omission is supported for
+human or unidentified callers and records a null session, never a guessed actor.
+
+`focus` prefers `mine`, then unattributed `in_progress`, then `ready`, then
+`picked_up_elsewhere`; `--all` also includes blocked proposed work. Real blockers
+remain in `blockers` independently of pickup. Work picked up elsewhere remains
+visible and eligible: neither its presence nor its age proves another agent is
+still working. When choosing freely, prefer other available work; an explicit
+user request to resume a task takes precedence. With no alternative, inspect
+its stored context and use `start <N>` to continue it directly.
+
+`start` records pickup and can resume an already-in-progress task. An old pickup
+never requires release, takeover permission, a reason, a heartbeat, expiry, or a
+harness integration. A changed pickup records the previous and new identities;
+repeating `start` from the same identified session is eventless (`changed=false`).
+Initial `start` and `add --start` bind pickup in their status event and transaction.
+Terminal transitions clear current pickup while preserving its history. Notes,
+reads, and edits do not refresh pickup or pretend to be a heartbeat.
+
+`task.pickup` is null or `{session, at}` in full task context. `focus` v7
+returns compact task summaries with `pickup`, `readiness`, and `blockers` as
+sibling fields on each entry; `status` likewise keeps pickup beside its summary.
+Read `focus` directly without an additional projection. It omits task intent,
+result, history, and plan narrative; use `show <N> --json` for the chosen task.
+Its plan contains only `slug` and `status`. If scripting a smaller selection
+view, retain readiness, pickup, and blockers together with task identity.
+Whole-authority inventory uses `tasks[].{plan,task}`, so identifiers and titles
+are `tasks[].task.seq` and `tasks[].task.title`, not fields directly on each row.
+`at` is the last pickup time, not last-seen or last-active time. These are advisory
+coordination hints, not exclusive claims, authorization, liveness detection, or
+file locks. Concurrent explicit starts can both succeed; SQLite serializes their
+history, not their subsequent execution. Domain-owned work continues to use its
+domain's own coordination mechanism.
 
 ## Mutations
 
@@ -259,7 +300,7 @@ should work next. `last_event` records the latest task, dependency, or gate
 event. Use `list --sort activity` when recency is useful; do not interpret
 event times as duration, productivity, or submission data.
 
-Task context v6 is the single work-record surface: full selected-task details,
+Task context v7 is the single work-record surface: full selected-task details,
 compact related-task summaries, and twelve recent events with a history cursor
 when older events remain. Use `show <related-seq> --json` for that task's full
 context. `schema` emits the bundled JSON Schema for context, status, task list,
@@ -345,7 +386,7 @@ reviewable outcome. Create separate tasks when outcomes are independently
 reviewable, separately committed, or have distinct decisions or proof—even if
 one session is expected to finish them. `in_progress` means work began and
 remains unfinished; it deliberately survives a dead or replaced session and
-needs no reassignment. A fresh agent reads the task and continues it directly.
+needs no reassignment. A fresh agent reads the task and records its pickup with `start` before continuing.
 Add a task note only when handoff context beyond the stored intent, result,
 gates, and history is genuinely useful.
 
