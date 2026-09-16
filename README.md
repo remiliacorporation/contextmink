@@ -606,19 +606,6 @@ uses `CARGO_TARGET_DIR=target/package-check cargo package --locked`. Use the sam
 boundary for local package checks (in PowerShell, set `$env:CARGO_TARGET_DIR`
 before the command), then build the checkout in the ordinary target directory.
 
-## Scope
-
-Add to this tool only when the failure mode is generic transcript overflow or
-host-shell friction in file enumeration, text search, line slicing, JSON
-inspection, read-only SQLite inspection, or bounded capture of unknown
-command output. Anything needing domain knowledge, a schema, a compiler, an
-indexer, a runtime, or a real parser belongs in the domain tool.
-
-## License
-
-MIT. See [LICENSE](LICENSE). [LICENSE-SSL](LICENSE-SSL) and
-[LICENSE-VPL](LICENSE-VPL) accompany every release archive and mirror sync.
-
 ### Captured execution and retained output
 
 Capture receipts report `executable.path`, `executable.source` and
@@ -646,3 +633,26 @@ separate `missing_fields`/`null_fields`. Keys use deterministic lexical order;
 scalar and null children are retained. `--keys` inspects child shapes, and filters
 apply to each child value. Default object selection still produces one row.
 For JSONL, select a record explicitly, for example `--at /1/instructions`.
+
+### Retrieval scope and output budgets
+
+Use the smallest scope that answers the question. For known root metadata,
+read its exact path or enumerate only root files in the host shell; a filename
+filter on a recursive `files` scan does not prune directory traversal. `dirs
+--depth` bounds displayed levels only. Prefer an outline, targeted grep, or a
+character window over repeated wide slices. Budget the **combined** output of
+parallel calls; per-command caps cannot prevent an outer tool from clipping the
+batch. Direct known-small reads remain appropriate and need no extra receipt.
+
+## Scope
+
+Add to this tool only when the failure mode is generic transcript overflow or
+host-shell friction in file enumeration, text search, line slicing, JSON
+inspection, read-only SQLite inspection, or bounded capture of unknown
+command output. Anything needing domain knowledge, a schema, a compiler, an
+indexer, a runtime, or a real parser belongs in the domain tool.
+
+## License
+
+MIT. See [LICENSE](LICENSE). [LICENSE-SSL](LICENSE-SSL) and
+[LICENSE-VPL](LICENSE-VPL) accompany every release archive and mirror sync.
