@@ -100,7 +100,11 @@ papertiger status
 papertiger --project-root <canonical-project-root> status
 papertiger focus --json
 papertiger search "<terms>" --json
+papertiger search "<terms>" --compact --json
 papertiger show <task.seq> --json
+papertiger show <task.seq> --no-history --json
+papertiger plan list --json
+papertiger list --all-plans --status unfinished --json
 papertiger audit
 papertiger evidence verify --project-root <project-root> --json
 papertiger evidence verify --outcome failed --task-state open --limit 50 --json
@@ -111,6 +115,15 @@ If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
 and leaf projections. Every bounded projection reports its scope, ordering,
 eligible, returned, and omitted counts; when it is incomplete, follow its
 `continuation_command` rather than treating the visible entries as exhaustive.
+Use compact search for discovery and full `show` when resuming selected work.
+`show --no-history --json` is a current-state recheck; follow its `history_command`
+when earlier notes or decisions matter. `plan list --json` includes every plan
+state and accepts `--plan <slug>` for one plan's orientation. For complete task
+inventory across active and paused plans, use `list --all-plans --status unfinished
+--json`. Follow `next_after_seq` with `--after-seq` and the returned `--snapshot`,
+keeping filters unchanged. A history change invalidates the snapshot; restart the
+read instead of combining pages from different states.
+
 Planner read commands open the SQLite authority read-only by construction;
 they never initialize, migrate, or repair it.
 `evidence verify` is also read-only. Its summary always counts the complete
@@ -180,6 +193,30 @@ created task selectors from `events[].task.seq`. Failed mutations produce no
 success receipt, and idempotent operations may emit an empty event list with
 `changed=false`. Never recover a task number by parsing human prose. `init`
 retains its separate human-readable migration output.
+
+For a concise acknowledgement, retain the receipt locally and display a projection
+of `changed` and each ordered event's `event_id`, `kind`, `task`, and `plan`.
+The optional `task` is a **summary** (`seq`, `title`, `status`, `kind`, `priority`),
+not a full task: it has no `intent` or `result`. Taskless events are legitimate.
+For example, after capturing successful JSON stdout in `$receipt` in PowerShell:
+
+```powershell
+$receipt | Select-Object schema, changed, @{Name='events'; Expression={
+    @($_.events | ForEach-Object {
+        [pscustomobject]@{
+            event_id = $_.event.event_id
+            kind = $_.event.kind
+            task = $_.task
+            plan = $_.plan
+        }
+    })
+}} | ConvertTo-Json -Depth 8
+```
+
+Check the native command's exit code before parsing. If local parsing or display
+fails after a successful write, inspect the retained receipt and use read-only
+`show`/`log` to verify the outcome; do not replay the mutation. Empty events and
+`changed=false` are distinct from a failed command with no success receipt.
 
 For multi-paragraph durable text, use the same `<field>-file <path|->` pattern:
 `--intent-file`, `--why-file`, `--result-file`, or `note --text-file`. `-` reads

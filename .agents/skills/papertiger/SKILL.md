@@ -36,10 +36,15 @@ its skill does not create another task. From elsewhere, pass global
 is an exceptional operator override, not ordinary project selection.
 
 Use `status` once to orient, then `focus --plan <slug> --json` to resume or
-`search "<terms>" --plan <slug> --json` to check for an existing outcome. Pass
-`--plan` when multiple plans are active. Read the chosen task with
+`search "<terms>" --plan <slug>` to check for an existing outcome. Use
+`--compact --json` when discovery needs structured identities and excerpts.
+Pass `--plan` when multiple plans are active. Read the chosen task with
 `show <N> --json`; follow bounded results' continuation commands when relevant.
-Inspect a rejected task's rationale before reviving its approach.
+For a current-state recheck, `show <N> --no-history --json` avoids repeated event
+payloads; follow its history command when prior notes or decisions matter.
+Inspect a rejected task's rationale before reviving its approach. Whole-backlog
+alignment uses `plan list --json` and `list --all-plans --status unfinished --json`,
+including paused plans; status/focus describe active work rather than that inventory.
 
 ## Keep the record aligned with the work
 
@@ -65,6 +70,10 @@ and `external` for externally supplied meaning. Use `--why` for decisions a
 future reader could question. In scripts, obtain new selectors from the exact
 mutation receipt's `events[].task.seq`; do not parse human output. Command help
 documents UTF-8 `--intent-file`, `--why-file`, and `--result-file` inputs.
+Retain mutation receipts and display only the acknowledgement needed: `changed`,
+ordered event IDs, and optional task/plan identities. A receipt's task is a summary,
+not full context. After a successful write, a local parsing/display failure calls
+for read-only verification, never automatic replay of the mutation.
 
 Record any representing commit's full object ID before task completion with
 `commit add <N> <full-oid> --repo <stable-label>` (`.` for this project's root).
