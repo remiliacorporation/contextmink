@@ -18,6 +18,7 @@ mod json_input;
 mod outline;
 mod output;
 mod process_boundary;
+mod process_identity;
 mod process_supervision;
 mod sqlite;
 mod text;

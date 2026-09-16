@@ -54,6 +54,77 @@ fn parse_json_output(root: &PathBuf, args: &[&str]) -> Value {
 }
 
 #[test]
+fn capped_capture_reports_finished_execution_without_replay_advice() {
+    let root = fixture_root("capture-no-replay");
+    for code in [0, 7] {
+        fs::write(
+            root.join("once.sh"),
+            format!(
+                "printf x >> count\nfor i in 1 2 3 4 5 6; do echo progress; done\nexit {code}\n"
+            ),
+        )
+        .unwrap();
+        let output = run_contextmink_raw(
+            &root,
+            &["capture", "--script", "--max-lines", "2", "--", "once.sh"],
+        );
+        assert_eq!(output.status.code(), Some(code));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("child execution finished"));
+        assert!(stdout.contains("Omitted bytes are not recoverable from this receipt"));
+        assert!(stdout.contains("rerun only when replay is known safe and authorized"));
+        let expected = if code == 0 { "x" } else { "xx" };
+        assert_eq!(fs::read_to_string(root.join("count")).unwrap(), expected);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn capture_observes_native_image_selected_by_path_without_shell_emulation() {
+    let root = fixture_root("capture-image-path");
+    let first = root.join("first path");
+    let second = root.join("second path");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    for directory in [&first, &second] {
+        fs::copy(
+            env!("CARGO_BIN_EXE_contextmink"),
+            directory.join("identity-probe.exe"),
+        )
+        .unwrap();
+        fs::write(
+            directory.join("identity-probe.cmd"),
+            "@echo wrong-shell-shim\r\n",
+        )
+        .unwrap();
+    }
+    for (selected, other) in [(&first, &second), (&second, &first)] {
+        let path = std::env::join_paths([selected, other]).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_contextmink"))
+            .current_dir(&root)
+            .env("PATH", path)
+            .args(["--json", "capture", "--", "identity-probe", "--version"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let observed = PathBuf::from(value["executable"]["path"].as_str().unwrap());
+        assert_eq!(
+            fs::canonicalize(observed).unwrap(),
+            fs::canonicalize(selected.join("identity-probe.exe")).unwrap()
+        );
+        assert_eq!(value["executable"]["source"], "windows_process_handle");
+        assert_eq!(value["argv"][0], "identity-probe");
+        assert!(
+            value["stdout_text"]
+                .as_str()
+                .unwrap()
+                .starts_with("contextmink ")
+        );
+    }
+}
+
+#[test]
 fn grep_reports_the_exhausted_control_and_widening_it_recovers_matches() {
     let root = fixture_root("grep-recovery-control");
     fs::write(root.join("matches.txt"), "hit\nhit\nhit\nhit\nhit\n").unwrap();
