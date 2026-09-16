@@ -618,3 +618,21 @@ indexer, a runtime, or a real parser belongs in the domain tool.
 
 MIT. See [LICENSE](LICENSE). [LICENSE-SSL](LICENSE-SSL) and
 [LICENSE-VPL](LICENSE-VPL) accompany every release archive and mirror sync.
+
+### Captured execution and retained output
+
+Capture receipts report `executable.path`, `executable.source` and
+`executable.error`. On Windows, the process handle identifies the spawned image
+(including an interpreter when one was selected); it does not identify a later
+program launched by that interpreter. Elsewhere the receipt explicitly reports
+unobserved identity. `argv` and `effective_argv` retain their existing meanings.
+A shell may select a different alias or shim: use an explicit native executable
+path when exact selection matters. Legitimate empty successful output remains
+successful.
+
+For costly or state-changing producers, arrange output retention **before** the
+run: redirect stdout/stderr to explicit producer-owned files, retain the native
+exit code, wait for completion, then inspect those files with `slice --tail`,
+character windows or `json-select`. `capture --receipt-out` stores the receipt
+and bounded displayed text, not omitted original output. A display cap is not a
+reason to repeat execution.

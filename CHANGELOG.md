@@ -6,6 +6,14 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+### Added
+
+- Capture receipts include `executable`: on Windows the observed spawned image comes from its process handle. Other platforms and failed observations disclose that identity was not observed; native executable selection remains unchanged.
+
+### Fixed
+
+- Capped capture guidance directs callers to existing producer logs and makes any rerun conditional on known replay safety and authorization. It explicitly states that the receipt cannot recover omitted bytes.
+
 ## [0.11.0] - 2026-09-09
 
 ### Added

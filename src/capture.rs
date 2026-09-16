@@ -101,6 +101,7 @@ pub(crate) fn command_capture(
     let effective_argv = prepared.effective_argv.clone();
     let mut child = spawn_captured_child(prepared.command, program, execution_mode)?;
     let child_supervisor = supervise(&mut child)?;
+    let executable = crate::process_identity::observe(&child);
 
     let stdout_pipe = child
         .stdout
@@ -179,6 +180,7 @@ pub(crate) fn command_capture(
         ));
     }
     receipt.insert("execution_mode", json!(execution_mode));
+    receipt.insert("executable", executable);
     receipt.insert("child_exit_code", json!(status.code()));
     receipt.insert("child_exit_zero", json!(status.success()));
     let exit_expected = status
@@ -261,7 +263,7 @@ pub(crate) fn command_capture(
     if truncated {
         writeln!(
             out,
-            "[contextmink] capped captured output; rerun the underlying command with native filters or raise caps only after confirming command scope."
+            "[contextmink] child execution finished; displayed output was capped. Omitted bytes are not recoverable from this receipt. Inspect an existing producer log/artifact; rerun only when replay is known safe and authorized."
         )?;
     }
     if !suspects.is_empty() {
