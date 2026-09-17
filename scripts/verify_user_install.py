@@ -45,7 +45,8 @@ with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     runtime = home / ".local" / "share" / tool / "bin" / binary.name
     assert run(runtime, "--version") == run(binary, "--version")
     skill = (home / ".agents" / "skills" / tool / "SKILL.md").read_text(encoding="utf-8")
-    assert str(runtime).replace("\\", "/") in skill
+    # The installer canonicalizes Windows short-path aliases.
+    assert runtime.resolve().as_posix() in skill
     assert "<!-- installed-command -->" not in skill
     assert skill.startswith("---\nname:")
     assert (home / ".claude" / "skills" / tool / "SKILL.md").read_text(encoding="utf-8") == skill
