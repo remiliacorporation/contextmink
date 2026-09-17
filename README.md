@@ -26,9 +26,16 @@ record of what the agent actually saw.
 
 From a verified extracted release, run:
 
-```text
-contextmink setup-user --dry-run
-contextmink setup-user
+```sh
+# macOS/Linux, inside the extracted release
+./contextmink setup-user --dry-run
+./contextmink setup-user
+```
+
+```powershell
+# Windows PowerShell, inside the extracted release
+.\contextmink.exe setup-user --dry-run
+.\contextmink.exe setup-user
 ```
 
 This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
