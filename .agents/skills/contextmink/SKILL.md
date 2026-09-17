@@ -18,7 +18,7 @@ Use the installed command above when present. For a project installation, resolv
 Bash project may use `scripts/contextmink`. Keep cwd in the consuming project so
 its configuration applies. Native built-in commands need no Bash bridge, project
 guidance edits, or new configuration. If the runtime is missing, report the
-missing setup-user installation rather than inventing an executable path.
+incomplete project bundle rather than inventing an executable path.
 Below, `contextmink` means the resolved native executable (quoted with `&` in
 PowerShell when its path contains spaces).
 

@@ -22,20 +22,45 @@ ends with a machine-readable receipt that distinguishes:
 The result is less transcript churn, fewer repeated probes, and a reviewable
 record of what the agent actually saw.
 
-## Personal installation (default)
+## Add to a project (default)
+
+Download the archive for the machine where the agent runs, verify its checksum,
+and merge its contents into the project root, including the dot-directories:
+
+```text
+.agents/skills/contextmink/SKILL.md
+.claude/skills/contextmink/SKILL.md
+tools/contextmink/bin/contextmink[.exe]
+tools/contextmink/README.md
+```
+
+The skills and native executable are already in place. Start a fresh agent
+session; no install command, PATH change, AGENTS.md edit, or integration-guide
+reading is needed for ordinary work. Claude receives the same complete short
+skill body generated from the canonical template. Codex, Pi, Cursor, OMP and
+OpenCode can use the shared Agent Skills directory; model selection still
+remains discretionary.
+
+Only namespaced skills and `tools/contextmink` are shipped. Existing project guidance,
+configuration, receipts and databases are not included or overwritten. Preserve
+any customizations inside those tool-owned directories before replacing them.
+README, licenses, optional operating references and the source manifest live
+under `tools/contextmink`. Retrieval uses the project configuration when present and built-in defaults otherwise.
+
+## Optional personal installation
 
 From a verified extracted release, run:
 
 ```sh
 # macOS/Linux, inside the extracted release
-./contextmink setup-user --dry-run
-./contextmink setup-user
+./tools/contextmink/bin/contextmink setup-user --dry-run
+./tools/contextmink/bin/contextmink setup-user
 ```
 
 ```powershell
 # Windows PowerShell, inside the extracted release
-.\contextmink.exe setup-user --dry-run
-.\contextmink.exe setup-user
+.\tools\contextmink\bin\contextmink.exe setup-user --dry-run
+.\tools\contextmink\bin\contextmink.exe setup-user
 ```
 
 This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
@@ -179,12 +204,12 @@ Run the unpacked release binary from the agent task responsible for maintaining
 the target repository:
 
 ```bash
-./contextmink setup-project /path/to/repository --dry-run
-./contextmink setup-project /path/to/repository
+./tools/contextmink/bin/contextmink setup-project /path/to/repository --dry-run
+./tools/contextmink/bin/contextmink setup-project /path/to/repository
 ```
 
 On Windows PowerShell, use
-`& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
+`& .\tools\contextmink\bin\contextmink.exe setup-project C:\path\to\repository`. The command copies
 the platform-appropriate release binaries, installs both project launchers,
 generates a real project profile, adds the binary directory to `.gitignore`,
 and installs a short Contextmink skill only for the selected harness paths. The
@@ -245,8 +270,8 @@ managed integration, run the matching or newer release binary from outside the
 project:
 
 ```bash
-./contextmink uninstall-project /path/to/repository --dry-run
-./contextmink uninstall-project /path/to/repository
+./tools/contextmink/bin/contextmink uninstall-project /path/to/repository --dry-run
+./tools/contextmink/bin/contextmink uninstall-project /path/to/repository
 ```
 
 Removal requires the ownership receipt, verifies managed text and host runtime

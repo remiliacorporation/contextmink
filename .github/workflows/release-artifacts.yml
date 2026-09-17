@@ -174,7 +174,7 @@ jobs:
           }
           EOF
           chmod +x "${bundle}/${{ matrix.binary_name }}"
-          tar -czf "${archive}" -C dist "${{ steps.names.outputs.bundle }}"
+          python scripts/package_project.py "$bundle" "$archive"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
           else
@@ -205,7 +205,8 @@ jobs:
             archive = "${{ steps.names.outputs.archive }}"
           } | ConvertTo-Json
           Set-Content -Path "$bundle/manifest.json" -Value $manifest -NoNewline
-          Compress-Archive -Path $bundle -DestinationPath $archive -Force
+          python scripts/package_project.py $bundle $archive
+          if ($LASTEXITCODE -ne 0) { throw "project bundle packaging failed" }
           $hash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
           # LF, no BOM: sha256sum -c on POSIX shells trips over CRLF filenames.
           [System.IO.File]::WriteAllText("${archive}.sha256", "$hash  ${{ steps.names.outputs.archive }}`n")
@@ -219,9 +220,10 @@ jobs:
           verify_root="dist/verify-${{ matrix.platform }}"
           mkdir -p "${verify_root}"
           tar -xzf "${archive}" -C "${verify_root}"
-          bundle="${verify_root}/${{ steps.names.outputs.bundle }}"
-          python scripts/verify_user_install.py "${bundle}/${{ matrix.binary_name }}"
-          test -f "${bundle}/${{ matrix.binary_name }}"
+          bundle="${verify_root}/tools/contextmink"
+          python scripts/verify_project_bundle.py "$verify_root"
+          python scripts/verify_user_install.py "${bundle}/bin/${{ matrix.binary_name }}"
+          test -f "${bundle}/bin/${{ matrix.binary_name }}"
           test -f "${bundle}/README.md"
           test -f "${bundle}/SETUP.md"
           test -f "${bundle}/CHANGELOG.md"
@@ -229,13 +231,13 @@ jobs:
           test -f "${bundle}/LICENSE-SSL"
           test -f "${bundle}/LICENSE-VPL"
           test -f "${bundle}/manifest.json"
-          grep -Fq '"schema": "contextmink.release-manifest.v1"' "${bundle}/manifest.json"
+          grep -Fq '"schema": "contextmink.release-manifest.v2"' "${bundle}/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "${bundle}/manifest.json"
           test -d "${bundle}/docs"
           test -d "${bundle}/templates"
-          test "$("${bundle}/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
-          "${bundle}/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
-          "${bundle}/${{ matrix.binary_name }}" files src --limit 1 > /tmp/contextmink-smoke.txt
+          test "$("${bundle}/bin/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
+          "${bundle}/bin/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
+          "${bundle}/bin/${{ matrix.binary_name }}" files src --limit 1 > /tmp/contextmink-smoke.txt
           grep -q "CONTEXTMINK_RECEIPT" /tmp/contextmink-smoke.txt
           test -f "${archive}"
           test -f "${archive}.sha256"
@@ -249,7 +251,7 @@ jobs:
           mkdir -p "${project}/nested/work"
           printf 'fixture guidance\n' > "${project}/AGENTS.md"
           printf 'fixture guidance\n' > "${project}/CLAUDE.md"
-          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v2"' "${verify_root}/setup-smoke.json"
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/setup-smoke.json"
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"both"' "${verify_root}/setup-smoke.json"
@@ -272,13 +274,13 @@ jobs:
           sed -i.bak 's|exclude_globs = \[\]|exclude_globs = ["generated/**"]|' "${project}/.contextmink.toml"
           rm "${project}/.contextmink.toml.bak"
           rm "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
-          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" --dry-run > "${verify_root}/setup-repair-smoke.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${project}" --dry-run > "${verify_root}/setup-repair-smoke.json"
           grep -Eq '"action"[[:space:]]*:[[:space:]]*"preserve_repository_owned"' "${verify_root}/setup-repair-smoke.json"
           grep -Eq '"action"[[:space:]]*:[[:space:]]*"create"' "${verify_root}/setup-repair-smoke.json"
-          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-repair-apply.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-repair-apply.json"
           test -f "${project}/tools/contextmink/bin/${{ matrix.binary_name }}"
           grep -Fq 'exclude_globs = ["generated/**"]' "${project}/.contextmink.toml"
-          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${project}" --skill-target agents > "${verify_root}/setup-reselect.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${project}" --skill-target agents > "${verify_root}/setup-reselect.json"
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"agents"' "${verify_root}/setup-reselect.json"
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test ! -e "${project}/.claude/skills/contextmink/SKILL.md"
@@ -300,10 +302,10 @@ jobs:
             echo "capture smoke exposed an ambiguous generic exit field" >&2
             exit 1
           fi
-          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${project}" --dry-run > "${verify_root}/uninstall-smoke.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json uninstall-project "${project}" --dry-run > "${verify_root}/uninstall-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_uninstall.v1"' "${verify_root}/uninstall-smoke.json"
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/uninstall-smoke.json"
-          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${project}" > "${verify_root}/uninstall-apply.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json uninstall-project "${project}" > "${verify_root}/uninstall-apply.json"
           test ! -e "${project}/tools/contextmink/project-install.json"
           test ! -e "${project}/tools/contextmink/bin/runtime-install.json"
           test ! -e "${project}/.agents/skills/contextmink/SKILL.md"
@@ -312,11 +314,11 @@ jobs:
 
           no_skill_project="${verify_root}/no-skill-project"
           mkdir -p "${no_skill_project}"
-          "${bundle}/${{ matrix.binary_name }}" --json setup-project "${no_skill_project}" --skill-target none > "${verify_root}/setup-none.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${no_skill_project}" --skill-target none > "${verify_root}/setup-none.json"
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"none"' "${verify_root}/setup-none.json"
           test ! -e "${no_skill_project}/.agents/skills/contextmink/SKILL.md"
           test ! -e "${no_skill_project}/.claude/skills/contextmink/SKILL.md"
-          "${bundle}/${{ matrix.binary_name }}" --json uninstall-project "${no_skill_project}" > "${verify_root}/uninstall-none.json"
+          "${bundle}/bin/${{ matrix.binary_name }}" --json uninstall-project "${no_skill_project}" > "${verify_root}/uninstall-none.json"
           test ! -e "${no_skill_project}/tools/contextmink/project-install.json"
 
       - name: Verify packaged release (Windows)
@@ -326,10 +328,12 @@ jobs:
           $archive = "dist/${{ steps.names.outputs.archive }}"
           $verifyRoot = "dist/verify-${{ matrix.platform }}"
           Expand-Archive -Path $archive -DestinationPath $verifyRoot -Force
-          $bundle = "$verifyRoot/${{ steps.names.outputs.bundle }}"
-          $binary = "$bundle/${{ matrix.binary_name }}"
+          $bundle = "$verifyRoot/tools/contextmink"
+          python scripts/verify_project_bundle.py $verifyRoot
+          if ($LASTEXITCODE -ne 0) { throw "project bundle smoke failed" }
+          $binary = "$bundle/bin/${{ matrix.binary_name }}"
           if (!(Test-Path $binary)) { throw "release binary missing" }
-          $bridge = "$bundle/${{ matrix.bridge_binary_name }}"
+          $bridge = "$bundle/bin/${{ matrix.bridge_binary_name }}"
           if (!(Test-Path $bridge)) { throw "bridge binary missing" }
           & $bridge --version
           $bridgeHelp = & $bridge --help | Out-String
@@ -342,7 +346,7 @@ jobs:
           if (!(Test-Path "$bundle/LICENSE-VPL")) { throw "LICENSE-VPL missing" }
           if (!(Test-Path "$bundle/manifest.json")) { throw "manifest.json missing" }
           $releaseManifest = Get-Content "$bundle/manifest.json" -Raw | ConvertFrom-Json
-          if ($releaseManifest.schema -ne "contextmink.release-manifest.v1") {
+          if ($releaseManifest.schema -ne "contextmink.release-manifest.v2") {
             throw "release manifest schema mismatch: $($releaseManifest.schema)"
           }
           if ($releaseManifest.source_commit -ne $env:GITHUB_SHA) {
