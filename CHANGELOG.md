@@ -6,6 +6,8 @@ The release workflow extracts the section for the requested version and fails if
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-17
+
 ### Added
 
 - `setup-user` installs personal skills and a native runtime without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. The skill binds the executable and honors each consuming project's configuration. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
@@ -14,7 +16,6 @@ The release workflow extracts the section for the requested version and fails if
 ### Changed
 
 - Every installed skill location contains the complete short workflow generated from one template. Existing owned Claude routers upgrade in place, removing the extra read needed to reach executable bindings and operational guidance.
-
 - Personal installation is the default documented adoption path. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
 - The retrieval skill keeps ordinary queries and evidence limits in its entrypoint, loading detailed integration guidance only when needed. Known-small reads and project-native compact queries stay direct.
 
