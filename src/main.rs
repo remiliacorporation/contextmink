@@ -22,6 +22,7 @@ mod process_identity;
 mod process_supervision;
 mod sqlite;
 mod text;
+mod user_setup;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -68,10 +69,41 @@ fn main() -> Result<()> {
 }
 
 fn run_application() -> Result<()> {
+    user_setup::verify_runtime()?;
     output::mark_command_start();
     let cli = parse_cli();
     validate_global_flags(&cli)?;
     match &cli.command {
+        Command::SetupUser {
+            home,
+            dry_run,
+            replace_managed,
+        } => {
+            reject_inspection_globals(&cli, "setup-user", "installation")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_setup::run(
+                    home.as_deref(),
+                    *dry_run,
+                    *replace_managed,
+                    false
+                )?)?
+            );
+            return Ok(());
+        }
+        Command::UninstallUser { home, dry_run } => {
+            reject_inspection_globals(&cli, "uninstall-user", "removal")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_setup::run(
+                    home.as_deref(),
+                    *dry_run,
+                    false,
+                    true
+                )?)?
+            );
+            return Ok(());
+        }
         Command::SetupProject {
             project_root,
             dry_run,
@@ -174,7 +206,10 @@ fn run_application() -> Result<()> {
         Err(error) => return Err(error),
     };
     match &cli.command {
-        Command::SetupProject { .. } | Command::UninstallProject { .. } => {
+        Command::SetupProject { .. }
+        | Command::UninstallProject { .. }
+        | Command::SetupUser { .. }
+        | Command::UninstallUser { .. } => {
             unreachable!("project lifecycle commands return before config loading")
         }
         Command::Files {

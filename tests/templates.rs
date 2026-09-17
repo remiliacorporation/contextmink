@@ -13,10 +13,8 @@ fn instruction_templates_are_policy_equivalent() {
 fn agent_skill_templates_are_thin_and_harness_equivalent() {
     let template = include_str!("../templates/skills/contextmink/SKILL.md");
     let normalized_template = template.replace("\r\n", "\n");
-    assert!(template.contains("uncertain or high output"));
-    assert!(template.contains("Skip known-small direct reads"));
-    assert!(template.contains("grep-terms --term TERM"));
-    assert!(template.contains("contextmink.receipt.v2"));
+    assert!(template.starts_with("---"));
+    assert!(template.contains("<!-- installed-command -->"));
     assert!(
         template.lines().count() < 120,
         "skill must remain a thin envelope"

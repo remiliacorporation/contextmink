@@ -9,7 +9,7 @@ its transcript. Aggressive truncation keeps the transcript usable, but can hide
 the one result that changes the answer. Once output is clipped, the agent often
 cannot tell whether it saw the whole result or only the beginning.
 
-Contextmink is a small, project-local transcript guard for that gap. Its commands
+Contextmink is a small transcript guard for that gap. Its commands
 enumerate, search, read, query, and capture with explicit limits. Every result
 ends with a machine-readable receipt that distinguishes:
 
@@ -21,6 +21,52 @@ ends with a machine-readable receipt that distinguishes:
 
 The result is less transcript churn, fewer repeated probes, and a reviewable
 record of what the agent actually saw.
+
+## Personal installation (default)
+
+From a verified extracted release, run:
+
+```text
+contextmink setup-user --dry-run
+contextmink setup-user
+```
+
+This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
+in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
+`~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
+binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
+or consuming-project files are changed. `--home <existing-directory>` selects
+an explicit user home, including disposable test homes. Start a fresh agent
+session and verify the skill appears. Skill descriptions support automatic
+selection; they do not guarantee a model will choose the tool on every request.
+
+Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
+shared Agent Skills location; Claude uses its router. Other harnesses may need
+an explicit skill-directory setting. A synced skill does not install a native
+runtime in a remote/cloud environment: install there separately.
+
+A host-local `user-install.json` binds installed files to raw byte hashes and
+the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
+files refuse; review them before using `--replace-managed`. The installed
+runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
+from an external release, not the installed executable. Installation preflights
+all managed paths, but does not promise a crash-atomic multi-file transaction;
+an interrupted install must be repaired before the runtime can run.
+
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
+receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+it never removes project installations or unrelated skills. Do not copy personal
+receipts between machines or move their home: install for the new home instead.
+
+Ordinary retrieval runs from the consuming project's cwd, with its local
+configuration when present and built-in defaults otherwise. Personal setup
+installs the native retrieval/capture executable; the optional Windows Bash
+bridge remains available in the release for intentional shell integration.
+
+Use `setup-project` below only for explicit shared repository adoption, pinned
+project runtimes, or repository-owned policy. Existing project receipt choices
+remain intact. Project guidance triggers are optional for skills-capable agents.
+
 
 ## See the difference
 
@@ -136,7 +182,7 @@ and installs a thin Contextmink skill only for the selected harness paths. The
 default `--skill-target auto` resolves once from existing Agent Skills, Codex,
 Pi, OMP, OpenCode, and Claude markers. Compatibility is path-based: any harness
 that consumes project `.agents/skills` uses the `agents` target without needing
-a harness-specific integration. `.codex`, `.pi`, `.omp`, `.opencode`,
+a harness-specific integration. `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`,
 `opencode.json`, and `opencode.jsonc` are convenience markers for common
 consumers before `.agents` exists. `.claude` or `CLAUDE.md` selects `claude`;
 an unmarked project resolves to `none`. Use
@@ -146,9 +192,8 @@ namespaced skill points to the canonical
 selected, while its short discovery description is the only resident skill
 metadata. Other tools can own adjacent namespaced skills without sharing or
 duplicating Contextmink policy. Setup never edits harness settings, hooks,
-`AGENTS.md`, or `CLAUDE.md`: the maintaining agent must inspect the repository,
-add one concise discovery trigger, and adapt only project-owned shell,
-native-tool, nested-repository, exclusion, and destructive-path policy.
+`AGENTS.md`, or `CLAUDE.md`. Skills-capable harnesses need no additional
+discovery trigger; only explicit repository policy needs local adaptation.
 
 Setup manages only `.agents/skills/contextmink` and
 `.claude/skills/contextmink`. Harness markers never create duplicate `.pi`,

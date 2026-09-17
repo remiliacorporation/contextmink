@@ -220,6 +220,7 @@ jobs:
           mkdir -p "${verify_root}"
           tar -xzf "${archive}" -C "${verify_root}"
           bundle="${verify_root}/${{ steps.names.outputs.bundle }}"
+          python scripts/verify_user_install.py "${bundle}/${{ matrix.binary_name }}"
           test -f "${bundle}/${{ matrix.binary_name }}"
           test -f "${bundle}/README.md"
           test -f "${bundle}/SETUP.md"
@@ -353,6 +354,8 @@ jobs:
           if ($reportedVersion -ne "contextmink ${{ steps.names.outputs.version }}") {
             throw "binary version mismatch: $reportedVersion"
           }
+          python scripts/verify_user_install.py $binary
+          if ($LASTEXITCODE -ne 0) { throw "personal install smoke failed" }
           & $binary --help | Out-File -Encoding utf8 "$env:TEMP/contextmink-help.txt"
           & $binary files src --limit 1 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
           if (!(Select-String -Path "$env:TEMP/contextmink-smoke.txt" -Pattern "CONTEXTMINK_RECEIPT")) {

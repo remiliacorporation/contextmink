@@ -1,9 +1,11 @@
-# Contextmink project reference
+# Contextmink integration reference
 
 This is the detailed, release-managed integration reference behind the
-project-local Contextmink skill. Keep the skill generic; adapt repository-owned
-shell, native-tool, nested-repository, exclusion, and destructive-path policy
-in always-loaded guidance and `.contextmink.toml`.
+Contextmink skill. The default `setup-user` installs a native runtime and binds
+its absolute path in the personal skill; run it from the consuming project.
+No project files or guidance edits are required. Use `setup-project` only for
+explicit repository adoption. Optional local policy belongs in `.contextmink.toml`
+or existing project guidance; it is not a prerequisite for ordinary retrieval.
 
 ## Bounded Output
 
@@ -14,7 +16,8 @@ more output than the transcript should carry.
   entrypoints. The relative command forms below assume that root; from a nested
   working directory, use an absolute/root-resolved launcher path or return to
   the workspace root first.
-- Choose invocation by the active shell and target: use `scripts/contextmink ...`
+- Personal skills name the native executable; use that binding directly. For
+  an explicit project installation, choose invocation by shell: use `scripts/contextmink ...`
   from Bash-hosted sessions such as macOS, Linux, Git Bash, or WSL;
   use `& tools\contextmink\bin\contextmink.exe ...` directly from Windows
   PowerShell for contextmink commands; use

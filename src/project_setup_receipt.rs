@@ -417,7 +417,7 @@ pub(super) fn managed_text_sha256(content: &[u8]) -> String {
     format!("{digest:x}")
 }
 
-pub(super) fn managed_runtime_sha256(content: &[u8]) -> String {
+pub(crate) fn managed_runtime_sha256(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     format!("{:x}", hasher.finalize())
