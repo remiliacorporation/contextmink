@@ -48,6 +48,7 @@ with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     assert str(runtime).replace("\\", "/") in skill
     assert "<!-- installed-command -->" not in skill
     assert skill.startswith("---\nname:")
+    assert (home / ".claude" / "skills" / tool / "SKILL.md").read_text(encoding="utf-8") == skill
     database = home / ".local/share/papertiger/state/papertiger.sqlite"
     if tool == "papertiger":
         plans = json.loads(run(runtime, "--db", database, "plan", "list", "--json"))

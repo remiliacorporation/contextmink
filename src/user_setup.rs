@@ -184,17 +184,6 @@ pub(crate) fn run(
             "../../../tools/contextmink/agent_integration.md",
             &reference.to_string_lossy().replace('\\', "/"),
         );
-    let frontmatter_end = skill[4..]
-        .find("\n---")
-        .context("skill needs frontmatter")?
-        + 8;
-    let router = format!(
-        "{}\n\nBefore continuing, read `{}` in full and follow it. This routing file does not contain the executable binding or workflow.\n",
-        &skill[..frontmatter_end],
-        home.join(format!(".agents/skills/{TOOL}/SKILL.md"))
-            .to_string_lossy()
-            .replace('\\', "/")
-    );
     let wanted = if remove {
         BTreeMap::new()
     } else {
@@ -206,11 +195,11 @@ pub(crate) fn run(
             ),
             (
                 format!(".agents/skills/{TOOL}/SKILL.md"),
-                skill.into_bytes(),
+                skill.as_bytes().to_vec(),
             ),
             (
                 format!(".claude/skills/{TOOL}/SKILL.md"),
-                router.into_bytes(),
+                skill.as_bytes().to_vec(),
             ),
         ])
     };
@@ -276,10 +265,22 @@ pub(crate) fn run(
         if read_optional(&receipt_path)?.as_deref() != Some(bytes.as_slice()) {
             publish(&receipt_path, &bytes)?;
         }
+        if !remove {
+            let probe = std::process::Command::new(&destination).arg("--version").output()
+                .with_context(|| format!("installed executable {} could not run; check execute permissions and run setup-user again", destination.display()))?;
+            let expected = format!("{TOOL} {}", env!("CARGO_PKG_VERSION"));
+            if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != expected
+            {
+                bail!(
+                    "installed runtime verification failed: {}; repair with setup-user from a verified external release",
+                    String::from_utf8_lossy(&probe.stderr)
+                );
+            }
+        }
     }
     Ok(
         serde_json::json!({"schema":format!("{TOOL}.user_setup.v1"),"home":home,"dry_run":dry_run,"operation":if remove {"remove"} else {"install"},"actions":actions,
-        "next_actions": ["Start a fresh agent session and verify the skill is listed. No AGENTS.md or harness settings changes are required.", "Personal data and the lifecycle receipt survive uninstall-user. Project installations and project guidance are untouched."]}),
+        "next_actions": ["After installation, start a fresh agent session to refresh skill discovery. No agent-side copying or AGENTS.md edits are needed. Selection remains model-dependent.", "Personal data and the lifecycle receipt survive uninstall-user. Project installations and project guidance are untouched."]}),
     )
 }
 

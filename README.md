@@ -38,7 +38,7 @@ From a verified extracted release, run:
 .\contextmink.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
+This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
 in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
 `~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -46,9 +46,11 @@ or consuming-project files are changed. `--home <existing-directory>` selects
 an explicit user home, including disposable test homes. Start a fresh agent
 session and verify the skill appears. Skill descriptions support automatic
 selection; they do not guarantee a model will choose the tool on every request.
+The installer writes both complete skill files itself and executes the copied
+runtime before reporting success. No agent-side copying or routing setup remains.
 
 Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
-shared Agent Skills location; Claude uses its router. Other harnesses may need
+shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
@@ -185,7 +187,7 @@ On Windows PowerShell, use
 `& .\contextmink.exe setup-project C:\path\to\repository`. The command copies
 the platform-appropriate release binaries, installs both project launchers,
 generates a real project profile, adds the binary directory to `.gitignore`,
-and installs a thin Contextmink skill only for the selected harness paths. The
+and installs a short Contextmink skill only for the selected harness paths. The
 default `--skill-target auto` resolves once from existing Agent Skills, Codex,
 Pi, OMP, OpenCode, and Claude markers. Compatibility is path-based: any harness
 that consumes project `.agents/skills` uses the `agents` target without needing
