@@ -17,6 +17,8 @@ pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
     "json-select",
     "sqlite",
     "sqlite-schema",
+    "setup-user",
+    "uninstall-user",
     "setup-project",
     "uninstall-project",
     "capture",
@@ -718,10 +720,26 @@ pub(crate) enum Command {
         )]
         max_line_chars: usize,
     },
-    /// Install a project-local release and report the agent-owned integration work.
+    /// Install personal skills and a native runtime without changing consuming projects.
     #[command(
-        after_help = "Writes a platform-neutral ownership receipt and never edits repository guidance or harness settings. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
+        after_help = "Writes a host-local ownership receipt and never edits repository guidance or harness settings. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
     )]
+    SetupUser {
+        #[arg(long)]
+        home: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        replace_managed: bool,
+    },
+    /// Remove receipt-owned personal skills and runtime; leaves projects untouched
+    UninstallUser {
+        #[arg(long)]
+        home: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Install optional project-owned integration for shared repository adoption
     SetupProject {
         #[arg(
             value_name = "PROJECT_ROOT",

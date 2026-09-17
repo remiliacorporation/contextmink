@@ -1,6 +1,6 @@
 ---
 name: contextmink
-description: Use the project-local Contextmink CLI before generic repository reads, searches, structured-data inspection, or command capture may produce uncertain or high output. Skip known-small direct reads and project-native compact or domain-query commands.
+description: Use before broad file discovery, repository searches, large file/log reads or structured-data inspection, including find/rg output you would otherwise pipe to head. Skip known-small reads and project-native compact queries.
 ---
 
-Read and follow [the canonical skill](../../../.agents/skills/contextmink/SKILL.md).
+Read [the canonical skill](../../../.agents/skills/contextmink/SKILL.md) and follow it.

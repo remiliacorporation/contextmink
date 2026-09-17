@@ -1,5 +1,51 @@
 # Setting Up contextmink in a Repository
 
+## Personal installation (default)
+
+From a verified extracted release, run:
+
+```text
+contextmink setup-user --dry-run
+contextmink setup-user
+```
+
+This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
+in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
+`~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
+binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
+or consuming-project files are changed. `--home <existing-directory>` selects
+an explicit user home, including disposable test homes. Start a fresh agent
+session and verify the skill appears. Skill descriptions support automatic
+selection; they do not guarantee a model will choose the tool on every request.
+
+Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
+shared Agent Skills location; Claude uses its router. Other harnesses may need
+an explicit skill-directory setting. A synced skill does not install a native
+runtime in a remote/cloud environment: install there separately.
+
+A host-local `user-install.json` binds installed files to raw byte hashes and
+the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
+files refuse; review them before using `--replace-managed`. The installed
+runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
+from an external release, not the installed executable. Installation preflights
+all managed paths, but does not promise a crash-atomic multi-file transaction;
+an interrupted install must be repaired before the runtime can run.
+
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
+receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+it never removes project installations or unrelated skills. Do not copy personal
+receipts between machines or move their home: install for the new home instead.
+
+Ordinary retrieval runs from the consuming project's cwd, with its local
+configuration when present and built-in defaults otherwise. Personal setup
+installs the native retrieval/capture executable; the optional Windows Bash
+bridge remains available in the release for intentional shell integration.
+
+Use `setup-project` below only for explicit shared repository adoption, pinned
+project runtimes, or repository-owned policy. Existing project receipt choices
+remain intact. Project guidance triggers are optional for skills-capable agents.
+
+
 This guide is for adding `contextmink` to an existing repository.
 
 `contextmink` is a transcript guard. Use it before broad file, text, line-slice,
@@ -128,7 +174,7 @@ Adapt the installation to the project before copying generic policy:
 6. Choose the integration depth deliberately. `setup-project` is the
    deterministic agent integration, but skill residence is project-selected.
    Its default `--skill-target auto` detects existing shared Agent Skills and
-   Codex markers (`.agents`, `.codex`, or `AGENTS.md`), Pi's `.pi` directory,
+   Codex markers (`.agents`, `.codex`, `.cursor`, or `AGENTS.md`), Pi's `.pi` directory,
    OMP's `.omp` directory, OpenCode's `.opencode` directory or `opencode.json` /
    `opencode.jsonc`, and Claude markers (`.claude` or `CLAUDE.md`) only on first
    install. Compatibility is path-based rather than a closed harness allowlist:
@@ -194,17 +240,10 @@ Adapt the installation to the project before copying generic policy:
    comparing it to the release template or replacing it. Invalid configuration
    fails before any setup write.
 
-4. If a skill target was selected, read the installed Contextmink skill and
-   `tools/contextmink/agent_integration.md`, inspect the existing guidance
-   hierarchy, and add one concise trigger to `AGENTS.md`, `CLAUDE.md`, or the
-   repository's actual equivalent. Setup intentionally never edits agent
-   guidance because only the maintaining agent can reconcile shell rules,
-   project-native compact tools, and existing context policy correctly. Use
-   this wording or an equivalent with the same boundary:
-
-   > Before broad or potentially high-output file, text, structured-data, or
-   > command-output reads, load the project Contextmink skill. Skip known-small
-   > direct reads and project-native compact or domain-query commands.
+4. Start a fresh agent session and verify that Contextmink appears in its skills.
+   Skills-capable harnesses need no AGENTS.md/CLAUDE.md edit. Project guidance is
+   an optional fallback for harnesses without skills, or explicit local policy.
+   A binary-only `none` selection does not provide skill discovery.
 
 5. Verify from the target repository root and a representative nested working
    directory:
@@ -298,9 +337,8 @@ Set up contextmink in <target-repo> from the unpacked release at <path>. Inspect
 the intended workspace root, existing agent-guidance hierarchy, active shells,
 project-native bounded/query commands, nested repositories, high-output trees,
 and irrecoverable paths. Run `contextmink setup-project <target-repo>
---dry-run`, review its complete action plan, then apply it. Adapt
-`tools/contextmink/agent_integration.md` into the existing guidance rather than
-blindly appending it. Configure repository-specific excludes and guard
+--dry-run`, review its complete action plan, then apply it. Verify the installed skill is discoverable in a fresh agent session. Do not
+rewrite project guidance as part of installation. Configure repository-specific excludes and guard
 fragments. State whether broad scans may cross nested repositories or should
 use exact roots/`--skip-nested-repos`. Verify the v2 receipt, nested-repository
 disclosure/skip behavior, and unconditional git-clean denial from the workspace
@@ -543,8 +581,8 @@ canonical file. Codex-facing `agents/openai.yaml` metadata exists only under
 the shared Agent Skills directory. The
 source checkout's changelog-writing skill is repository-local development
 guidance and is not installed into consumer repositories. Do not fork the
-Contextmink semantic body by harness. Keep only its discovery trigger in
-always-loaded guidance so the skill is selected for uncertain-output reads.
+Contextmink semantic body by harness. An always-loaded discovery trigger is optional; the skill description supplies
+the ordinary selection boundary.
 Ordinary retrieval uses the skill and command help; the detailed integration
 reference is loaded for setup, policy changes, or unfamiliar receipt semantics.
 

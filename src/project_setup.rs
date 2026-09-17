@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{ContextminkConfig, canonical_normalized, load_context_config, validate_profile};
 
 #[path = "project_setup_receipt.rs"]
-mod receipt;
+pub(crate) mod receipt;
 
 use receipt::{
     INSTALL_RECEIPT_PATH, MANAGED_RUNTIME_PATHS, RUNTIME_RECEIPT_PATH, build_install_receipt,
@@ -35,7 +35,8 @@ const CLAUDE_SKILL_PATHS: &[&str] = &[".claude/skills/contextmink/SKILL.md"];
 // bootstrap catalog only selects that shared residence for common compatible
 // harnesses before `.agents` exists; it never creates harness-native copies.
 const SHARED_AGENT_SKILLS_DIRECTORIES: &[&str] = &[".agents"];
-const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] = &[".codex", ".pi", ".omp", ".opencode"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] =
+    &[".codex", ".cursor", ".pi", ".omp", ".opencode"];
 const COMMON_AGENT_SKILLS_BOOTSTRAP_FILES: &[&str] =
     &["AGENTS.md", "opencode.json", "opencode.jsonc"];
 const CLAUDE_HARNESS_DIRECTORIES: &[&str] = &[".claude"];
@@ -666,9 +667,9 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     let project_root = canonical_normalized(&root)
         .expect("setup-project root was canonicalized successfully before rendering");
     let skill_next_action = if resolved_skill_target == SkillTarget::None {
-        "No Contextmink skill was selected. Point repository-owned harness guidance to tools/contextmink/agent_integration.md, or rerun setup-project with an explicit --skill-target when skill discovery is wanted."
+        "No Contextmink skill was selected. Use setup-user for personal discovery or rerun setup-project with --skill-target agents for a project skill. Neither requires edits to AGENTS.md or CLAUDE.md."
     } else {
-        "Review the selected Contextmink skill and tools/contextmink/agent_integration.md, then add one concise repository-guidance trigger for broad or potentially high-output reads; setup-project never edits AGENTS.md or CLAUDE.md."
+        "Start a fresh agent session and verify the selected Contextmink skill is listed. No repository-guidance trigger is required for skills-capable harnesses; setup-project never edits AGENTS.md or CLAUDE.md."
     };
     let mut next_actions = vec![
         "Review .contextmink.toml and add only project-specific generated or high-output exclude globs."
@@ -1445,6 +1446,13 @@ mod tests {
             (
                 "auto-codex",
                 &[".codex/"][..],
+                SkillTarget::Agents,
+                true,
+                false,
+            ),
+            (
+                "auto-cursor",
+                &[".cursor/"][..],
                 SkillTarget::Agents,
                 true,
                 false,

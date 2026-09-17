@@ -1,5 +1,51 @@
 # contextmink Setup
 
+## Personal installation (default)
+
+From a verified extracted release, run:
+
+```text
+contextmink setup-user --dry-run
+contextmink setup-user
+```
+
+This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
+in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
+`~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
+binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
+or consuming-project files are changed. `--home <existing-directory>` selects
+an explicit user home, including disposable test homes. Start a fresh agent
+session and verify the skill appears. Skill descriptions support automatic
+selection; they do not guarantee a model will choose the tool on every request.
+
+Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
+shared Agent Skills location; Claude uses its router. Other harnesses may need
+an explicit skill-directory setting. A synced skill does not install a native
+runtime in a remote/cloud environment: install there separately.
+
+A host-local `user-install.json` binds installed files to raw byte hashes and
+the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
+files refuse; review them before using `--replace-managed`. The installed
+runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
+from an external release, not the installed executable. Installation preflights
+all managed paths, but does not promise a crash-atomic multi-file transaction;
+an interrupted install must be repaired before the runtime can run.
+
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
+receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+it never removes project installations or unrelated skills. Do not copy personal
+receipts between machines or move their home: install for the new home instead.
+
+Ordinary retrieval runs from the consuming project's cwd, with its local
+configuration when present and built-in defaults otherwise. Personal setup
+installs the native retrieval/capture executable; the optional Windows Bash
+bridge remains available in the release for intentional shell integration.
+
+Use `setup-project` below only for explicit shared repository adoption, pinned
+project runtimes, or repository-owned policy. Existing project receipt choices
+remain intact. Project guidance triggers are optional for skills-capable agents.
+
+
 The full setup guide is in [docs/setup.md](docs/setup.md). From the unpacked
 release, the agent responsible for maintaining the target repository runs:
 
@@ -22,9 +68,8 @@ The skill points to `tools/contextmink/agent_integration.md`. Setup
 never edits repository agent guidance or harness settings. An existing
 `.contextmink.toml` is validated and preserved as repository-owned
 configuration; invalid configuration fails before any write. The same command
-restores ignored host binaries in a fresh clone. The maintaining agent adds one
-concise discovery trigger and adapts only repository-owned shell, native-tool,
-nested-repository, exclusion, and destructive-path policy. Receipt-owned
+restores ignored host binaries in a fresh clone. No project guidance trigger is required in skills-capable harnesses. Adapt
+repository-owned policy only when the project needs custom behavior. Receipt-owned
 upgrades need no flag; use `--replace-managed` only for a reviewed modified or
 pre-receipt destination. The ignored
 `tools/contextmink/bin/runtime-install.json` records exact host binary hashes.
