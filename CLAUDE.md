@@ -68,9 +68,9 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 - `scripts/contextmink` and `templates/scripts/contextmink` stay byte-identical.
 - Give each setup-managed skill one template and install its canonical file
   under `.agents/skills`.
-  Claude skills are thin routers with inherited discovery metadata and a link
-  to the canonical file. Keep the Contextmink skill a discovery envelope around
-  the canonical integration reference.
+  Generate the identical complete short skill body in Claude discovery paths;
+  never maintain a separate harness-specific procedure or require a router hop.
+  Keep detailed integration reference loading conditional.
 - When setup-managed surfaces change, update setup preflight, idempotence,
   replacement, release-package, and extracted-install tests in the same change.
 - The Windows bridge and `capture` share process-boundary and destructive-guard

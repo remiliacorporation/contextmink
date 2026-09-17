@@ -175,23 +175,12 @@ fn contextmink_skill_files(target: SkillTarget) -> Vec<ManagedFile> {
     if target.installs_claude() {
         files.push(ManagedFile {
             relative_path: PathBuf::from(".claude/skills/contextmink/SKILL.md"),
-            content: claude_skill_router(),
+            content: CONTEXTMINK_SKILL.to_vec(),
             executable: false,
             ownership: SetupFileOwnership::ReleaseManagedText,
         });
     }
     files
-}
-
-fn claude_skill_router() -> Vec<u8> {
-    let canonical = std::str::from_utf8(CONTEXTMINK_SKILL)
-        .expect("bundled skill is UTF-8")
-        .replace("\r\n", "\n");
-    let (frontmatter, _) = canonical
-        .split_once("\n---\n")
-        .expect("bundled skill has complete frontmatter");
-    format!("{frontmatter}\n---\n\nRead and follow [the canonical skill](../../../.agents/skills/contextmink/SKILL.md).\n")
-        .into_bytes()
 }
 
 struct PreflightFile {
@@ -1555,7 +1544,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_selection_installs_canonical_skill_and_upgrades_owned_full_copy() {
+    fn complete_claude_skill_upgrades_an_owned_router() {
         let (project, binary) = fixture("canonical-claude-router");
         let mut selected = request(&project, &binary, false);
         selected.skill_target = SkillTarget::Claude;
@@ -1564,20 +1553,9 @@ mod tests {
         let canonical = project.join(".agents/skills/contextmink/SKILL.md");
         let router = project.join(".claude/skills/contextmink/SKILL.md");
         let expected = fs::read(&router).unwrap();
-        let router_text = String::from_utf8(expected.clone()).unwrap();
-        assert!(router_text.contains("../../../.agents/skills/contextmink/SKILL.md"));
-        assert_eq!(
-            fs::canonicalize(
-                router
-                    .parent()
-                    .unwrap()
-                    .join("../../../.agents/skills/contextmink/SKILL.md")
-            )
-            .unwrap(),
-            fs::canonicalize(&canonical).unwrap()
-        );
-        assert!(expected.len() < fs::metadata(&canonical).unwrap().len() as usize);
-        fs::write(&router, CONTEXTMINK_SKILL).unwrap();
+        assert_eq!(expected, fs::read(&canonical).unwrap());
+        let old_skill: &[u8] = b"---\nname: contextmink\ndescription: Legacy router\n---\nRead ../../../.agents/skills/contextmink/SKILL.md\n";
+        fs::write(&router, old_skill).unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
         receipt
@@ -1585,11 +1563,11 @@ mod tests {
             .iter_mut()
             .find(|file| file.path == ".claude/skills/contextmink/SKILL.md")
             .unwrap()
-            .sha256 = managed_text_sha256(CONTEXTMINK_SKILL);
+            .sha256 = managed_text_sha256(old_skill);
         fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
         let preview = setup_project(request(&project, &binary, true)).unwrap();
         assert!(preview.ready);
-        assert_eq!(fs::read(&router).unwrap(), CONTEXTMINK_SKILL);
+        assert_eq!(fs::read(&router).unwrap(), old_skill);
         setup_project(request(&project, &binary, false)).unwrap();
         assert_eq!(fs::read(router).unwrap(), expected);
         assert_eq!(fs::read(canonical).unwrap(), CONTEXTMINK_SKILL);
@@ -1741,7 +1719,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/contextmink/SKILL.md")).unwrap(),
-            claude_skill_router()
+            CONTEXTMINK_SKILL.to_vec()
         );
         assert_eq!(
             fs::read(project.join(".agents/skills/contextmink/agents/openai.yaml")).unwrap(),

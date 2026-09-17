@@ -16,7 +16,7 @@ From a verified extracted release, run:
 .\contextmink.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/contextmink`, a Claude router
+This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
 in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
 `~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -24,9 +24,11 @@ or consuming-project files are changed. `--home <existing-directory>` selects
 an explicit user home, including disposable test homes. Start a fresh agent
 session and verify the skill appears. Skill descriptions support automatic
 selection; they do not guarantee a model will choose the tool on every request.
+The installer writes both complete skill files itself and executes the copied
+runtime before reporting success. No agent-side copying or routing setup remains.
 
 Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
-shared Agent Skills location; Claude uses its router. Other harnesses may need
+shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
@@ -186,9 +188,9 @@ Adapt the installation to the project before copying generic policy:
    `opencode.jsonc`, and Claude markers (`.claude` or `CLAUDE.md`) only on first
    install. Compatibility is path-based rather than a closed harness allowlist:
    any harness that consumes project `.agents/skills` uses `agents`; the named
-   markers only bootstrap common consumers before `.agents` exists. Claude uses
-   a thin router to the canonical `.agents/skills` file, so `claude` requests
-   and Claude-only detection resolve to `both`. An unmarked repository selects
+   markers only bootstrap common consumers before `.agents` exists. Claude receives
+   the same complete short skill body. `claude` requests and Claude-only
+   detection resolve to `both` so shared discovery remains available. An unmarked repository selects
    `none`. The concrete result is receipt-frozen so
    later upgrades do not react to incidental harness files. Use
    `--skill-target agents|claude|both|none` for an explicit first selection or
@@ -199,9 +201,9 @@ Adapt the installation to the project before copying generic policy:
    general-purpose skills owned by another tool or workflow.
    It manages only `.agents/skills/contextmink` and
    `.claude/skills/contextmink`; Pi, OMP, and OpenCode markers do not create
-   duplicate harness-native copies. Existing receipt-owned full Claude copies
-   upgrade to routers. Router discovery metadata is generated from the canonical
-   skill so its activation stays aligned.
+   additional harness-native copies. Existing receipt-owned routers upgrade to
+   complete skills. Both installed bodies are generated from one template;
+   maintain no independent harness-specific procedure.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -495,9 +497,8 @@ copy of the Rust crate:
    lock or manifest rather than redetecting it on every refresh. For `agents`,
    copy `templates/skills/contextmink/SKILL.md` to
    `.agents/skills/contextmink/SKILL.md` and copy `agents/openai.yaml` under that
-   skill. For `claude` or `both`, install that canonical skill and write a thin
-   `.claude/skills/contextmink/SKILL.md` router with the canonical frontmatter
-   followed by a link to `../../../.agents/skills/contextmink/SKILL.md`.
+   skill. For `claude` or `both`, also copy the same complete template to
+   `.claude/skills/contextmink/SKILL.md`. Both paths must contain the same body.
    In a source-vendored integration these
    copies are owned by the target repository rather than a binary-install
    receipt. Record their hashes, retire a deselected copy only while its prior
@@ -582,9 +583,8 @@ bridge for the Bash launcher or other Bash-first repository scripts. The policy
 content is otherwise shell-agnostic.
 
 Setup installs the canonical Contextmink skill under `.agents/skills`
-for compatible Agent Skills consumers. Claude Code discovers a thin router
-under `.claude/skills` with inherited frontmatter and a relative link to that
-canonical file. Codex-facing `agents/openai.yaml` metadata exists only under
+for compatible Agent Skills consumers. Claude Code discovers the same complete
+short body under `.claude/skills`, generated from the same source template. Codex-facing `agents/openai.yaml` metadata exists only under
 the shared Agent Skills directory. The
 source checkout's changelog-writing skill is repository-local development
 guidance and is not installed into consumer repositories. Do not fork the

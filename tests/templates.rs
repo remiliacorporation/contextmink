@@ -43,19 +43,7 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
         let text = std::fs::read_to_string(&router)
             .unwrap()
             .replace("\r\n", "\n");
-        let metadata = normalized_template.split_once("\n---\n").unwrap().0;
-        assert!(text.starts_with(&format!("{metadata}\n---\n")));
-        assert!(text.contains("../../../.agents/skills/contextmink/SKILL.md"));
-        assert_eq!(
-            std::fs::canonicalize(
-                router
-                    .parent()
-                    .unwrap()
-                    .join("../../../.agents/skills/contextmink/SKILL.md")
-            )
-            .unwrap(),
-            std::fs::canonicalize(root.join(".agents/skills/contextmink/SKILL.md")).unwrap()
-        );
+        assert_eq!(text, normalized_template);
     }
     let installed_metadata = root.join(".agents/skills/contextmink/agents/openai.yaml");
     if installed_metadata.is_file() {
@@ -129,7 +117,7 @@ fn public_setup_names_supported_project_skill_harnesses() {
         "`opencode.jsonc`",
         "`--approve`",
         "path-based rather than a closed harness allowlist",
-        "duplicate harness-native copies",
+        "generated from one template",
     ] {
         assert!(
             setup.contains(required),

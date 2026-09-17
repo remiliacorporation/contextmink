@@ -264,7 +264,7 @@ jobs:
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
           test ! -e "${project}/scripts/contextmink.cmd"
-          grep -Fq '[the canonical skill](../../../.agents/skills/contextmink/SKILL.md)' "${project}/.claude/skills/contextmink/SKILL.md"
+          cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
           (cd "${project}/.claude/skills/contextmink" && test -f ../../../.agents/skills/contextmink/SKILL.md)
           awk '/^---$/ { if (++delimiters == 2) exit } { print }' "${project}/.agents/skills/contextmink/SKILL.md" > "${verify_root}/agent-frontmatter"
           awk '/^---$/ { if (++delimiters == 2) exit } { print }' "${project}/.claude/skills/contextmink/SKILL.md" > "${verify_root}/claude-frontmatter"
@@ -386,10 +386,7 @@ jobs:
           if (!(Test-Path $claudeSkill)) { throw "Claude contextmink envelope missing" }
           $canonicalText = (Get-Content -Raw $agentSkill).Replace("`r`n", "`n")
           $routerText = (Get-Content -Raw $claudeSkill).Replace("`r`n", "`n")
-          if ($canonicalText.Split("`n---`n", 2)[0] -ne $routerText.Split("`n---`n", 2)[0]) { throw "contextmink skill metadata diverged" }
-          if (!$routerText.Contains('[the canonical skill](../../../.agents/skills/contextmink/SKILL.md)')) { throw "contextmink canonical skill route missing" }
-          $routerTarget = Join-Path (Split-Path $claudeSkill) '../../../.agents/skills/contextmink/SKILL.md'
-          if ((Resolve-Path $routerTarget).Path -ne (Resolve-Path $agentSkill).Path) { throw "contextmink skill route does not resolve" }
+          if ($canonicalText -ne $routerText) { throw "contextmink skill bodies diverged" }
           if (Test-Path "$project/scripts/contextmink.cmd") { throw "retired PowerShell diagnostic shim was installed" }
           $projectBin = "$project/tools/contextmink/bin"
           Set-Content -LiteralPath "$project/selection.json" -Value '{"result":{"total":17}}'
