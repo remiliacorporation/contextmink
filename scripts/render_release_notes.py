@@ -85,7 +85,7 @@ def render(version, text):
         raise ValueError(f"CHANGELOG.md has no release notes for {version}; add user-visible changes")
     return "\n".join(body).strip() + "\n\n" + (
         "Prebuilt CLI archives are attached for Windows x64, macOS Intel, macOS ARM, and Linux x64.\n"
-        "Each archive includes the Contextmink binary, changelog, setup docs, templates, licenses, and a source manifest; the Windows archive also includes contextmink-bridge.exe.\n"
+        "Merge `.agents`, `.claude`, and `tools` into the project root. Skills are ready to discover; executables, documentation, licenses and the source manifest live under `tools/contextmink`.\n"
         "Verify the adjacent SHA-256 checksum before extraction.\n"
     )
 
