@@ -88,7 +88,13 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
     assert_eq!(bridge_skill.exists(), cfg!(windows));
     if cfg!(windows) {
         let body = fs::read_to_string(&bridge_skill).unwrap();
-        assert!(body.contains(&bridge.to_string_lossy().replace('\\', "/")));
+        // Windows runners can expose an 8.3 TEMP alias. Installation binds the
+        // canonical path, so compare identities rather than the caller's spelling.
+        let canonical_bridge = fs::canonicalize(&bridge)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(body.contains(canonical_bridge.trim_start_matches("//?/")));
         assert!(!body.contains("<!-- installed-command -->"));
         assert_eq!(
             fs::read(&bridge_skill).unwrap(),
