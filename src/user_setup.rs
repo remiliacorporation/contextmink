@@ -5,72 +5,16 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::user_installation::{
+    Receipt, binary_path, paths, personal_root, retrieval_paths, validate_path,
+};
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 
 use crate::config::project_setup::receipt::managed_runtime_sha256 as sha256;
 const TOOL: &str = "contextmink";
 const SKILL: &str = include_str!("../templates/skills/contextmink/SKILL.md");
+const BRIDGE_SKILL: &str = include_str!("../templates/skills/contextmink-bridge/SKILL.md");
 const REFERENCE: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Receipt {
-    schema: String,
-    version: String,
-    home: PathBuf,
-    installed: bool,
-    files: BTreeMap<String, String>,
-}
-
-fn personal_root() -> String {
-    format!(".local/share/{TOOL}")
-}
-
-fn binary_path() -> String {
-    format!(
-        "{}/bin/{TOOL}{}",
-        personal_root(),
-        std::env::consts::EXE_SUFFIX
-    )
-}
-
-fn paths() -> Vec<String> {
-    vec![
-        binary_path(),
-        format!("{}/agent_integration.md", personal_root()),
-        format!(".agents/skills/{TOOL}/SKILL.md"),
-        format!(".claude/skills/{TOOL}/SKILL.md"),
-    ]
-}
-
-/// Refuse links and wrong file types at every boundary before reading or writing.
-fn validate_path(home: &Path, relative: &str) -> Result<PathBuf> {
-    let mut path = home.to_path_buf();
-    let components: Vec<_> = Path::new(relative).components().collect();
-    for (i, component) in components.iter().enumerate() {
-        let std::path::Component::Normal(part) = component else {
-            bail!("invalid personal install path {relative}; use a verified release's setup-user");
-        };
-        path.push(part);
-        match fs::symlink_metadata(&path) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink()
-                    || (i + 1 < components.len() && !meta.is_dir())
-                    || (i + 1 == components.len() && !meta.is_file())
-                {
-                    bail!(
-                        "personal install path {} is a link or wrong file type; move it aside before setup-user",
-                        path.display()
-                    );
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
-        }
-    }
-    Ok(path)
-}
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -136,11 +80,21 @@ pub(crate) fn run(
         .context("invalid user-install.json; restore its verified backup before setup-user")?;
     let schema = format!("{TOOL}.user_install.v1");
     if let Some(receipt) = &previous {
+        // The pre-bridge Windows installer owned exactly the retrieval set.
+        // Accept that complete older set for upgrade/removal, never a partial
+        // current receipt or additional unowned paths.
+        let expected_paths = if cfg!(windows)
+            && semver::Version::parse(&receipt.version)? < semver::Version::new(0, 14, 0)
+        {
+            retrieval_paths()
+        } else {
+            paths()
+        };
         if receipt.schema != schema
             || receipt.home != home
-            || (receipt.installed && receipt.files.len() != paths().len())
+            || (receipt.installed && receipt.files.len() != expected_paths.len())
             || (!receipt.installed && !receipt.files.is_empty())
-            || receipt.files.keys().any(|p| !paths().contains(p))
+            || receipt.files.keys().any(|p| !expected_paths.contains(p))
             || receipt
                 .files
                 .values()
@@ -184,7 +138,7 @@ pub(crate) fn run(
             "../../../tools/contextmink/agent_integration.md",
             &reference.to_string_lossy().replace('\\', "/"),
         );
-    let wanted = if remove {
+    let mut wanted = if remove {
         BTreeMap::new()
     } else {
         BTreeMap::from([
@@ -203,8 +157,56 @@ pub(crate) fn run(
             ),
         ])
     };
+    if cfg!(windows) && !remove {
+        let bridge = source.with_file_name("contextmink-bridge.exe");
+        let bytes = fs::read(&bridge).with_context(|| format!(
+            "missing sibling bridge {}; run setup-user from a complete extracted Windows release",
+            bridge.display()
+        ))?;
+        let probe = std::process::Command::new(&bridge)
+            .arg("--version")
+            .output()
+            .with_context(|| format!("cannot execute sibling bridge {}; run setup-user from a complete verified Windows release", bridge.display()))?;
+        let expected = format!("contextmink-bridge {}", env!("CARGO_PKG_VERSION"));
+        if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != expected {
+            bail!(
+                "sibling bridge does not match {expected}; run setup-user from a complete verified Windows release"
+            );
+        }
+        let relative = format!("{}/bin/contextmink-bridge.exe", personal_root());
+        let binding = format!(
+            "Personal bridge: `{}`. Use an explicitly selected project bridge when the project pins its own runtime.",
+            home.join(&relative).to_string_lossy().replace('\\', "/")
+        );
+        if !BRIDGE_SKILL.contains("<!-- installed-command -->") {
+            bail!(
+                "release bridge skill has no command binding; use a complete verified Windows release"
+            );
+        }
+        let skill = BRIDGE_SKILL
+            .replace("\r\n", "\n")
+            .replace("<!-- installed-command -->", &binding);
+        wanted.insert(relative, bytes);
+        for directory in [".agents", ".claude"] {
+            wanted.insert(
+                format!("{directory}/skills/contextmink-bridge/SKILL.md"),
+                skill.as_bytes().to_vec(),
+            );
+        }
+    }
     let mut actions = Vec::new();
-    for relative in paths() {
+    let selected_paths = if remove {
+        previous
+            .as_ref()
+            .context("uninstall-user requires an existing receipt")?
+            .files
+            .keys()
+            .cloned()
+            .collect()
+    } else {
+        paths()
+    };
+    for relative in selected_paths {
         let path = validate_path(&home, &relative)?;
         let existing = read_optional(&path)?;
         let owned = previous.as_ref().and_then(|r| r.files.get(&relative));
@@ -291,67 +293,4 @@ fn installed_binding(home: &Path) -> String {
             .to_string_lossy()
             .replace('\\', "/")
     )
-}
-
-/// A personal runtime refuses a torn or divergent installation before doing work.
-pub(crate) fn verify_runtime() -> Result<()> {
-    let exe = std::env::current_exe()?;
-    let Some(root) = exe.parent().and_then(Path::parent) else {
-        return Ok(());
-    };
-    if root.file_name().and_then(|s| s.to_str()) != Some(TOOL)
-        || root
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|s| s.to_str())
-            != Some("share")
-        || root
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::file_name)
-            .and_then(|s| s.to_str())
-            != Some(".local")
-    {
-        return Ok(());
-    }
-    let home = root
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .context("personal runtime has no home; run setup-user from an external release")?;
-    let path = validate_path(home, &format!("{}/user-install.json", personal_root()))?;
-    let bytes = fs::read(&path).with_context(|| {
-        format!(
-            "personal receipt is missing; run {TOOL} setup-user from a verified external release"
-        )
-    })?;
-    let receipt: Receipt = serde_json::from_slice(&bytes).context(
-        "invalid personal receipt; restore it or repair with setup-user from a verified release",
-    )?;
-    let expected_root = receipt.home.join(personal_root());
-    if !receipt.installed
-        || receipt.schema != format!("{TOOL}.user_install.v1")
-        || receipt.version != env!("CARGO_PKG_VERSION")
-        || fs::canonicalize(expected_root)? != fs::canonicalize(root)?
-        || receipt.files.len() != paths().len()
-        || receipt.files.keys().any(|p| !paths().contains(p))
-    {
-        bail!(
-            "personal installation identity differs; run {TOOL} setup-user from a verified external release"
-        );
-    }
-    for (relative, hash) in &receipt.files {
-        let file = validate_path(&receipt.home, relative)?;
-        if sha256(
-            &fs::read(&file)
-                .with_context(|| format!("missing {}; repair with setup-user", file.display()))?,
-        ) != *hash
-        {
-            bail!(
-                "personal file {} differs from its receipt; review it, then repair with setup-user --replace-managed",
-                file.display()
-            );
-        }
-    }
-    Ok(())
 }

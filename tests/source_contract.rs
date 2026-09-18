@@ -34,3 +34,33 @@ fn ignored_rust_results_require_local_guardrail_justification() {
         }
     }
 }
+
+#[test]
+fn repository_does_not_track_python_scripts() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Cargo's source archive has no Git index; its scripts directory is checked
+    // directly. In a checkout also catch scripts added outside that directory.
+    for entry in fs::read_dir(root.join("scripts")).unwrap() {
+        let path = entry.unwrap().path();
+        assert!(
+            !path.extension().is_some_and(|e| e == "py" || e == "pyw"),
+            "Python script remains at {}",
+            path.display()
+        );
+    }
+    if root.join(".git").exists() {
+        let output = std::process::Command::new("git")
+            .args(["ls-files", "-z", "--", "*.py", "*.pyw"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        for path in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+            let path = std::str::from_utf8(path).unwrap();
+            assert!(
+                !root.join(path).exists(),
+                "tracked Python script remains: {path}"
+            );
+        }
+    }
+}

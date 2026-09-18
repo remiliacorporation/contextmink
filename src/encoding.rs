@@ -460,4 +460,5 @@ pub(crate) fn read_required_text(path: &Path) -> Result<(String, &'static str)> 
 }
 
 #[cfg(test)]
+#[path = "encoding/tests.rs"]
 mod tests;

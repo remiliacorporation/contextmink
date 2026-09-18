@@ -22,6 +22,7 @@ use receipt::{
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
 const CONTEXTMINK_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
 const CONTEXTMINK_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
+const BRIDGE_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink-bridge/SKILL.md");
 const CONTEXTMINK_OPENAI_METADATA: &[u8] =
     include_bytes!("../templates/skills/contextmink/agents/openai.yaml");
 const GITIGNORE_COMMENT: &str = "# contextmink project-local release binaries";
@@ -29,8 +30,12 @@ const GITIGNORE_ENTRY: &str = "/tools/contextmink/bin/";
 const AGENTS_SKILL_PATHS: &[&str] = &[
     ".agents/skills/contextmink/SKILL.md",
     ".agents/skills/contextmink/agents/openai.yaml",
+    ".agents/skills/contextmink-bridge/SKILL.md",
 ];
-const CLAUDE_SKILL_PATHS: &[&str] = &[".claude/skills/contextmink/SKILL.md"];
+const CLAUDE_SKILL_PATHS: &[&str] = &[
+    ".claude/skills/contextmink/SKILL.md",
+    ".claude/skills/contextmink-bridge/SKILL.md",
+];
 // Compatibility is anchored in the shared `.agents/skills` contract. The
 // bootstrap catalog only selects that shared residence for common compatible
 // harnesses before `.agents` exists; it never creates harness-native copies.
@@ -154,7 +159,7 @@ pub(super) enum SetupFileOwnership {
     RepositoryOwnedConfig,
 }
 
-fn contextmink_skill_files(target: SkillTarget) -> Vec<ManagedFile> {
+fn contextmink_skill_files(target: SkillTarget, windows: bool) -> Vec<ManagedFile> {
     let mut files = Vec::new();
     if target.installs_agents() {
         files.extend([
@@ -179,6 +184,23 @@ fn contextmink_skill_files(target: SkillTarget) -> Vec<ManagedFile> {
             executable: false,
             ownership: SetupFileOwnership::ReleaseManagedText,
         });
+    }
+    if windows {
+        for (directory, selected) in [
+            (".agents", target.installs_agents()),
+            (".claude", target.installs_claude()),
+        ] {
+            if selected {
+                files.push(ManagedFile {
+                    relative_path: PathBuf::from(format!(
+                        "{directory}/skills/contextmink-bridge/SKILL.md"
+                    )),
+                    content: BRIDGE_SKILL.to_vec(),
+                    executable: false,
+                    ownership: SetupFileOwnership::ReleaseManagedText,
+                });
+            }
+        }
     }
     files
 }
@@ -265,7 +287,10 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             ownership: SetupFileOwnership::ReleaseManagedText,
         },
     ];
-    managed.extend(contextmink_skill_files(resolved_skill_target));
+    managed.extend(contextmink_skill_files(
+        resolved_skill_target,
+        suffix == ".exe",
+    ));
     if suffix == ".exe" {
         let bridge_name = "contextmink-bridge.exe";
         let source_bridge = source_binary.with_file_name(bridge_name);
@@ -1261,6 +1286,8 @@ fn remove_empty_managed_directories(root: &Path) -> Result<()> {
         ".agents/skills/contextmink/agents",
         ".agents/skills/contextmink",
         ".claude/skills/contextmink",
+        ".agents/skills/contextmink-bridge",
+        ".claude/skills/contextmink-bridge",
         ".agents/skills/changelog-writing/agents",
         ".agents/skills/changelog-writing",
         ".claude/skills/changelog-writing",
@@ -1333,6 +1360,73 @@ fn ensure_executable(_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bridge_skill_selection_tracks_payload_platform_and_harness() {
+        for target in [
+            SkillTarget::Agents,
+            SkillTarget::Claude,
+            SkillTarget::Both,
+            SkillTarget::None,
+        ] {
+            for windows in [false, true] {
+                let paths: Vec<_> = contextmink_skill_files(target, windows)
+                    .into_iter()
+                    .map(|f| f.relative_path)
+                    .collect();
+                assert_eq!(
+                    paths.contains(&PathBuf::from(".agents/skills/contextmink-bridge/SKILL.md")),
+                    windows && target.installs_agents()
+                );
+                assert_eq!(
+                    paths.contains(&PathBuf::from(".claude/skills/contextmink-bridge/SKILL.md")),
+                    windows && target.installs_claude()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_bridge_skill_install_reselection_and_modified_refusal() {
+        let (project, binary) = fixture("windows-bridge-skill");
+        let windows_binary = binary.with_file_name("contextmink.exe");
+        fs::write(&windows_binary, b"windows runtime").unwrap();
+        fs::write(
+            windows_binary.with_file_name("contextmink-bridge.exe"),
+            b"bridge runtime",
+        )
+        .unwrap();
+        let mut install = request(&project, &windows_binary, false);
+        install.skill_target = SkillTarget::Both;
+        setup_project(install).unwrap();
+        let skill = project.join(".agents/skills/contextmink-bridge/SKILL.md");
+        assert_eq!(fs::read(&skill).unwrap(), BRIDGE_SKILL);
+        fs::write(&skill, b"modified bridge guidance").unwrap();
+        let mut deselect = request(&project, &windows_binary, false);
+        deselect.skill_target = SkillTarget::None;
+        assert!(
+            setup_project(deselect)
+                .unwrap_err()
+                .to_string()
+                .contains("modified retired")
+        );
+        assert!(
+            project
+                .join(".claude/skills/contextmink-bridge/SKILL.md")
+                .exists()
+        );
+        fs::write(&skill, BRIDGE_SKILL).unwrap();
+        let mut deselect = request(&project, &windows_binary, false);
+        deselect.skill_target = SkillTarget::None;
+        setup_project(deselect).unwrap();
+        assert!(!skill.exists());
+        assert!(
+            !project
+                .join(".claude/skills/contextmink-bridge/SKILL.md")
+                .exists()
+        );
+        cleanup(&project);
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;

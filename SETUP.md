@@ -41,7 +41,7 @@ From a verified extracted release, run:
 .\tools\contextmink\bin\contextmink.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
+This installs the retrieval skill in `~/.agents/skills/contextmink`, an identical generated skill
 in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
 `~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -72,8 +72,9 @@ receipts between machines or move their home: install for the new home instead.
 
 Ordinary retrieval runs from the consuming project's cwd, with its local
 configuration when present and built-in defaults otherwise. Personal setup
-installs the native retrieval/capture executable; the optional Windows Bash
-bridge remains available in the release for intentional shell integration.
+installs the native retrieval/capture executable. Windows setup also installs
+`contextmink-bridge.exe` and its separate skill for project Bash scripts.
+Linux and macOS installations omit the bridge skill.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices

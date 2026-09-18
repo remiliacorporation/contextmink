@@ -41,7 +41,7 @@ From a verified extracted release, run:
 .\tools\contextmink\bin\contextmink.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
+This installs the retrieval skill in `~/.agents/skills/contextmink`, an identical generated skill
 in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
 `~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -72,8 +72,10 @@ receipts between machines or move their home: install for the new home instead.
 
 Ordinary retrieval runs from the consuming project's cwd, with its local
 configuration when present and built-in defaults otherwise. Personal setup
-installs the native retrieval/capture executable; the optional Windows Bash
-bridge remains available in the release for intentional shell integration.
+installs the native retrieval/capture executable. On Windows it also installs
+`contextmink-bridge.exe` and a separate `contextmink-bridge` skill for running
+project Bash scripts. Linux and macOS installations omit that skill. Native
+commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
@@ -138,8 +140,9 @@ LICENSE-SSL
 LICENSE-VPL
 ```
 
-The Windows archive also carries `contextmink-bridge.exe` (see the bridge
-section below); `manifest.json` records its name in a `bridge_binary` field.
+The Windows archive also carries `contextmink-bridge.exe` and discoverable
+`contextmink-bridge` skills in `.agents` and `.claude` (see the bridge section
+below); `manifest.json` records its name in a `bridge_binary` field.
 
 Verify the adjacent `.sha256` checksum after downloading an archive.
 
@@ -437,6 +440,12 @@ This section applies only to repositories that keep their scripts Bash-first
 while the agent runs in PowerShell. The guarded native bridge is the sole
 retained implementation; POSIX hosts need no bridge.
 
+Windows project overlays and setup install a separate `contextmink-bridge`
+skill for this workflow; personal setup also binds its absolute executable path.
+Non-Windows installations omit bridge skill discovery. Existing owned personal
+installations upgrade by rerunning `setup-user` from the complete new release.
+The companion executable is required before Windows setup writes any files.
+
 **Native binary (preferred on Windows).** The Windows release archive carries
 `contextmink-bridge.exe`. It locates Git Bash itself (no hardcoded path on the
 agent side), spawns direct commands natively with zero MSYS argument
@@ -650,6 +659,7 @@ For a vendored copy, compare or sync only the generic surface:
 ```text
 tools/contextmink/src/
 tools/contextmink/tests/
+tools/contextmink/examples/
 tools/contextmink/Cargo.toml
 tools/contextmink/Cargo.lock
 tools/contextmink/rust-toolchain.toml

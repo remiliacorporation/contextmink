@@ -8,6 +8,7 @@ mod file_commands;
 // target, which shares this file via #[path] from src/bin/.
 #[path = "destructive_guard.rs"]
 mod destructive_guard;
+mod digest;
 mod encoding;
 mod files;
 mod grep_scan;
@@ -22,6 +23,7 @@ mod process_identity;
 mod process_supervision;
 mod sqlite;
 mod text;
+mod user_installation;
 mod user_setup;
 
 use std::io::{self, Write};
@@ -69,7 +71,7 @@ fn main() -> Result<()> {
 }
 
 fn run_application() -> Result<()> {
-    user_setup::verify_runtime()?;
+    user_installation::verify_runtime()?;
     output::mark_command_start();
     let cli = parse_cli();
     validate_global_flags(&cli)?;

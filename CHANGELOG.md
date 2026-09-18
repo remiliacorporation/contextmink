@@ -1,10 +1,41 @@
 # Changelog
 
-All notable changes to contextmink are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/).
-
-The release workflow extracts the section for the requested version and fails if it is missing, so land notes here (staged under Unreleased, then retitled) before dispatching a release. Write one line per paragraph or bullet: GitHub release bodies render every newline as a line break, so hard-wrapped prose comes out ragged.
+All notable user-visible changes are documented here. Contextmink follows
+[Semantic Versioning](https://semver.org/) and this file follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-09-18
+
+Existing retrieval commands and receipt schemas remain compatible. Upgrade
+personal installations from the complete new release with `setup-user`; use
+`setup-project` for receipt-managed project installations. Start a fresh agent
+session to discover the Windows bridge skill.
+
+### Added
+
+- Windows releases include a separate `contextmink-bridge` skill for running
+  project Bash scripts and preserving arguments passed to native programs.
+  Linux and macOS installations omit it; native commands remain direct.
+- Windows personal setup installs the bridge and its skill together. Missing,
+  non-executable, or version-mismatched companions refuse before setup writes.
+  Both installed executables refuse missing or modified receipt-owned files.
+
+### Changed
+
+- The retrieval skill no longer routes Bash execution. Bridge guidance covers
+  script paths, argument transport, retained build output, and replacing the
+  bridge without rebuilding a running executable.
+- Release-note rendering accepts wrapped paragraphs and list items while
+  preserving fenced code. Missing, duplicate, empty, or encoding-damaged release
+  sections refuse publication.
+
+### Removed
+
+- Python release scripts and the release workflow's Python requirement.
+  Packaging, release notes, and extracted-install checks run through the Rust
+  development tool: `cargo run --locked --example release_tools -- <command>`.
 
 ## [0.13.0] - 2026-09-17
 

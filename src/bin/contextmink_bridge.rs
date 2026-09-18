@@ -1,7 +1,7 @@
 //! Native PowerShell -> Git Bash bridge.
 //!
-//! A PowerShell-hosted agent on Windows cannot reach Git Bash natively and
-//! PowerShell 5.1 marshals argv to native processes lossily (embedded quotes
+//! Windows agents need deterministic Git Bash selection and protection from
+//! MSYS argument rewriting. PowerShell 5.1 additionally marshals argv lossily (embedded quotes
 //! vanish and arguments merge). No receiver can reconstruct that loss, so the
 //! bridge offers channels that avoid it instead:
 //!
@@ -35,6 +35,11 @@ mod process_boundary;
 #[cfg(windows)]
 #[path = "../process_supervision.rs"]
 mod process_supervision;
+
+#[path = "../digest.rs"]
+mod digest;
+#[path = "../user_installation.rs"]
+mod user_installation;
 
 use process_boundary::{prepare_command, resolve_project_root};
 
@@ -110,6 +115,10 @@ fn usage() -> String {
 }
 
 fn main() {
+    if let Err(error) = user_installation::verify_runtime() {
+        eprintln!("contextmink-bridge: {error:#}");
+        exit(EXIT_DATA);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run_bridge(args) {
         Ok(code) => exit(code),
