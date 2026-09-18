@@ -1,8 +1,9 @@
 # Contextmink integration reference
 
 This is the detailed, release-managed integration reference behind the
-Contextmink skill. The default `setup-user` installs a native runtime and binds
+Contextmink skill. Optional `setup-user` installs a native runtime and binds
 its absolute path in the personal skill; run it from the consuming project.
+Windows installation also supplies the bridge executable and its separate skill.
 No project files or guidance edits are required. Use `setup-project` only for
 explicit repository adoption. Optional local policy belongs in `.contextmink.toml`
 or existing project guidance; it is not a prerequisite for ordinary retrieval.

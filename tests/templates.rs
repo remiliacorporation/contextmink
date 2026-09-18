@@ -34,8 +34,9 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
         assert_eq!(
             std::fs::read_to_string(installed)
                 .unwrap()
-                .replace("\r\n", "\n"),
-            normalized_template
+                .replace("\r\n", "\n")
+                .replace("<!-- installed-command -->\n", ""),
+            normalized_template.replace("<!-- installed-command -->\n", "")
         );
     }
     let router = root.join(".claude/skills/contextmink/SKILL.md");
@@ -43,7 +44,10 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
         let text = std::fs::read_to_string(&router)
             .unwrap()
             .replace("\r\n", "\n");
-        assert_eq!(text, normalized_template);
+        assert_eq!(
+            text.replace("<!-- installed-command -->\n", ""),
+            normalized_template.replace("<!-- installed-command -->\n", "")
+        );
     }
     let installed_metadata = root.join(".agents/skills/contextmink/agents/openai.yaml");
     if installed_metadata.is_file() {
@@ -138,7 +142,7 @@ fn source_vendor_guidance_projects_the_contextmink_skill() {
         "Select `agents`, `claude`, `both`, or `none`",
         "freeze the concrete choice",
         "vendor hash still matches",
-        "canonical skill",
+        "retrieval skill",
         "explicitly review a divergent",
         "existing destination instead of overwriting",
     ] {

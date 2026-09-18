@@ -11,13 +11,11 @@ user to name it. Return to direct tools when the exact result is known to be sma
 
 ## Invoke
 
-<!-- installed-command -->
 
 Use the installed command above when present. For a project installation, resolve
 `tools/contextmink/bin/contextmink[.exe]` from the project root; a source-vendored
 Bash project may use `scripts/contextmink`. Keep cwd in the consuming project so
-its configuration applies. Native built-in commands need no Bash bridge, project
-guidance edits, or new configuration. If the runtime is missing, report the
+its configuration applies. Native built-in commands need no project guidance edits or new configuration. If the runtime is missing, report the
 incomplete project bundle rather than inventing an executable path.
 Below, `contextmink` means the resolved native executable (quoted with `&` in
 PowerShell when its path contains spaces).
@@ -67,4 +65,4 @@ matter: capture is not an archive. Never repeat a mutation or costly command jus
 to recover clipped output. Inspect retained artifacts or establish safe replay.
 
 Read [the integration reference](../../../tools/contextmink/agent_integration.md)
-only for setup, configuration, hooks, shell bridges or unfamiliar receipt fields.
+only for setup, configuration, hooks or unfamiliar receipt fields.

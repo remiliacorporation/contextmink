@@ -82,6 +82,28 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
         fs::read(f.skill()).unwrap(),
         fs::read(f.0.join(format!(".claude/skills/{TOOL}/SKILL.md"))).unwrap()
     );
+    let bridge = f.runtime().with_file_name("contextmink-bridge.exe");
+    let bridge_skill = f.0.join(".agents/skills/contextmink-bridge/SKILL.md");
+    assert_eq!(bridge.exists(), cfg!(windows));
+    assert_eq!(bridge_skill.exists(), cfg!(windows));
+    if cfg!(windows) {
+        let body = fs::read_to_string(&bridge_skill).unwrap();
+        assert!(body.contains(&bridge.to_string_lossy().replace('\\', "/")));
+        assert!(!body.contains("<!-- installed-command -->"));
+        assert_eq!(
+            fs::read(&bridge_skill).unwrap(),
+            fs::read(f.0.join(".claude/skills/contextmink-bridge/SKILL.md")).unwrap()
+        );
+        let output = Command::new(&bridge)
+            .args(["--print-argv", "--", "/unchanged"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "argv[0]=/unchanged"
+        );
+    }
     let installed = snapshot(&f.0);
     f.install();
     assert_eq!(snapshot(&f.0), installed);
@@ -96,11 +118,73 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
     assert!(f.run(&["uninstall-user"]).status.success());
     assert!(!f.runtime().exists());
     assert!(!f.skill().exists());
+    assert!(!bridge.exists());
+    assert!(!bridge_skill.exists());
     assert_eq!(
         fs::read(f.0.join("AGENTS.md")).unwrap(),
         original[&f.0.join("AGENTS.md")]
     );
     f.install();
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_personal_upgrade_adds_bridge_without_claiming_unowned_files() {
+    let f = Fixture::new();
+    f.install();
+    let receipt_path = f.0.join(".local/share/contextmink/user-install.json");
+    let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    let files = receipt["files"].as_object_mut().unwrap();
+    let bridge_paths: Vec<_> = files
+        .keys()
+        .filter(|p| p.contains("contextmink-bridge"))
+        .cloned()
+        .collect();
+    for path in &bridge_paths {
+        files.remove(path);
+        fs::remove_file(f.0.join(path)).unwrap();
+    }
+    receipt["version"] = "0.13.0".into();
+    fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    let collision = f.0.join(".agents/skills/contextmink-bridge/SKILL.md");
+    fs::write(&collision, "Locally owned bridge guidance").unwrap();
+    let before = snapshot(&f.0);
+    assert!(!f.run(&["setup-user"]).status.success());
+    assert_eq!(snapshot(&f.0), before);
+    fs::remove_file(collision).unwrap();
+    f.install();
+    for path in bridge_paths {
+        assert!(f.0.join(path).is_file());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn missing_bridge_source_refuses_personal_setup_before_writes() {
+    let source = Fixture::new();
+    let home = Fixture::new();
+    let binary = source.0.join("contextmink.exe");
+    fs::copy(BINARY, &binary).unwrap();
+    let before = snapshot(&home.0);
+    let output = Command::new(binary)
+        .args(["setup-user", "--home"])
+        .arg(&home.0)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("complete extracted Windows release"));
+    assert_eq!(snapshot(&home.0), before);
+    // A runnable but wrong companion must not be accepted merely because it
+    // occupies the expected filename.
+    fs::copy(BINARY, source.0.join("contextmink-bridge.exe")).unwrap();
+    let output = Command::new(source.0.join("contextmink.exe"))
+        .args(["setup-user", "--home"])
+        .arg(&home.0)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("sibling bridge does not match"));
+    assert_eq!(snapshot(&home.0), before);
 }
 #[test]
 fn personal_collision_and_divergence_refuse_before_writes() {
@@ -121,6 +205,17 @@ fn personal_collision_and_divergence_refuse_before_writes() {
         !runtime.status.success(),
         "divergent skill/runtime pair must fail closed"
     );
+    if cfg!(windows) {
+        let bridge = Command::new(f.runtime().with_file_name("contextmink-bridge.exe"))
+            .args(["--print-argv", "--", "must-not-run"])
+            .output()
+            .unwrap();
+        assert!(
+            !bridge.status.success(),
+            "personally installed bridge must verify the same receipt"
+        );
+        assert!(bridge.stdout.is_empty());
+    }
     assert!(f.run(&["setup-user", "--replace-managed"]).status.success());
 }
 #[test]

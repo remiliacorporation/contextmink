@@ -63,7 +63,7 @@ From a verified extracted release, run:
 .\tools\contextmink\bin\contextmink.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/contextmink`, an identical generated skill
+This installs the retrieval skill in `~/.agents/skills/contextmink`, an identical generated skill
 in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
 `~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -94,8 +94,10 @@ receipts between machines or move their home: install for the new home instead.
 
 Ordinary retrieval runs from the consuming project's cwd, with its local
 configuration when present and built-in defaults otherwise. Personal setup
-installs the native retrieval/capture executable; the optional Windows Bash
-bridge remains available in the release for intentional shell integration.
+installs the native retrieval/capture executable. On Windows it also installs
+`contextmink-bridge.exe` and a separate `contextmink-bridge` skill for running
+project Bash scripts. Linux and macOS installations omit that skill. Native
+commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
@@ -674,10 +676,24 @@ retain host-specific compiler wrappers or logs.
 
 Before handing a commit to the public artifact workflow, run
 `scripts/verify_release.sh` (through `contextmink-bridge --script` on Windows).
-It requires Python 3 and pinned actionlint `1.7.12`, validates release notes and
+It requires pinned actionlint `1.7.12`, validates release notes and
 dispatch inputs, runs the isolated native source gate,
 then executes the complete Zig rehearsal. Pass `--install-targets` only when
 explicitly authorizing repair of missing pinned-toolchain components.
+
+Release packaging and extracted-install checks use the development-only Rust
+example `release_tools`, not an installed command or a Python runtime:
+
+```sh
+cargo run --locked --example release_tools -- notes 0.14.0
+cargo run --locked --example release_tools -- package-project <stage> <archive>
+cargo run --locked --example release_tools -- verify-project <extracted-overlay>
+cargo run --locked --example release_tools -- verify-user <extracted-binary>
+```
+
+Packaging uses the host's `tar` (Windows' built-in BSD tar for ZIP archives).
+Changelogs follow Papertiger's user-visible categories and upgrade guidance;
+wrapped Markdown prose and fenced examples are accepted by the notes renderer.
 
 The GitHub Release Artifacts workflow defaults to building without publication.
 Set `artifact_version` to the crate version with a dated changelog section.

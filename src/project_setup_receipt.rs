@@ -8,7 +8,6 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, anyhow};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{ManagedFile, SetupFileOwnership, SkillTarget, normalized_path};
 
@@ -32,6 +31,8 @@ const SUPPORTED_MANAGED_TEXT_PATHS: &[&str] = &[
     ".agents/skills/contextmink/SKILL.md",
     ".agents/skills/contextmink/agents/openai.yaml",
     ".claude/skills/contextmink/SKILL.md",
+    ".agents/skills/contextmink-bridge/SKILL.md",
+    ".claude/skills/contextmink-bridge/SKILL.md",
     // Kept in the allowlist only so a hash-bound receipt from a prerelease
     // installer can retire the general-purpose skill without guessing that an
     // unreceipted repository-local copy belongs to Contextmink.
@@ -413,14 +414,11 @@ pub(super) fn canonical_managed_text(content: &[u8]) -> Cow<'_, [u8]> {
 }
 
 pub(super) fn managed_text_sha256(content: &[u8]) -> String {
-    let digest = Sha256::digest(canonical_managed_text(content).as_ref());
-    format!("{digest:x}")
+    crate::digest::sha256(canonical_managed_text(content).as_ref())
 }
 
 pub(crate) fn managed_runtime_sha256(content: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    format!("{:x}", hasher.finalize())
+    crate::digest::sha256(content)
 }
 
 fn validate_sha256(value: &str, receipt: &str) -> Result<()> {
