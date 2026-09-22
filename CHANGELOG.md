@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-22
+
+Retrieval commands and receipt schemas are unchanged. Upgrade personal
+installations with `setup-user` from the new release and refresh project
+overlays from its archive.
+
 ### Fixed
 
 - Windows personal setup and removal check executable write access before
