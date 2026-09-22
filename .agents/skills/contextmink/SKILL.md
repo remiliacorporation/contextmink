@@ -12,7 +12,7 @@ user to name it. Return to direct tools when the exact result is known to be sma
 ## Invoke
 
 
-Use the installed command above when present. For a project installation, resolve
+For a project installation, resolve
 `tools/contextmink/bin/contextmink[.exe]` from the project root; a source-vendored
 Bash project may use `scripts/contextmink`. Keep cwd in the consuming project so
 its configuration applies. Native built-in commands need no project guidance edits or new configuration. If the runtime is missing, report the
@@ -47,6 +47,11 @@ JSON selectors are literal keys or JSON Pointers, not dotted paths. Enter nested
 values with `--at`; summaries are not their contents. For objects keyed by IDs,
 use `--entries --fields FIELD` to project children while preserving their keys.
 Missing fields differ from nulls. Prefer domain tools' own compact queries.
+
+In Windows Git Bash, scope `MSYS_NO_PATHCONV=1` to a native command carrying a
+JSON Pointer: `MSYS_NO_PATHCONV=1 contextmink json-select report.json --at /report/plan_id`.
+Otherwise MSYS may rewrite the pointer as a filesystem path. PowerShell and
+native process calls do not need this setting.
 
 ## Preserve evidence limits
 

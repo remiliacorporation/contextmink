@@ -53,6 +53,49 @@ fn forwarding_script(root: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
+#[test]
+fn git_bash_json_pointer_uses_command_local_conversion_exclusion() {
+    let root = temp_root("json-pointer-conversion");
+    let document = root.join("report.json");
+    fs::write(&document, r#"{"report":{"plan_id":17}}"#).unwrap();
+    let script = root.join("select.sh");
+    fs::write(
+        &script,
+        concat!(
+            "#!/usr/bin/env bash\nset -euo pipefail\n",
+            // Undo the bridge's protection to reproduce a direct Git Bash call.
+            "unset MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL\n",
+            "if \"$1\" --json json-select \"$2\" --at /report/plan_id >\"$3\" 2>\"$4\"; then exit 91; fi\n",
+            "MSYS_NO_PATHCONV=1 \"$1\" --json json-select \"$2\" --at /report/plan_id\n",
+            "test -z \"${MSYS_NO_PATHCONV+x}\"\n",
+        ),
+    )
+    .unwrap();
+    let baseline_stdout = root.join("baseline.stdout");
+    let baseline_stderr = root.join("baseline.stderr");
+    let output = run_bridge(&[
+        "--script",
+        &forward_slashes(&script),
+        contextmink_exe(),
+        &forward_slashes(&document),
+        &forward_slashes(&baseline_stdout),
+        &forward_slashes(&baseline_stderr),
+    ]);
+    assert!(
+        output.status.success(),
+        "status={:?} stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let selected: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(selected["at"], "/report/plan_id");
+    assert_eq!(selected["rows"][0]["value"], "17");
+    let error = fs::read_to_string(&baseline_stderr).unwrap();
+    assert!(error.contains("/report/plan_id"), "{error}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
 fn assert_bash_script_argv_round_trip(command_form: &str) {
     let root = temp_root(command_form.trim_start_matches('-'));
     let script = forwarding_script(&root);

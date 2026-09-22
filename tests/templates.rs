@@ -15,6 +15,17 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
     let normalized_template = template.replace("\r\n", "\n");
     assert!(template.starts_with("---"));
     assert!(template.contains("<!-- installed-command -->"));
+    for body in [
+        template,
+        include_str!("../templates/skills/contextmink-bridge/SKILL.md"),
+    ] {
+        // Project installation has no personal binding in this slot. Its
+        // rendered instructions must still provide a complete invocation path.
+        let project_body = body.replace("<!-- installed-command -->", "");
+        assert!(!project_body.contains("command above"));
+        assert!(!project_body.contains("binding above"));
+        assert!(project_body.contains("tools/contextmink/bin/"));
+    }
     assert!(
         template.lines().count() < 120,
         "skill must remain a thin envelope"

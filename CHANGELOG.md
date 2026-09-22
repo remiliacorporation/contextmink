@@ -13,6 +13,10 @@ All notable user-visible changes are documented here. Contextmink follows
   or removal with a corrective action, including in dry runs. Unchanged
   installations remain usable while running; locks acquired after preflight
   and interrupted installations still require repair.
+- Project skills provide a complete invocation path without referring to an
+  absent personal binding. JSON selection guidance shows how to preserve
+  slash-prefixed pointers in Windows Git Bash without changing the shell's
+  global path-conversion settings.
 
 ## [0.14.0] - 2026-09-18
 

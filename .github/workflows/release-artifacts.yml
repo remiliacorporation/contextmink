@@ -266,6 +266,10 @@ jobs:
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
           test ! -e "${project}/scripts/contextmink.cmd"
           cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
+          if grep -Eq 'command above|binding above' "${project}/.agents/skills/contextmink/SKILL.md"; then
+            echo "project skill refers to an empty personal binding" >&2
+            exit 1
+          fi
           (cd "${project}/.claude/skills/contextmink" && test -f ../../../.agents/skills/contextmink/SKILL.md)
           awk '/^---$/ { if (++delimiters == 2) exit } { print }' "${project}/.agents/skills/contextmink/SKILL.md" > "${verify_root}/agent-frontmatter"
           awk '/^---$/ { if (++delimiters == 2) exit } { print }' "${project}/.claude/skills/contextmink/SKILL.md" > "${verify_root}/claude-frontmatter"
@@ -390,6 +394,11 @@ jobs:
           $canonicalText = (Get-Content -Raw $agentSkill).Replace("`r`n", "`n")
           $routerText = (Get-Content -Raw $claudeSkill).Replace("`r`n", "`n")
           if ($canonicalText -ne $routerText) { throw "contextmink skill bodies diverged" }
+          foreach ($skillName in @('contextmink', 'contextmink-bridge')) {
+            $body = Get-Content -Raw "$project/.agents/skills/$skillName/SKILL.md"
+            if ($body -match 'command above|binding above') { throw "$skillName refers to an empty personal binding" }
+            if (!$body.Contains('tools/contextmink/bin/')) { throw "$skillName project invocation missing" }
+          }
           if (Test-Path "$project/scripts/contextmink.cmd") { throw "retired PowerShell diagnostic shim was installed" }
           $projectBin = "$project/tools/contextmink/bin"
           Set-Content -LiteralPath "$project/selection.json" -Value '{"result":{"total":17}}'
