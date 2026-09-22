@@ -19,9 +19,12 @@ Use `<project-root>/tools/papertiger/bin/papertiger[.exe]` in the native
 shell. Keep work in the canonical project that owns the outcome, including
 cross-repository work; from elsewhere pass `--project-root <canonical-root>`.
 The runtime selects the existing authority; do not guess `--db`, use PATH, or
-create a second store in a worktree. If no project runtime exists, use the
-personal binding above. Personal task intent identifies its consuming project.
+create a second store in a worktree. If no project runtime exists, use the explicit
+executable binding in an installed personal Papertiger skill, when available.
+Personal task intent identifies its consuming project.
 Below, `papertiger` means this selected executable and authority.
+Write through it, never raw SQLite. A refusal does not authorize removing guards
+or manufacturing admission; use the corrective command or preserve the blocker.
 For existing history, skip setup and the reference. Only for a genuinely new
 authority, read [first use](../../../tools/papertiger/agent_integration.md#first-use).
 
@@ -51,8 +54,10 @@ Search before adding; read rejected history before reviving an approach. Choose
 choices a cold reader could question. `--intent-file`, `--why-file`, and
 `--result-file` accept UTF-8 text when shell quoting becomes awkward.
 
-Do not pipe JSON receipts through `head` or `tail`; use native compact or
-projection options when needed. JSON mutations acknowledge exact committed events. New selectors are in
+Do not pipe JSON receipts through `head` or `tail`. Read commands offer compact
+or projection options; mutations have no compact flag. For shorter mutation output,
+retain the full receipt and use the [receipt projection](../../../tools/papertiger/agent_integration.md#mutation-receipts).
+JSON mutations acknowledge exact committed events. New selectors are in
 `events[].task.seq`; retain the receipt, don't replay a successful mutation if
 local display/parsing fails. Read-only `show` or `log` resolves uncertainty.
 

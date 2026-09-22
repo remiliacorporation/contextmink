@@ -10,7 +10,8 @@ projects continue with their selected authority and never repeat this section.
 For a genuinely new project with no existing planning history, invoke the
 bundled executable from that project, set `PAPERTIGER_ACTOR` and a stable
 `PAPERTIGER_SESSION`, then run `init` without `--json` (initialization reports
-plain text). Create a plan with
+plain text). Keep the same executable and authority selectors used for `status`;
+an ordinary project overlay needs no `--db` override. Create a plan with
 `plan add <slug> "Title" --intent "Purpose"` only if no suitable plan exists.
 The default authority is `state/papertiger.sqlite`; an existing project receipt
 retains its configured authority. `init` creates or migrates through the public
@@ -91,7 +92,7 @@ supplied project root.
   work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v10. Before migrating an older authority,
+- The current planner authority schema is v11. Before migrating an older authority,
   archive its export with the matching release and create a standalone SQLite
   recovery file with the new release's `--db <source> backup --output <new-path>`.
   Older dump files require
@@ -99,19 +100,39 @@ supplied project root.
   re-export before import.
   Current dumps use `papertiger.dump.v9`; schema v10 adds advisory pickup
   context. Existing in-progress tasks retain unknown session identity; migration
-  never guesses ownership from actors. Mise's schema is independent.
+  never guesses ownership from actors. Schema v12 requires explicit public
+  mutation API entry for writes to every planner table. A raw SQLite writer
+  fails with `papertiger_write_requires_executable`; use the bound executable,
+  never remove its guards or manufacture the admission function. Normal opens
+  refuse altered guards. This is a misuse boundary, not a sandbox against an
+  unrestricted filesystem owner. API callers are trusted after mutation entry.
+  Migration leaves earlier malformed rows untouched for `audit`. Mise's schema
+  is independent.
+- Legacy history recovery is explicit: preserve a `backup`, review
+  `history inspect <event-id>`, then use `history quarantine <event-id>
+  --expect-sha256 <digest> --why <reason>` only for its reported structural
+  defects. The immutable original survives, and a recovery event carries every
+  raw field through log/export/import. Unknown timestamps and associations stay
+  unknown; recovery never infers task state. This is not routine task editing.
 - `export` is transfer and recovery, not a second live authority.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
 - `backup --output <new-path> --json` creates a consistent standalone SQLite
-  recovery file, including committed WAL data. It supports planner schemas 1–10
+  recovery file, including committed WAL data. It supports planner schemas 1–12
   without migration or new events, refuses foreign authorities and existing
   destinations or sidecars, and reports the output hash and original schema.
   Historical evidence is preserved without semantic validation; this can retain
   legacy records that a matching release's JSON import refuses. Inspect recovery
   copies with the matching release's `--db`; never use one as a second live
   authority. Restoration is a deliberate operator action.
+- A task priority stored as text is invalid data, not a named priority level.
+  Preserve a `backup` before recovery. An explicit
+  `edit <task> --priority <integer> --why <reason>` with no other edits can replace
+  it and records a `repair_priority` event with the exact original text and the
+  chosen integer. No value is inferred; another unreadable task field rolls the
+  operation back. Other malformed storage types require a verified authority.
+  This repairs scheduling only; it does not certify the task's earlier provenance.
 
 Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own
@@ -256,6 +277,8 @@ When exact settings are unavailable, record only what is known and omit effort.
 Papertiger does not inspect private harness logs or contact a model provider.
 Existing history remains unchanged; absent effort reads as null, and no database
 migration is required.
+
+### Mutation receipts
 
 For scripted mutation chains, pass `--json`. `papertiger.mutation.v1` contains
 `changed` and the exact emitted `events`; each entry includes the event and
