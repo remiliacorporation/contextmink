@@ -92,7 +92,7 @@ supplied project root.
   work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v11. Before migrating an older authority,
+- The current planner authority schema is v12. Before migrating an older authority,
   archive its export with the matching release and create a standalone SQLite
   recovery file with the new release's `--db <source> backup --output <new-path>`.
   Older dump files require
@@ -103,8 +103,12 @@ supplied project root.
   never guesses ownership from actors. Schema v12 requires explicit public
   mutation API entry for writes to every planner table. A raw SQLite writer
   fails with `papertiger_write_requires_executable`; use the bound executable,
-  never remove its guards or manufacture the admission function. Normal opens
-  refuse altered guards. This is a misuse boundary, not a sandbox against an
+  never remove its guards or manufacture the admission function. Guard drift
+  blocks writes, not reads, export or backup; `audit` reports it. After stopping
+  the direct access, preview with `repair-guards --dry-run` and reinstall with
+  `repair-guards --why <reason>`, which records the observed drift and cannot
+  write planning data. An altered history view blocks reads until repaired.
+  This is a misuse boundary, not a sandbox against an
   unrestricted filesystem owner. API callers are trusted after mutation entry.
   Migration leaves earlier malformed rows untouched for `audit`. Mise's schema
   is independent.
