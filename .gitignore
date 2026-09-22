@@ -5,6 +5,9 @@
 /bin/contextmink.exe
 /bin/contextmink-bridge
 /bin/contextmink-bridge.exe
+# Local extract of the released bundle that this repository's skill invokes;
+# refresh it from a verified release, never commit it.
+/tools/contextmink/
 
 # Papertiger project-local runtime and authorities
 /tools/papertiger/bin/

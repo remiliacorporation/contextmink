@@ -1,5 +1,33 @@
 # Papertiger project reference
 
+## First use
+
+Release archives already contain `.agents/skills/papertiger`, the complete
+Claude discovery copy, and `tools/papertiger/bin`. Copy these directories into
+the project root; no setup command or AGENTS.md edit is required. Existing
+projects continue with their selected authority and never repeat this section.
+
+For a genuinely new project with no existing planning history, invoke the
+bundled executable from that project, set `PAPERTIGER_ACTOR` and a stable
+`PAPERTIGER_SESSION`, then run `init` without `--json` (initialization reports
+plain text). Create a plan with
+`plan add <slug> "Title" --intent "Purpose"` only if no suitable plan exists.
+The default authority is `state/papertiger.sqlite`; an existing project receipt
+retains its configured authority. `init` creates or migrates through the public
+API. Never initialize a replacement when history is unexpectedly missing.
+Keep the database and its sidecars out of Git using the project's ignore policy.
+
+Archives contain no database, project receipt, root guidance, root README or
+project configuration. Merging their contents preserves those files. Release
+files under the two namespaced skill directories and `tools/papertiger` are
+replaced; preserve deliberate customizations there before replacing them.
+`setup-project` and `setup-user` remain optional managed installation paths.
+
+Optional personal installation with `papertiger setup-user` places the native
+runtime and skills under the user home and initializes a private fallback store.
+It never rewrites consuming projects. Use `setup-project` when a managed
+installation receipt is desired. All paths expose the same workflow through skills.
+
 Papertiger is optional. Use it when work has independently reviewable outcomes,
 separate commits, dependencies, external blockers, decisions, probes, or proof
 obligations that merit durable identity and cold-resume context. This can apply
@@ -43,8 +71,10 @@ When an intentional command runs from another repository, pass the global
 `--project-root <canonical-project-root>` option. It requires a receipt at that
 exact root and selects the receipt-bound authority without changing the
 process working directory. `PAPERTIGER_DB` or an explicit global `--db`
-deliberately overrides receipt discovery for operational use; do not use a raw
-database override for ordinary project selection or split ordinary planning
+deliberately overrides receipt discovery. The installed personal executable falls back to its private
+store only when no project receipt is discovered. It needs no `--db` argument.
+Do not use a raw database override for ordinary
+project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
 selector with a database override. `evidence verify` retains that combination
 only so an explicitly selected database can resolve `file:` locators beneath a
@@ -394,11 +424,11 @@ Repository boundaries do not change that rule. Keep those separate outcomes
 in the initiative's canonical authority unless another project truly owns an
 independent lifecycle. Do not mirror one task into every repository it touches.
 
-## Repository guidance discovery trigger
+## Optional repository guidance discovery trigger
 
-After reviewing this contract, keep one concise trigger in the repository-owned
-agent guidance; a bare link or generic "planning" label is too easy for some
-harnesses to ignore. Use this wording or an equivalent with the same boundaries:
+Skills-capable harnesses discover the installed skill without a project guidance
+edit. For a harness without skill discovery, or explicit project policy, an owner
+may add the following optional trigger:
 
 > Before the first edit or commit on multi-outcome or separate-commit work, or
 > work matching an existing durable task, read
@@ -434,8 +464,8 @@ as the local tasklog. Keep `papertiger` in executable corrective commands,
 evidence paths, and authority facts where replacing it would reduce precision.
 
 `setup-project` never edits `AGENTS.md`, `CLAUDE.md`, or another repository-owned
-context file. The project owner must review and place this trigger; the managed
-skill remains the canonical command and authority contract.
+context file. The managed skill supplies the ordinary workflow; owners may opt
+into this additional trigger, but installation and ordinary use do not require it.
 
 ## Project-local installation
 
@@ -479,7 +509,7 @@ newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
 On a first install, the default `auto` selection follows existing harness
-markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+markers. `.agents`, `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
 OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
 residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
 select `both`; and an unmarked repository selects `none`. These markers only
@@ -511,11 +541,10 @@ legacy, or otherwise unproved is reported in dry-run and requires a reviewed
 `--replace-managed`; a missing host receipt can be recreated without claiming
 an existing file.
 
-The canonical skill under `.agents/skills` is a discovery envelope around this
-contract. `.claude/skills` contains a thin router with metadata inherited from
-that skill and a relative link to it. Claude selection resolves to both paths
-so the router always has its canonical dependency; receipt-owned full Claude
-copies upgrade to routers. `.agents/skills` serves open Agent Skills-compatible
+The skill under `.agents/skills` contains the ordinary workflow. `.claude/skills`
+receives the identical complete body, generated from the same source template.
+Claude selection resolves to both paths; owned legacy routers upgrade in place.
+The detailed reference remains conditional. `.agents/skills` serves compatible
 harnesses including Codex, Pi, OMP, and OpenCode. Auto detection never creates
 `.codex`, `.pi`, `.omp`, or
 `.opencode` skill copies. Pi loads project skills only after project trust; for
