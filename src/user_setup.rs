@@ -228,6 +228,21 @@ pub(crate) fn run(
             (None, Some(_)) => "create",
             (None, None) => "absent",
         };
+        #[cfg(windows)]
+        if matches!(action, "replace" | "remove")
+            && path.extension().is_some_and(|extension| extension == "exe")
+        {
+            // A mapped executable can be readable while Windows refuses its
+            // replacement. Probe without truncating before publishing any file.
+            // This catches existing locks, not locks acquired after preflight.
+            fs::OpenOptions::new().write(true).open(&path).with_context(|| {
+                format!(
+                    "cannot open personal runtime {} for {action}; close running tool processes and rerun {}-user from an external release; if it still refuses, check the file's write permissions",
+                    path.display(),
+                    if remove { "uninstall" } else { "setup" }
+                )
+            })?;
+        }
         actions.push(serde_json::json!({"path":path,"action":action}));
     }
     if !dry_run {

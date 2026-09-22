@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows personal setup and removal check executable write access before
+  changing files. A runtime held open by another process refuses replacement
+  or removal with a corrective action, including in dry runs. Unchanged
+  installations remain usable while running; locks acquired after preflight
+  and interrupted installations still require repair.
+
 ## [0.14.0] - 2026-09-18
 
 Existing retrieval commands and receipt schemas remain compatible. Upgrade

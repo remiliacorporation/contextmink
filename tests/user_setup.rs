@@ -166,6 +166,110 @@ fn windows_personal_upgrade_adds_bridge_without_claiming_unowned_files() {
 
 #[cfg(windows)]
 #[test]
+fn running_personal_bridge_refuses_upgrade_and_removal_before_writes() {
+    use std::io::Write;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    struct HeldBridge(std::process::Child);
+    impl Drop for HeldBridge {
+        fn drop(&mut self) {
+            self.0.kill().unwrap();
+            self.0.wait().unwrap();
+        }
+    }
+
+    let source = Fixture::new();
+    let f = Fixture::new();
+    f.install();
+    let bridge = f.runtime().with_file_name("contextmink-bridge.exe");
+    let ready = source.0.join("ready");
+    let script = source.0.join("hold.ps1");
+    fs::write(
+        &script,
+        "param([string]$Ready)\n[IO.File]::WriteAllText($Ready, 'ready')\nStart-Sleep -Seconds 60\n",
+    )
+    .unwrap();
+    let mut held = HeldBridge(
+        Command::new(&bridge)
+            .args(["--", "powershell.exe", "-NoProfile", "-File"])
+            .arg(&script)
+            .arg(&ready)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !ready.exists() {
+        assert!(held.0.try_wait().unwrap().is_none(), "bridge exited early");
+        assert!(
+            Instant::now() < deadline,
+            "bridge child did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // An unchanged installation remains usable even while its bridge runs.
+    f.install();
+    let before = snapshot(&f.0);
+    for name in ["contextmink.exe", "contextmink-bridge.exe"] {
+        let path = source.0.join(name);
+        fs::copy(Path::new(BINARY).with_file_name(name), &path).unwrap();
+        // A PE overlay gives this release distinct bytes without changing its
+        // behavior or requiring a second compiler invocation inside the test.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .unwrap()
+            .write_all(b"personal-upgrade-fixture")
+            .unwrap();
+    }
+    for operation in ["setup-user", "uninstall-user"] {
+        for preview in [false, true] {
+            let mut command = Command::new(source.0.join("contextmink.exe"));
+            command.arg(operation).arg("--home").arg(&f.0);
+            if preview {
+                command.arg("--dry-run");
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success(), "{operation}: preview={preview}");
+            assert!(snapshot(&f.0) == before, "{operation} changed files");
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("close running tool processes"), "{error}");
+            assert!(error.contains("contextmink-bridge.exe"), "{error}");
+        }
+    }
+    assert!(
+        Command::new(f.runtime())
+            .arg("--version")
+            .status()
+            .unwrap()
+            .success()
+    );
+    drop(held);
+    let output = Command::new(source.0.join("contextmink.exe"))
+        .args(["setup-user", "--home"])
+        .arg(&f.0)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        Command::new(f.runtime())
+            .arg("--version")
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(f.run(&["uninstall-user"]).status.success());
+}
+
+#[cfg(windows)]
+#[test]
 fn missing_bridge_source_refuses_personal_setup_before_writes() {
     let source = Fixture::new();
     let home = Fixture::new();

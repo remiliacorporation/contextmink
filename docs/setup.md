@@ -62,8 +62,12 @@ the tool version. Owned upgrades need no replacement flag. Conflicting unowned o
 files refuse; review them before using `--replace-managed`. The installed
 runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
 from an external release, not the installed executable. Installation preflights
-all managed paths, but does not promise a crash-atomic multi-file transaction;
-an interrupted install must be repaired before the runtime can run.
+all managed paths. On Windows, setup and removal also check existing executables
+that need replacement or removal for write access before changing any files,
+including during `--dry-run`. Close running tool processes when this check refuses.
+Unchanged executables need no lock check. A process can acquire a lock after
+preflight; this is not a crash-atomic multi-file transaction. An interrupted
+install must be repaired before the runtime can run.
 
 `uninstall-user --dry-run` previews removal. `uninstall-user` removes only
 receipt-owned matching runtime/skill files and retains the lifecycle receipt;
