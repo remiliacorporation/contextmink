@@ -72,23 +72,25 @@ an explicit user home, including disposable test homes. Start a fresh agent
 session and verify the skill appears. Skill descriptions support automatic
 selection; they do not guarantee a model will choose the tool on every request.
 The installer writes both complete skill files itself and executes the copied
-runtime before reporting success. No agent-side copying or routing setup remains.
+runtime before reporting success; agents copy nothing.
 
 Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
 shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
-A host-local `user-install.json` binds installed files to raw byte hashes and
-the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
-files refuse; review them before using `--replace-managed`. The installed
-runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
-from an external release, not the installed executable. Installation preflights
+A host-local `user-install.json` records the tool version, the installed skill
+and reference paths, and raw byte hashes of the installed executables. Setup
+writes the release's files at those paths, whatever they currently contain. The
+installed runtime refuses a missing receipt, a missing file, or an executable
+that differs from its receipt. Run repair or upgrade from an external release,
+not the installed executable. Installation preflights
 all managed paths, but does not promise a crash-atomic multi-file transaction;
 an interrupted install must be repaired before the runtime can run.
 
-`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
-receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes the
+receipt's skill and reference files, removes its executables while their bytes
+match the receipt, and retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -97,7 +99,7 @@ configuration when present and built-in defaults otherwise. Personal setup
 installs the native retrieval/capture executable. On Windows it also installs
 `contextmink-bridge.exe` and a separate `contextmink-bridge` skill for running
 project Bash scripts. Linux and macOS installations omit that skill. Native
-commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
+commands run directly from any shell.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
@@ -236,24 +238,21 @@ Setup manages only `.agents/skills/contextmink` and
 `.omp`, or `.opencode` skill copies.
 
 `setup-project` preflights every destination before writing and records the
-resolved skill target, stable integration-text hashes, and installer-created
-ignore policy in `tools/contextmink/project-install.json`. Later `auto` runs
-preserve that concrete choice instead of redetecting opportunistically. An
-explicit target safely retires deselected skill files only while their receipt
-hashes match; an unreceipted file at a deselected Contextmink skill path makes
-the plan unready until it is resolved manually. Host-specific binary hashes
-live separately in the ignored
-`tools/contextmink/bin/runtime-install.json`; modified receipt-owned binaries
-refuse replacement or removal without review. `--replace-managed` is required
-only for a reviewed modified or pre-receipt managed destination. Dry-run JSON
-uses `contextmink.project_setup.v2`, with `requested_skill_target`,
-`resolved_skill_target`, `ready`, and per-action `requires_replace_managed`
-fields. An existing
+resolved skill target and installer-created ignore policy in
+`tools/contextmink/project-install.json`. Later `auto` runs preserve that
+concrete choice instead of redetecting opportunistically. Launchers, skills,
+and the integration reference are written as the release ships them. An
+explicit target removes deselected skill files; an unreceipted file at a
+deselected Contextmink skill path makes the plan unready until it is resolved
+manually. The ignored `tools/contextmink/bin/runtime-install.json` records raw
+byte hashes of the host binaries this checkout installed. Dry-run JSON uses
+`contextmink.project_setup.v3`, with `requested_skill_target`,
+`resolved_skill_target`, and `ready` fields. An existing
 `.contextmink.toml` is repository-owned: setup validates it with the real
 configuration loader, reports `preserve_repository_owned`, and never compares
 or replaces it from the release template. Invalid configuration fails before
-any file is written. A dry run reports required release-file replacements
-without granting permission to perform them.
+any file is written. A dry run reports every create, replace, and removal
+without writing.
 
 This is also the fresh-clone repair path. Repositories normally track their
 configuration, launchers, skills, integration reference, and install receipt
@@ -276,11 +275,13 @@ project:
 ./tools/contextmink/bin/contextmink uninstall-project /path/to/repository
 ```
 
-Removal requires the ownership receipt, verifies managed text and host runtime
-hashes, and preserves `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, unrelated
-harness content, and any runtime file without proven ownership. Review those
-repository-owned or retained files afterward and remove them only when the
-project no longer wants them.
+Removal requires the ownership receipt. It removes the launchers, skills, and
+integration reference that the receipt's skill target implies, removes host
+binaries whose bytes match `runtime-install.json`, and preserves
+`.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, unrelated harness content, and
+any runtime file without proven ownership. Review those repository-owned or
+retained files afterward and remove them only when the project does not want
+them.
 
 After integration, verify from the repository root:
 
@@ -388,13 +389,13 @@ below is the short map.
   pragmas, and future write-shaped statements are rejected independently of
   the read-only file open.
 - `setup-project` — install a project-local release and print the remaining
-  agent-owned configuration and guidance work. Persists managed ownership,
-  supports frozen `--skill-target` selection and `--dry-run`, and requires
-  `--replace-managed` only for reviewed unowned or modified destinations.
+  agent-owned configuration and guidance work. Records ownership, supports
+  frozen `--skill-target` selection and `--dry-run`, and writes release-managed
+  files as the release ships them.
 - `uninstall-project` — remove receipt-owned launchers, skills, integration
   reference, and hash-matching host binaries while preserving repository-owned
   configuration, guidance, and unowned runtime files. Supports `--dry-run` and
-  refuses modified receipt-owned files.
+  refuses a receipt-owned binary whose bytes differ from its receipt.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument. `--with-shadow-tables` and `--with-system-tables`
   include virtual-table shadow tables and `sqlite_*` tables.
@@ -659,7 +660,8 @@ malformed values are hard errors. Repository exclude globs match paths relative
 to the config file's directory and apply only inside that tree, so anchored
 rules hold from any working directory without leaking into foreign scan roots.
 Built-in build/dependency exclusions apply inside every explicit scan root.
-Empty profiles and the shipped placeholder profile are hard errors. Use
+Empty profiles and the template placeholder profile
+(`replace-with-workspace-name`) are hard errors. Use
 `<command> --config <file>` for an explicit policy or `<command> --no-config`
 for built-in defaults only.
 Excludes quiet broad scans only: pass an explicit file or subdirectory when an
@@ -715,7 +717,7 @@ cargo run --locked --example release_tools -- verify-user <extracted-binary>
 ```
 
 Packaging uses the host's `tar` (Windows' built-in BSD tar for ZIP archives).
-Changelogs follow Papertiger's user-visible categories and upgrade guidance;
+Changelogs use user-visible categories and upgrade guidance;
 wrapped Markdown prose and fenced examples are accepted by the notes renderer.
 
 The GitHub Release Artifacts workflow defaults to building without publication.

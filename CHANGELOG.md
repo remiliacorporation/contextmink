@@ -6,6 +6,34 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+### Changed
+
+- Installed skills, the integration reference and the launcher are release
+  files: `setup-project` and `setup-user` overwrite them with the release
+  version, and `uninstall-project`/`uninstall-user` remove them, whether or
+  not they were edited. Keep project-specific guidance in `AGENTS.md`,
+  `CLAUDE.md` or `.contextmink.toml`, which setup never overwrites. Host
+  binaries are still identity-checked: uninstall refuses a binary that differs
+  from its runtime receipt.
+- Project receipts are `contextmink.project_install.v3` and personal receipts
+  `contextmink.user_install.v2`; neither records file hashes. The next
+  `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.
+  An older receipt is refused: move it aside and rerun setup to reinstall.
+- `setup-project` reports `contextmink.project_setup.v3` and `uninstall-project`
+  reports `contextmink.project_uninstall.v2`; update scripts that check these
+  schemas.
+- Release archives contain the skills, `tools/contextmink/bin`, the
+  integration reference, `README.md`, `CHANGELOG.md`, licenses, the manifest
+  and `docs/setup.md`, which is the single setup document. `SETUP.md`,
+  `templates/` and `docs/evidence/` are no longer shipped.
+
+### Removed
+
+- `--replace-managed` on `setup-project` and `setup-user`.
+- Refusals that named the replacement for a flag or command renamed in 0.15.0.
+  Those spellings, and global options placed before the subcommand, now fail
+  with the ordinary usage error (exit 2).
+
 ## [0.15.0] - 2026-09-23
 
 This release renames public flags and commands without compatibility aliases.

@@ -5,6 +5,18 @@ use std::fs;
 use std::path::{Component, Path};
 use std::process::Command;
 
+/// Documentation staged beside the binaries. Skills and the integration
+/// reference are generated at their installed paths, so each shipped file has
+/// exactly one copy.
+pub const STAGED_DOCUMENTS: &[&str] = &[
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "LICENSE-SSL",
+    "LICENSE-VPL",
+    "docs/setup.md",
+];
+
 pub fn run(stage: &Path, archive: &Path) -> Result<()> {
     let stage = fs::canonicalize(stage)?;
     ensure!(
@@ -57,7 +69,22 @@ pub fn run(stage: &Path, archive: &Path) -> Result<()> {
             )),
         );
     }
-    snapshot(&stage)?; // Reject links before moving any staged files.
+    // Reject links and unexpected files before moving any staged file.
+    for path in snapshot(&stage)?.keys() {
+        let text = path.to_string_lossy().replace('\\', "/");
+        ensure!(
+            text == "manifest.json"
+                || names.contains(&text)
+                || STAGED_DOCUMENTS.contains(&text.as_str()),
+            "unexpected staged file {text}; stage only the binaries, manifest.json, and {STAGED_DOCUMENTS:?}"
+        );
+    }
+    for document in STAGED_DOCUMENTS {
+        ensure!(
+            stage.join(document).is_file(),
+            "missing staged document {document}"
+        );
+    }
     let children: Vec<_> = fs::read_dir(&stage)?.collect::<std::io::Result<_>>()?;
     let owned = stage.join("tools/contextmink");
     fs::create_dir_all(owned.join("bin"))?;
@@ -147,7 +174,7 @@ mod tests {
     use crate::support::{cleanup_temp, temp_root};
 
     #[test]
-    fn packages_host_skills_and_hashes_without_private_state() {
+    fn packages_one_copy_of_each_file_without_private_state() {
         let root = temp_root("package test").unwrap();
         let stage = root.join("stage");
         fs::create_dir(&stage).unwrap();
@@ -164,6 +191,7 @@ mod tests {
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
+        stage_documents(&stage);
         let archive = root.join(if cfg!(windows) {
             "release.zip"
         } else {
@@ -191,10 +219,57 @@ mod tests {
                 cfg!(windows)
             );
         }
+        let owned = stage.join("tools/contextmink");
+        assert!(owned.join("agent_integration.md").is_file());
+        assert!(owned.join("docs/setup.md").is_file());
+        assert!(!owned.join("templates").exists());
+        assert!(!owned.join("SETUP.md").exists());
         assert!(
             run(&stage, &archive).is_err(),
             "must not overwrite an existing archive"
         );
+        cleanup_temp(&root).unwrap();
+    }
+
+    fn stage_documents(stage: &Path) {
+        for document in STAGED_DOCUMENTS {
+            let path = stage.join(document);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"fixture document").unwrap();
+        }
+    }
+
+    #[test]
+    fn duplicate_or_historical_files_refuse_before_staging_mutations() {
+        let root = temp_root("package extra file").unwrap();
+        let stage = root.join("stage");
+        fs::create_dir(&stage).unwrap();
+        let binary = format!("contextmink{}", std::env::consts::EXE_SUFFIX);
+        fs::write(stage.join(&binary), b"fixture runtime").unwrap();
+        let mut manifest = serde_json::json!({"name":"contextmink", "binary":binary});
+        if cfg!(windows) {
+            manifest["bridge_binary"] = "contextmink-bridge.exe".into();
+            fs::write(stage.join("contextmink-bridge.exe"), b"fixture bridge").unwrap();
+        }
+        fs::write(
+            stage.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        stage_documents(&stage);
+        for extra in ["templates/agent_integration.md", "docs/evidence/history.md"] {
+            let path = stage.join(extra);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"duplicate").unwrap();
+            let before = snapshot(&stage).unwrap();
+            let error = run(&stage, &root.join("release.archive")).unwrap_err();
+            assert!(
+                error.to_string().contains("unexpected staged file"),
+                "{error}"
+            );
+            assert_eq!(snapshot(&stage).unwrap(), before);
+            fs::remove_file(&path).unwrap();
+        }
         cleanup_temp(&root).unwrap();
     }
 

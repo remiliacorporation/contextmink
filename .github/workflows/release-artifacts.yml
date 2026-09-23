@@ -155,11 +155,10 @@ jobs:
           set -euo pipefail
           bundle="dist/${{ steps.names.outputs.bundle }}"
           archive="dist/${{ steps.names.outputs.archive }}"
-          mkdir -p "${bundle}/docs" "${bundle}/templates"
+          mkdir -p "${bundle}/docs"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${bundle}/"
-          cp README.md SETUP.md CHANGELOG.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
-          cp -R docs/. "${bundle}/docs/"
-          cp -R templates/. "${bundle}/templates/"
+          cp README.md CHANGELOG.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
+          cp docs/setup.md "${bundle}/docs/"
           cat > "${bundle}/manifest.json" <<EOF
           {
             "schema": "contextmink.release_manifest.v1",
@@ -186,12 +185,11 @@ jobs:
         run: |
           $bundle = "dist/${{ steps.names.outputs.bundle }}"
           $archive = "dist/${{ steps.names.outputs.archive }}"
-          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          New-Item -ItemType Directory -Force -Path "$bundle/docs" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $bundle
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bridge_binary_name }}" $bundle
-          Copy-Item README.md,SETUP.md,CHANGELOG.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
-          Copy-Item -Recurse docs $bundle
-          Copy-Item -Recurse templates $bundle
+          Copy-Item README.md,CHANGELOG.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
+          Copy-Item docs/setup.md "$bundle/docs/"
           $manifest = [ordered]@{
             schema = "contextmink.release_manifest.v1"
             name = "contextmink"
@@ -224,7 +222,6 @@ jobs:
           cargo run --locked --quiet --example release_tools -- verify-user "${bundle}/bin/${{ matrix.binary_name }}"
           test -f "${bundle}/bin/${{ matrix.binary_name }}"
           test -f "${bundle}/README.md"
-          test -f "${bundle}/SETUP.md"
           test -f "${bundle}/CHANGELOG.md"
           test -f "${bundle}/LICENSE"
           test -f "${bundle}/LICENSE-SSL"
@@ -232,8 +229,9 @@ jobs:
           test -f "${bundle}/manifest.json"
           grep -Fq '"schema": "contextmink.release_manifest.v3"' "${bundle}/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "${bundle}/manifest.json"
-          test -d "${bundle}/docs"
-          test -d "${bundle}/templates"
+          test -f "${bundle}/docs/setup.md"
+          test ! -e "${bundle}/templates"
+          test ! -e "${bundle}/docs/evidence"
           test "$("${bundle}/bin/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/bin/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
           "${bundle}/bin/${{ matrix.binary_name }}" files src --show-files 1 > /tmp/contextmink-smoke.txt
@@ -251,7 +249,7 @@ jobs:
           printf 'fixture guidance\n' > "${project}/AGENTS.md"
           printf 'fixture guidance\n' > "${project}/CLAUDE.md"
           "${bundle}/bin/${{ matrix.binary_name }}" --json setup-project "${project}" > "${verify_root}/setup-smoke.json"
-          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v2"' "${verify_root}/setup-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_setup.v3"' "${verify_root}/setup-smoke.json"
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/setup-smoke.json"
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"both"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/project-install.json"
@@ -264,7 +262,6 @@ jobs:
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test -f "${project}/.agents/skills/contextmink/agents/openai.yaml"
           test -f "${project}/.claude/skills/contextmink/SKILL.md"
-          test ! -e "${project}/scripts/contextmink.cmd"
           cmp "${project}/.agents/skills/contextmink/SKILL.md" "${project}/.claude/skills/contextmink/SKILL.md"
           if grep -Eq 'command above|binding above' "${project}/.agents/skills/contextmink/SKILL.md"; then
             echo "project skill refers to an empty personal binding" >&2
@@ -306,7 +303,7 @@ jobs:
             exit 1
           fi
           "${bundle}/bin/${{ matrix.binary_name }}" --json uninstall-project "${project}" --dry-run > "${verify_root}/uninstall-smoke.json"
-          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_uninstall.v1"' "${verify_root}/uninstall-smoke.json"
+          grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.project_uninstall.v2"' "${verify_root}/uninstall-smoke.json"
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/uninstall-smoke.json"
           "${bundle}/bin/${{ matrix.binary_name }}" --json uninstall-project "${project}" > "${verify_root}/uninstall-apply.json"
           test ! -e "${project}/tools/contextmink/project-install.json"
@@ -342,7 +339,6 @@ jobs:
           $bridgeHelp = & $bridge --help | Out-String
           if ($bridgeHelp -notmatch "argv-b64") { throw "bridge help missing argv-b64" }
           if (!(Test-Path "$bundle/README.md")) { throw "README.md missing" }
-          if (!(Test-Path "$bundle/SETUP.md")) { throw "SETUP.md missing" }
           if (!(Test-Path "$bundle/CHANGELOG.md")) { throw "CHANGELOG.md missing" }
           if (!(Test-Path "$bundle/LICENSE")) { throw "LICENSE missing" }
           if (!(Test-Path "$bundle/LICENSE-SSL")) { throw "LICENSE-SSL missing" }
@@ -355,8 +351,9 @@ jobs:
           if ($releaseManifest.source_commit -ne $env:GITHUB_SHA) {
             throw "release manifest source commit mismatch: $($releaseManifest.source_commit)"
           }
-          if (!(Test-Path "$bundle/docs")) { throw "docs missing" }
-          if (!(Test-Path "$bundle/templates")) { throw "templates missing" }
+          if (!(Test-Path "$bundle/docs/setup.md")) { throw "docs/setup.md missing" }
+          if (Test-Path "$bundle/templates") { throw "templates duplicate installed files" }
+          if (Test-Path "$bundle/docs/evidence") { throw "historical evidence was packaged" }
           $reportedVersion = & $binary --version
           if ($reportedVersion -ne "contextmink ${{ steps.names.outputs.version }}") {
             throw "binary version mismatch: $reportedVersion"
@@ -381,7 +378,7 @@ jobs:
           Set-Content -Path "$project/AGENTS.md" -Value "fixture guidance" -NoNewline
           Set-Content -Path "$project/CLAUDE.md" -Value "fixture guidance" -NoNewline
           $setupSmoke = (& $binary --json setup-project $project | Out-String) | ConvertFrom-Json
-          if ($setupSmoke.schema -ne "contextmink.project_setup.v2" -or !$setupSmoke.ready) { throw "setup-project schema or readiness mismatch" }
+          if ($setupSmoke.schema -ne "contextmink.project_setup.v3" -or !$setupSmoke.ready) { throw "setup-project schema or readiness mismatch" }
           if ($setupSmoke.resolved_skill_target -ne "both") { throw "setup-project auto target mismatch" }
           if (!(Test-Path "$project/tools/contextmink/project-install.json")) { throw "project-install receipt missing" }
           if (!(Test-Path "$project/tools/contextmink/bin/runtime-install.json")) { throw "runtime-install receipt missing" }
@@ -399,7 +396,6 @@ jobs:
             if ($body -match 'command above|binding above') { throw "$skillName refers to an empty personal binding" }
             if (!$body.Contains('tools/contextmink/bin/')) { throw "$skillName project invocation missing" }
           }
-          if (Test-Path "$project/scripts/contextmink.cmd") { throw "retired PowerShell diagnostic shim was installed" }
           $projectBin = "$project/tools/contextmink/bin"
           Set-Content -LiteralPath "$project/selection.json" -Value '{"result":{"total":17}}'
           $pointerSmoke = (& "$projectBin/contextmink-bridge.exe" --script "$project/scripts/contextmink" -- --json json-select "$project/selection.json" --at /result/total | Out-String) | ConvertFrom-Json
@@ -462,7 +458,7 @@ jobs:
             throw "bridge argv relay smoke failed"
           }
           $uninstallSmoke = (& $binary --json uninstall-project $project --dry-run | Out-String) | ConvertFrom-Json
-          if ($uninstallSmoke.schema -ne "contextmink.project_uninstall.v1" -or !$uninstallSmoke.ready) {
+          if ($uninstallSmoke.schema -ne "contextmink.project_uninstall.v2" -or !$uninstallSmoke.ready) {
             throw "uninstall-project preflight failed"
           }
           & $binary --json uninstall-project $project | Out-Null

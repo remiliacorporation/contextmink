@@ -50,18 +50,19 @@ an explicit user home, including disposable test homes. Start a fresh agent
 session and verify the skill appears. Skill descriptions support automatic
 selection; they do not guarantee a model will choose the tool on every request.
 The installer writes both complete skill files itself and executes the copied
-runtime before reporting success. No agent-side copying or routing setup remains.
+runtime before reporting success; agents copy nothing.
 
 Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
 shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
-A host-local `user-install.json` binds installed files to raw byte hashes and
-the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
-files refuse; review them before using `--replace-managed`. The installed
-runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
-from an external release, not the installed executable. Installation preflights
+A host-local `user-install.json` records the tool version, the installed skill
+and reference paths, and raw byte hashes of the installed executables. Setup
+writes the release's files at those paths, whatever they currently contain. The
+installed runtime refuses a missing receipt, a missing file, or an executable
+that differs from its receipt. Run repair or upgrade from an external release,
+not the installed executable. Installation preflights
 all managed paths. On Windows, setup and removal also check existing executables
 that need replacement or removal for write access before changing any files,
 including during `--dry-run`. Close running tool processes when this check refuses.
@@ -69,8 +70,9 @@ Unchanged executables need no lock check. A process can acquire a lock after
 preflight; this is not a crash-atomic multi-file transaction. An interrupted
 install must be repaired before the runtime can run.
 
-`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
-receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes the
+receipt's skill and reference files, removes its executables while their bytes
+match the receipt, and retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -79,7 +81,7 @@ configuration when present and built-in defaults otherwise. Personal setup
 installs the native retrieval/capture executable. On Windows it also installs
 `contextmink-bridge.exe` and a separate `contextmink-bridge` skill for running
 project Bash scripts. Linux and macOS installations omit that skill. Native
-commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
+commands run directly from any shell.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
@@ -96,8 +98,8 @@ replacement for project-native tools.
 
 ## Prerequisites
 
-- For standalone use, download the release archive for your platform and put
-  `contextmink` on `PATH`, or run it from the unpacked directory.
+- For standalone use, unpack the release archive into the project root; the
+  executable is `tools/contextmink/bin/contextmink[.exe]`.
 - Rust 1.95 or newer and Cargo are needed only for source builds or vendored
   integrations that build the local `tools/contextmink` copy. `contextmink`
   uses Rust edition 2024.
@@ -130,23 +132,28 @@ archive for the host platform:
 - `contextmink-<version>-macos-arm64.tar.gz`
 - `contextmink-<version>-linux-x86_64.tar.gz`
 
-Each archive includes:
+Each archive is a project overlay. Every file ships once, at the path it is
+used from, so merging the archive into a project root needs no further copying:
 
 ```text
-contextmink(.exe)
-README.md
-SETUP.md
-docs/
-templates/
-manifest.json
-LICENSE
-LICENSE-SSL
-LICENSE-VPL
+.agents/skills/contextmink/SKILL.md
+.agents/skills/contextmink/agents/openai.yaml
+.claude/skills/contextmink/SKILL.md
+tools/contextmink/bin/contextmink(.exe)
+tools/contextmink/agent_integration.md
+tools/contextmink/manifest.json
+tools/contextmink/README.md
+tools/contextmink/CHANGELOG.md
+tools/contextmink/docs/setup.md
+tools/contextmink/LICENSE
+tools/contextmink/LICENSE-SSL
+tools/contextmink/LICENSE-VPL
 ```
 
-The Windows archive also carries `contextmink-bridge.exe` and discoverable
-`contextmink-bridge` skills in `.agents` and `.claude` (see the bridge section
-below); `manifest.json` records its name in a `bridge_binary` field.
+The Windows archive also carries `tools/contextmink/bin/contextmink-bridge.exe`
+and `contextmink-bridge` skills in `.agents` and `.claude` (see the bridge
+section below); `manifest.json` records its path in a `bridge_binary` field.
+`setup-project` and `setup-user` carry their templates inside the executable.
 
 Verify the adjacent `.sha256` checksum after downloading an archive.
 
@@ -168,7 +175,8 @@ if ($actual -ne $expected) { throw "contextmink archive checksum mismatch" }
 This installs `contextmink` on `PATH` instead of vendoring it per repository:
 
 1. Unpack the release archive.
-2. Put `contextmink(.exe)` on `PATH`, or run it from the unpacked directory.
+2. Put `tools/contextmink/bin/contextmink(.exe)` on `PATH`, or run it from the
+   unpacked directory.
 3. Verify:
 
    ```bash
@@ -233,9 +241,9 @@ Adapt the installation to the project before copying generic policy:
    general-purpose skills owned by another tool or workflow.
    It manages only `.agents/skills/contextmink` and
    `.claude/skills/contextmink`; Pi, OMP, and OpenCode markers do not create
-   additional harness-native copies. Existing receipt-owned routers upgrade to
-   complete skills. Both installed bodies are generated from one template;
-   maintain no independent harness-specific procedure.
+   additional harness-native copies. Both installed bodies are
+   generated from one template; maintain no independent harness-specific
+   procedure.
 7. Dogfood the result on real project work from the workspace root and a nested
    directory. Verify config/profile discovery, receipts, domain-tool precedence,
    launcher behavior, and any hook or bridge boundary the project enables.
@@ -265,12 +273,12 @@ Adapt the installation to the project before copying generic policy:
    `/tools/contextmink/bin/`, `tools/contextmink/agent_integration.md`, and the
    Contextmink skill under the resolved discovery path or paths. It also
    writes `tools/contextmink/project-install.json`, a platform-neutral receipt
-   containing the Contextmink version, resolved skill target, canonical SHA-256
-   identities for release-managed text, and exact ownership of the additive
-   `.gitignore` block or file it created. The ignored host-local
-   `tools/contextmink/bin/runtime-install.json` separately records raw SHA-256
-   identities for installed binaries, avoiding platform bytes in the tracked
-   receipt. Neither receipt claims
+   containing the Contextmink version, the resolved skill target, and exact
+   ownership of the additive `.gitignore` block or file it created. The skill
+   target determines which launcher, skill, and reference paths the receipt
+   owns. The ignored host-local `tools/contextmink/bin/runtime-install.json`
+   records raw SHA-256 identities for installed binaries, avoiding platform
+   bytes in the tracked receipt. Neither receipt claims
    `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, or unrelated
    skills.
 
@@ -304,17 +312,14 @@ Adapt the installation to the project before copying generic policy:
 7. To upgrade, rerun the newer release with `--dry-run`. A valid existing
    configuration must be reported as `preserve_repository_owned`.
    `auto` preserves the receipt's resolved skill target. Pass an explicit
-   `--skill-target` to reselect; deselected skill files are retired only when
-   their recorded hashes still match. An unreceipted file at a deselected
-   Contextmink skill path reports `unowned_refusal` and blocks every setup write
-   until the operator moves or removes it deliberately. Receipt-matching older
-   text and host runtime binaries upgrade without extra authority. A modified or pre-receipt
-   destination reports
-   `requires_replace_managed: true` and makes the plan `ready: false`; inspect
-   it, then apply with `--replace-managed` if replacement is correct. Modified
-   retired paths always refuse and require deliberate manual resolution.
-   Setup never replaces `.contextmink.toml`. Review and reintegrate guidance
-   changes after every managed reference replacement.
+   `--skill-target` to reselect; the deselected skill files are removed. An
+   unreceipted file at a deselected Contextmink skill path reports
+   `unowned_refusal` and blocks every setup write until the operator moves or
+   removes it deliberately. Launchers, skills, the integration reference, and
+   the host binary are written as the release ships them and reported as
+   `replace` when their content differs. Setup never replaces
+   `.contextmink.toml`. Keep project-specific guidance in repository-owned
+   files, not in the release-managed skill or reference.
 
 8. Optional: generate a Claude hook fragment from the installed binary:
 
@@ -347,29 +352,17 @@ Windows PowerShell:
 & .\tools\contextmink\bin\contextmink.exe uninstall-project C:\path\to\repository
 ```
 
-The command requires `tools/contextmink/project-install.json`, removes only
-receipt-owned skills, launchers, integration text, host binaries whose raw
-hashes match `tools/contextmink/bin/runtime-install.json`, and an exact
-receipt-owned Contextmink `.gitignore` block, and prunes only empty
-Contextmink-owned directories. It refuses modified receipt-owned text or
-runtime bytes before deletion and reports unreceipted runtime files as
-`preserve_unowned`. It preserves
+The command requires `tools/contextmink/project-install.json`. It removes the
+skills, launchers, and integration reference that the receipt's skill target
+implies, host binaries whose raw hashes match
+`tools/contextmink/bin/runtime-install.json`, and an exact receipt-owned
+Contextmink `.gitignore` block, and prunes only empty Contextmink-owned
+directories. It refuses a receipt-owned binary whose bytes differ before any
+deletion and reports unreceipted runtime files as `preserve_unowned`. It
+preserves
 `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, and unrelated
 skills; review those repository-owned files and remove any obsolete discovery
 trigger or policy deliberately.
-
-The 0.9.0 release is the first stable receipt-bearing Contextmink install. An
-early candidate `contextmink.project_install.v1` receipt is accepted and
-rewritten as v2; its concrete skill target is derived from the skill paths it
-already recorded. Host runtime ownership is established separately only for
-bytes matching the current release or after reviewed `--replace-managed`. A
-prior `0.9.0-rc` setup may also have projected `changelog-writing`. Stable
-setup does not infer that an unreceipted general skill is Contextmink-owned. Review
-`.agents/skills/changelog-writing/SKILL.md`,
-`.agents/skills/changelog-writing/agents/openai.yaml`, and
-`.claude/skills/changelog-writing/SKILL.md`; remove them manually only if the
-repository has no independent reason to keep the skill. This one-time refusal
-to guess ownership is intentional.
 
 Maintaining-agent prompt:
 
@@ -445,8 +438,7 @@ support an `args` field.
 
 The contextmink binary needs none of this — it runs natively from any shell.
 This section applies only to repositories that keep their scripts Bash-first
-while the agent runs in PowerShell. The guarded native bridge is the sole
-retained implementation; POSIX hosts need no bridge.
+while the agent runs in PowerShell. POSIX hosts need no bridge.
 
 Windows project overlays and setup install a separate `contextmink-bridge`
 skill for this workflow; personal setup also binds its absolute executable path.
@@ -509,7 +501,8 @@ copy of the Rust crate:
 1. Copy this repository's Rust crate into the target repository at
    `tools/contextmink/`.
 
-2. Copy `templates/scripts/contextmink` to `scripts/contextmink`.
+2. Copy `tools/contextmink/templates/scripts/contextmink` to
+   `scripts/contextmink`.
 
    Preserve the executable bit on Unix-like systems:
 
@@ -524,7 +517,8 @@ copy of the Rust crate:
    For release binary installs, use Project Binary
    Integration instead.
 
-3. Copy `templates/.contextmink.toml` to `.contextmink.toml`, then edit it.
+3. Copy `tools/contextmink/templates/.contextmink.toml` to
+   `.contextmink.toml`, then edit it.
 
    Keep only repo-local high-output paths. Good candidates include generated build
    directories, vendored dependencies, caches, exported reports, large binary
@@ -537,17 +531,16 @@ copy of the Rust crate:
    auto-like first selection, use the same existing-marker rules as
    `setup-project`, then freeze the concrete choice in the repository's vendor
    lock or manifest rather than redetecting it on every refresh. For `agents`,
-   copy `templates/skills/contextmink/SKILL.md` to
+   copy `tools/contextmink/templates/skills/contextmink/SKILL.md` to
    `.agents/skills/contextmink/SKILL.md` and copy `agents/openai.yaml` under that
    skill. For `claude` or `both`, also copy the same complete template to
    `.claude/skills/contextmink/SKILL.md`. Both paths must contain the same body.
    In a source-vendored integration these
    copies are owned by the target repository rather than a binary-install
-   receipt. Record their hashes, retire a deselected copy only while its prior
-   vendor hash still matches, and refuse or explicitly review a divergent
-   existing destination instead of overwriting or removing it silently.
+   receipt: refresh them from the vendored templates, and remove a deselected
+   copy when the selection changes.
 
-5. Vendor `templates/agent_integration.md` as
+5. Copy `tools/contextmink/templates/agent_integration.md` to
    `tools/contextmink/agent_integration.md`, the integration reference the
    skill links to. Do not add Contextmink trigger text to `AGENTS.md`,
    `CLAUDE.md`, or equivalent files; the skill description routes selection.
@@ -595,8 +588,8 @@ exclude_globs = [
 ```
 
 The binary already excludes common high-output paths such as `.git`, `target`,
-`node_modules`, and `.venv`. Empty profiles and the shipped placeholder are
-hard errors.
+`node_modules`, and `.venv`. Empty profiles and the template placeholder
+(`replace-with-workspace-name`) are hard errors.
 
 ## Instruction Rule
 
@@ -621,7 +614,7 @@ reference is loaded for setup, policy changes, or unfamiliar receipt semantics.
 
 ## Operational Notes
 
-Usage policy lives in the skill and `templates/agent_integration.md`; flag
+Usage policy lives in the skill and `tools/contextmink/agent_integration.md`; flag
 details live in `contextmink <command> --help`. This section covers only host
 mechanics those do not:
 
@@ -643,8 +636,8 @@ mechanics those do not:
 
 For release-binary integration, keep
 `tools/contextmink/project-install.json` tracked beside the managed launchers,
-skills, and integration reference. Do not hand-edit its hashes. Run the newer
-release's `setup-project --dry-run` to inspect drift, upgrade, or retirement.
+skills, and integration reference. Do not hand-edit it. Run the newer
+release's `setup-project --dry-run` to inspect an upgrade or reselection.
 
 For a vendored copy, compare or sync only the generic surface:
 
@@ -656,7 +649,6 @@ tools/contextmink/Cargo.toml
 tools/contextmink/Cargo.lock
 tools/contextmink/rust-toolchain.toml
 tools/contextmink/README.md
-tools/contextmink/SETUP.md
 tools/contextmink/CHANGELOG.md
 tools/contextmink/docs/
 tools/contextmink/scripts/

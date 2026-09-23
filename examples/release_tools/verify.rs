@@ -47,6 +47,16 @@ pub fn project(bundle: &Path) -> Result<()> {
             "unexpected overlay path {}",
             path.display()
         );
+        if let Ok(owned_path) = path.strip_prefix("tools/contextmink") {
+            let text = owned_path.to_string_lossy().replace('\\', "/");
+            ensure!(
+                text == "manifest.json"
+                    || text == "agent_integration.md"
+                    || text.starts_with("bin/")
+                    || crate::package::STAGED_DOCUMENTS.contains(&text.as_str()),
+                "overlay ships an unexpected or duplicate file tools/contextmink/{text}"
+            );
+        }
         ensure!(
             !matches!(
                 path.file_name().and_then(|s| s.to_str()),

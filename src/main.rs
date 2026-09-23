@@ -90,45 +90,29 @@ fn run_application() -> Result<()> {
     let cli = parse_cli(&args);
     validate_global_flags(&cli)?;
     match &cli.command {
-        Command::SetupUser {
-            home,
-            dry_run,
-            replace_managed,
-        } => {
+        Command::SetupUser { home, dry_run } => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&user_setup::run(
-                    home.as_deref(),
-                    *dry_run,
-                    *replace_managed,
-                    false
-                )?)?
+                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, false)?)?
             );
             return Ok(());
         }
         Command::UninstallUser { home, dry_run } => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&user_setup::run(
-                    home.as_deref(),
-                    *dry_run,
-                    false,
-                    true
-                )?)?
+                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, true)?)?
             );
             return Ok(());
         }
         Command::SetupProject {
             project_root,
             dry_run,
-            replace_managed,
             skill_target,
         } => {
             let result = setup_project(SetupProjectRequest {
                 project_root,
                 source_binary: None,
                 dry_run: *dry_run,
-                replace_managed: *replace_managed,
                 skill_target: *skill_target,
             })?;
             let mut stdout = io::stdout();
@@ -554,7 +538,7 @@ fn run_application() -> Result<()> {
             // item is a misplaced or unsupported option, never a program.
             if let Some(first) = argv.first().filter(|first| first.starts_with('-')) {
                 return Err(anyhow!(
-                    "guard-check received `{first}` as the first argv item; it is not a guard-check option (see `contextmink guard-check --help`). guard-check emits no receipt, so receipt strictness flags do not apply"
+                    "guard-check received `{first}` as the first argv item; it is not a guard-check option (see `contextmink guard-check --help`). Place guard-check options before `--` and the argv after it"
                 ));
             }
             let (input_kind, evaluated_argv) = match (command.as_deref(), argv.is_empty()) {
@@ -658,15 +642,7 @@ fn write_setup_actions(
             SetupActionKind::UnownedRefusal => "unowned_refusal",
             SetupActionKind::ModifiedRefusal => "modified_refusal",
         };
-        if action.requires_replace_managed {
-            writeln!(
-                stdout,
-                "{verb}\t{}\trequires=--replace-managed",
-                display_path(&action.path)
-            )?;
-        } else {
-            writeln!(stdout, "{verb}\t{}", display_path(&action.path))?;
-        }
+        writeln!(stdout, "{verb}\t{}", display_path(&action.path))?;
     }
     Ok(())
 }

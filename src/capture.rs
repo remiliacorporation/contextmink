@@ -73,16 +73,11 @@ pub(crate) fn command_capture(
         .split_first()
         .ok_or_else(|| anyhow!("capture requires a command after --"))?;
     // The child argv is trailing and accepts hyphen values, so a mistyped or
-    // removed capture flag would otherwise be executed as the program name.
+    // unknown capture flag would otherwise be executed as the program name.
     if program.starts_with('-') {
-        return Err(
-            match crate::cli::renamed_flag_guidance("capture", program) {
-                Some(guidance) => anyhow!("capture {guidance}"),
-                None => anyhow!(
-                    "capture received `{program}` as the program to run; it is not a capture option (see `contextmink capture --help`). Place capture options before `--` and the command after it"
-                ),
-            },
-        );
+        return Err(anyhow!(
+            "capture received `{program}` as the program to run; it is not a capture option (see `contextmink capture --help`). Place capture options before `--` and the command after it"
+        ));
     }
     let expected_exit_codes = parse_expected_exit_codes(expect_exit)?;
 

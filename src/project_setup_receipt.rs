@@ -7,13 +7,15 @@ use std::path::{Component, Path};
 
 use anyhow::{Context, Result, anyhow};
 use semver::Version;
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use super::{ManagedFile, SetupFileOwnership, SkillTarget, normalized_path};
 
 pub(super) const INSTALL_RECEIPT_PATH: &str = "tools/contextmink/project-install.json";
-pub(super) const INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v2";
-const LEGACY_INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v1";
+pub(super) const INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v3";
+/// Read once so an upgrade can rewrite it as the current schema.
+const PREVIOUS_INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v2";
 pub(super) const RUNTIME_RECEIPT_PATH: &str = "tools/contextmink/bin/runtime-install.json";
 pub(super) const RUNTIME_RECEIPT_SCHEMA: &str = "contextmink.runtime_install.v1";
 pub(super) const MANAGED_RUNTIME_PATHS: &[&str] = &[
@@ -22,43 +24,28 @@ pub(super) const MANAGED_RUNTIME_PATHS: &[&str] = &[
     "tools/contextmink/bin/contextmink-bridge.exe",
 ];
 
-const SUPPORTED_MANAGED_TEXT_PATHS: &[&str] = &[
-    "scripts/contextmink",
-    // Retained only so a hash-bound 0.9.1 receipt can retire the obsolete
-    // PowerShell diagnostic shim without claiming unreceipted project files.
-    "scripts/contextmink.cmd",
-    "tools/contextmink/agent_integration.md",
-    ".agents/skills/contextmink/SKILL.md",
-    ".agents/skills/contextmink/agents/openai.yaml",
-    ".claude/skills/contextmink/SKILL.md",
-    ".agents/skills/contextmink-bridge/SKILL.md",
-    ".claude/skills/contextmink-bridge/SKILL.md",
-    // Kept in the allowlist only so a hash-bound receipt from a prerelease
-    // installer can retire the general-purpose skill without guessing that an
-    // unreceipted repository-local copy belongs to Contextmink.
-    ".agents/skills/changelog-writing/SKILL.md",
-    ".agents/skills/changelog-writing/agents/openai.yaml",
-    ".claude/skills/changelog-writing/SKILL.md",
-];
-
+/// Project ownership: the release version, the frozen skill target, and the
+/// `.gitignore` surfaces setup created. The owned text paths follow from the
+/// skill target; they carry no content identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InstallReceipt {
     pub(super) schema: String,
     pub(super) contextmink_version: String,
     pub(super) skill_target: SkillTarget,
-    pub(super) managed_files: Vec<ManagedFileReceipt>,
     pub(super) managed_gitignore_block: bool,
     pub(super) managed_gitignore_file: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LegacyInstallReceipt {
-    schema: String,
+struct PreviousInstallReceipt {
     contextmink_version: String,
-    managed_files: Vec<ManagedFileReceipt>,
-    managed_runtime_paths: Vec<String>,
+    skill_target: SkillTarget,
+    #[serde(rename = "schema")]
+    _schema: IgnoredAny,
+    #[serde(rename = "managed_files")]
+    _managed_files: IgnoredAny,
     managed_gitignore_block: bool,
     managed_gitignore_file: bool,
 }
@@ -79,7 +66,6 @@ pub(super) struct ManagedFileReceipt {
 }
 
 pub(super) fn build_install_receipt(
-    managed: &[ManagedFile],
     skill_target: SkillTarget,
     managed_gitignore_block: bool,
     managed_gitignore_file: bool,
@@ -88,14 +74,6 @@ pub(super) fn build_install_receipt(
         schema: INSTALL_RECEIPT_SCHEMA.to_owned(),
         contextmink_version: env!("CARGO_PKG_VERSION").to_owned(),
         skill_target,
-        managed_files: managed
-            .iter()
-            .filter(|file| file.ownership == SetupFileOwnership::ReleaseManagedText)
-            .map(|file| ManagedFileReceipt {
-                path: normalized_path(&file.relative_path),
-                sha256: managed_text_sha256(&file.content),
-            })
-            .collect(),
         managed_gitignore_block,
         managed_gitignore_file,
     }
@@ -167,20 +145,27 @@ pub(super) fn load_install_receipt(path: &Path) -> Result<Option<InstallReceipt>
                 INSTALL_RECEIPT_SCHEMA
             )
         })?,
-        LEGACY_INSTALL_RECEIPT_SCHEMA => {
-            let legacy: LegacyInstallReceipt =
+        PREVIOUS_INSTALL_RECEIPT_SCHEMA => {
+            let previous: PreviousInstallReceipt =
                 serde_json::from_value(envelope).with_context(|| {
                     format!(
-                        "parse legacy {}; restore a valid {} receipt or move it aside deliberately",
+                        "parse {}; restore a valid {} receipt or move it aside deliberately",
                         path.display(),
-                        LEGACY_INSTALL_RECEIPT_SCHEMA
+                        PREVIOUS_INSTALL_RECEIPT_SCHEMA
                     )
                 })?;
-            migrate_legacy_install_receipt(legacy)?
+            InstallReceipt {
+                schema: INSTALL_RECEIPT_SCHEMA.to_owned(),
+                contextmink_version: previous.contextmink_version,
+                skill_target: previous.skill_target,
+                managed_gitignore_block: previous.managed_gitignore_block,
+                managed_gitignore_file: previous.managed_gitignore_file,
+            }
         }
         _ => {
             return Err(anyhow!(
-                "unsupported project-install receipt schema {schema:?}; use a Contextmink release that owns it or migrate it deliberately"
+                "unsupported project-install receipt schema {schema:?} in {}; move it aside deliberately, then rerun setup-project to reinstall",
+                path.display()
             ));
         }
     };
@@ -211,50 +196,10 @@ pub(super) fn load_runtime_receipt(path: &Path) -> Result<Option<RuntimeInstallR
     Ok(Some(receipt))
 }
 
-fn migrate_legacy_install_receipt(legacy: LegacyInstallReceipt) -> Result<InstallReceipt> {
-    if legacy.schema != LEGACY_INSTALL_RECEIPT_SCHEMA {
-        return Err(anyhow!(
-            "legacy project-install receipt schema mismatch: {:?}",
-            legacy.schema
-        ));
-    }
-    Version::parse(&legacy.contextmink_version).map_err(|_| {
-        anyhow!(
-            "project-install receipt contextmink_version must be a canonical semantic version, found {:?}",
-            legacy.contextmink_version
-        )
-    })?;
-    for path in &legacy.managed_runtime_paths {
-        validate_managed_runtime_path(Path::new(path))?;
-    }
-    let agents = legacy.managed_files.iter().any(|file| {
-        file.path == ".agents/skills/contextmink/SKILL.md"
-            || file.path == ".agents/skills/contextmink/agents/openai.yaml"
-    });
-    let claude = legacy
-        .managed_files
-        .iter()
-        .any(|file| file.path == ".claude/skills/contextmink/SKILL.md");
-    let skill_target = match (agents, claude) {
-        (true, true) => SkillTarget::Both,
-        (true, false) => SkillTarget::Agents,
-        (false, true) => SkillTarget::Claude,
-        (false, false) => SkillTarget::None,
-    };
-    Ok(InstallReceipt {
-        schema: INSTALL_RECEIPT_SCHEMA.to_owned(),
-        contextmink_version: legacy.contextmink_version,
-        skill_target,
-        managed_files: legacy.managed_files,
-        managed_gitignore_block: legacy.managed_gitignore_block,
-        managed_gitignore_file: legacy.managed_gitignore_file,
-    })
-}
-
 pub(super) fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
     if receipt.schema != INSTALL_RECEIPT_SCHEMA {
         return Err(anyhow!(
-            "unsupported project-install receipt schema {:?}; use a Contextmink release that owns it or migrate it deliberately",
+            "unsupported project-install receipt schema {:?}; move it aside deliberately, then rerun setup-project to reinstall",
             receipt.schema
         ));
     }
@@ -273,24 +218,6 @@ pub(super) fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
         return Err(anyhow!(
             "project-install receipt skill_target must be resolved, not auto"
         ));
-    }
-
-    let mut paths = HashSet::new();
-    for file in &receipt.managed_files {
-        validate_managed_text_path(Path::new(&file.path))?;
-        if normalized_path(Path::new(&file.path)) != file.path {
-            return Err(anyhow!(
-                "project-install receipt managed path must be canonical: {}",
-                file.path
-            ));
-        }
-        if !paths.insert(file.path.as_str()) {
-            return Err(anyhow!(
-                "project-install receipt repeats managed path {}",
-                file.path
-            ));
-        }
-        validate_sha256(&file.sha256, "project-install")?;
     }
 
     Ok(())
@@ -358,17 +285,6 @@ fn refuse_version_downgrade(version: &str, operation: &str, receipt: &str) -> Re
     Ok(())
 }
 
-pub(super) fn validate_managed_text_path(path: &Path) -> Result<()> {
-    validate_relative_path(path, "managed")?;
-    let normalized = normalized_path(path);
-    if !SUPPORTED_MANAGED_TEXT_PATHS.contains(&normalized.as_str()) {
-        return Err(anyhow!(
-            "project-install receipt names unsupported managed path {normalized}; this release will not modify or remove it"
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn validate_managed_runtime_path(path: &Path) -> Result<()> {
     validate_relative_path(path, "runtime")?;
     let normalized = normalized_path(path);
@@ -395,7 +311,7 @@ fn validate_relative_path(path: &Path, kind: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn canonical_managed_text(content: &[u8]) -> Cow<'_, [u8]> {
+fn canonical_managed_text(content: &[u8]) -> Cow<'_, [u8]> {
     if !content.windows(2).any(|pair| pair == b"\r\n") {
         return Cow::Borrowed(content);
     }
@@ -413,8 +329,10 @@ pub(super) fn canonical_managed_text(content: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(canonical)
 }
 
-pub(super) fn managed_text_sha256(content: &[u8]) -> String {
-    crate::digest::sha256(canonical_managed_text(content).as_ref())
+/// Release-managed text matches when it differs only in CRLF versus LF line
+/// endings, so checkouts with converted line endings stay unchanged.
+pub(super) fn same_managed_text(left: &[u8], right: &[u8]) -> bool {
+    canonical_managed_text(left) == canonical_managed_text(right)
 }
 
 pub(crate) fn managed_runtime_sha256(content: &[u8]) -> String {
@@ -439,61 +357,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn managed_text_hash_is_line_ending_independent() {
-        assert_eq!(
-            managed_text_sha256(b"a\nb\n"),
-            managed_text_sha256(b"a\r\nb\r\n")
-        );
+    fn managed_text_comparison_is_line_ending_independent() {
+        assert!(same_managed_text(b"a\nb\n", b"a\r\nb\r\n"));
+        assert!(!same_managed_text(b"a\nb\n", b"a\nc\n"));
     }
 
     #[test]
-    fn receipt_rejects_paths_outside_the_owned_allowlist() {
-        let mut receipt = InstallReceipt {
-            schema: INSTALL_RECEIPT_SCHEMA.to_owned(),
-            contextmink_version: env!("CARGO_PKG_VERSION").to_owned(),
-            skill_target: SkillTarget::Both,
-            managed_files: vec![ManagedFileReceipt {
-                path: "AGENTS.md".to_owned(),
-                sha256: "0".repeat(64),
-            }],
-            managed_gitignore_block: false,
-            managed_gitignore_file: false,
-        };
-        assert!(validate_install_receipt(&receipt).is_err());
-        receipt.managed_files[0].path = "../outside".to_owned();
-        assert!(validate_install_receipt(&receipt).is_err());
-    }
-
-    #[test]
-    fn legacy_receipt_derives_the_frozen_skill_target() {
-        let receipt = migrate_legacy_install_receipt(LegacyInstallReceipt {
-            schema: LEGACY_INSTALL_RECEIPT_SCHEMA.to_owned(),
-            contextmink_version: env!("CARGO_PKG_VERSION").to_owned(),
-            managed_files: vec![
-                ManagedFileReceipt {
-                    path: ".agents/skills/contextmink/SKILL.md".to_owned(),
-                    sha256: "0".repeat(64),
-                },
-                ManagedFileReceipt {
-                    path: ".agents/skills/contextmink/agents/openai.yaml".to_owned(),
-                    sha256: "1".repeat(64),
-                },
-                ManagedFileReceipt {
-                    path: ".claude/skills/contextmink/SKILL.md".to_owned(),
-                    sha256: "2".repeat(64),
-                },
-            ],
-            managed_runtime_paths: MANAGED_RUNTIME_PATHS
-                .iter()
-                .map(|path| (*path).to_owned())
-                .collect(),
-            managed_gitignore_block: true,
-            managed_gitignore_file: false,
-        })
-        .unwrap();
-        assert_eq!(receipt.schema, INSTALL_RECEIPT_SCHEMA);
-        assert_eq!(receipt.skill_target, SkillTarget::Both);
+    fn receipt_requires_a_resolved_skill_target() {
+        let mut receipt = build_install_receipt(SkillTarget::Both, false, false);
         validate_install_receipt(&receipt).unwrap();
+        receipt.skill_target = SkillTarget::Auto;
+        assert!(validate_install_receipt(&receipt).is_err());
+    }
+
+    #[test]
+    fn previous_receipt_is_read_as_the_current_schema() {
+        let root = std::env::temp_dir().join(format!(
+            "contextmink-previous-receipt-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("project-install.json");
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema": PREVIOUS_INSTALL_RECEIPT_SCHEMA,
+                "contextmink_version": env!("CARGO_PKG_VERSION"),
+                "skill_target": "agents",
+                "managed_files": [{"path": "scripts/contextmink", "sha256": "0".repeat(64)}],
+                "managed_gitignore_block": true,
+                "managed_gitignore_file": false,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let receipt = load_install_receipt(&path).unwrap().unwrap();
+        assert_eq!(receipt.schema, INSTALL_RECEIPT_SCHEMA);
+        assert_eq!(receipt.skill_target, SkillTarget::Agents);
+        assert!(receipt.managed_gitignore_block);
+
+        fs::write(
+            &path,
+            serde_json::json!({"schema": "contextmink.project_install.v1"}).to_string(),
+        )
+        .unwrap();
+        let error = load_install_receipt(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("rerun setup-project to reinstall"),
+            "{error}"
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

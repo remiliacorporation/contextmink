@@ -395,7 +395,7 @@ fn slice_remaining_ranges_reconstruct_the_requested_window_including_tail() {
 }
 
 #[test]
-fn non_receipt_commands_reject_irrelevant_global_flags() {
+fn non_receipt_commands_reject_receipt_flags() {
     let root = fixture_root("non-receipt-flags");
     let strict = run_contextmink_raw(
         &root,
@@ -407,22 +407,7 @@ fn non_receipt_commands_reject_irrelevant_global_flags() {
         ],
     );
     assert!(!strict.status.success());
-    assert!(
-        String::from_utf8_lossy(&strict.stderr).contains("receipt strictness flags do not apply")
-    );
-    let before = run_contextmink_raw(
-        &root,
-        &[
-            "--fail-if-truncated",
-            "guard-check",
-            "--command",
-            "git status",
-        ],
-    );
-    assert_eq!(before.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&before.stderr).contains(
-        "guard-check does not accept --fail-if-truncated: it does not emit a contextmink receipt"
-    ));
+    assert!(String::from_utf8_lossy(&strict.stderr).contains("not a guard-check option"));
 
     let hook_json = run_contextmink_raw(&root, &["--json", "guard-hook"]);
     assert!(!hook_json.status.success());
@@ -593,7 +578,7 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     fs::write(root.join("AGENTS.md"), "existing guidance\n").unwrap();
 
     let setup = parse_json_output(&root, &["--json", "setup-project", "."]);
-    assert_eq!(setup["schema"], "contextmink.project_setup.v2");
+    assert_eq!(setup["schema"], "contextmink.project_setup.v3");
     assert_eq!(setup["dry_run"], false);
     assert_eq!(setup["ready"], true);
     assert_eq!(setup["requested_skill_target"], "auto");
@@ -613,7 +598,6 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     );
     assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
     assert!(root.join("scripts/contextmink").is_file());
-    assert!(!root.join("scripts/contextmink.cmd").exists());
     assert!(
         root.join("tools/contextmink/project-install.json")
             .is_file()
@@ -622,7 +606,7 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
         &fs::read(root.join("tools/contextmink/project-install.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(install_receipt["schema"], "contextmink.project_install.v2");
+    assert_eq!(install_receipt["schema"], "contextmink.project_install.v3");
     assert_eq!(
         install_receipt["contextmink_version"],
         env!("CARGO_PKG_VERSION")
@@ -634,13 +618,7 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
         root.join("tools/contextmink/bin/runtime-install.json")
             .is_file()
     );
-    assert!(
-        install_receipt["managed_files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|file| !file["path"].as_str().unwrap().contains("changelog-writing"))
-    );
+    assert!(install_receipt.get("managed_files").is_none());
     assert!(
         fs::read_to_string(root.join(".contextmink.toml"))
             .unwrap()
@@ -685,13 +663,16 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
             .unwrap()
             .iter()
             .any(|action| {
-                action["path"] == "scripts/contextmink"
-                    && action["action"] == "replace"
-                    && action["requires_replace_managed"] == true
+                action["path"] == "scripts/contextmink" && action["action"] == "replace"
             })
     );
-    assert_eq!(upgrade_plan["ready"], false);
+    assert_eq!(upgrade_plan["ready"], true);
     assert_eq!(
+        fs::read_to_string(root.join("scripts/contextmink")).unwrap(),
+        "older launcher\n"
+    );
+    parse_json_output(&root, &["--json", "setup-project", "."]);
+    assert_ne!(
         fs::read_to_string(root.join("scripts/contextmink")).unwrap(),
         "older launcher\n"
     );
@@ -803,7 +784,7 @@ fn uninstall_project_removes_only_receipt_owned_integration() {
         &root,
         &["--json", "uninstall-project", root.to_str().unwrap()],
     );
-    assert_eq!(removal["schema"], "contextmink.project_uninstall.v1");
+    assert_eq!(removal["schema"], "contextmink.project_uninstall.v2");
     assert_eq!(removal["ready"], true);
     assert!(!root.join(".agents/skills/contextmink/SKILL.md").exists());
     assert!(!root.join(".claude/skills/contextmink/SKILL.md").exists());
@@ -816,7 +797,7 @@ fn uninstall_project_removes_only_receipt_owned_integration() {
 }
 
 #[test]
-fn setup_project_rejects_unrelated_global_flags() {
+fn setup_commands_reject_receipt_and_configuration_flags() {
     let root = fixture_root("setup-project-global-flags");
     for command in [
         "setup-project",
@@ -832,11 +813,6 @@ fn setup_project_rejects_unrelated_global_flags() {
             for args in [[flag, command], [command, flag]] {
                 let output = run_contextmink_raw(&root, &args);
                 assert_eq!(output.status.code(), Some(2), "{args:?} must be rejected");
-                let stderr = String::from_utf8(output.stderr).unwrap();
-                assert!(
-                    stderr.contains(&format!("{command} does not accept {flag}")),
-                    "unexpected stderr for {args:?}: {stderr}"
-                );
             }
         }
         let help = run_contextmink(&root, &[command, "--help"]);
@@ -851,12 +827,6 @@ fn setup_project_rejects_unrelated_global_flags() {
         assert!(help.contains("Global options"), "{help}");
     }
 
-    let misplaced = run_contextmink_raw(&root, &["--no-config", "files", "."]);
-    assert_eq!(misplaced.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&misplaced.stderr)
-            .contains("place it after the subcommand: `contextmink files --no-config ...`")
-    );
     let grep_help = run_contextmink(&root, &["grep", "--help"]);
     assert!(grep_help.contains("Receipt options"));
     assert!(grep_help.contains("Configuration options"));
@@ -3039,51 +3009,6 @@ fn grep_pattern_flag_treats_all_positionals_as_paths() {
 }
 
 #[test]
-fn noncanonical_cli_forms_name_the_canonical_replacement() {
-    let root = fixture_root("noncanonical-cli-guidance");
-    let cases: &[(&[&str], &str)] = &[
-        (
-            &["grep", "needle", "sample.txt"],
-            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...`",
-        ),
-        (
-            &["grep", "--pattern", "needle", "--path", "sample.txt"],
-            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`",
-        ),
-        (
-            &["slice", "sample.txt", "--start-line", "2"],
-            "slice selects a window with `--range START:END` or `--tail N`",
-        ),
-        (
-            &["slice", "sample.txt", "--lines", "3"],
-            "slice selects a window with `--range START:END` or `--tail N`",
-        ),
-        (
-            &["outline", "sample.txt", "--max-items", "3"],
-            "the displayed-row cap is `--show-items`; replace `--max-items`",
-        ),
-        (
-            &["grep", "--pattern", "x", "--limit", "3"],
-            "the displayed-file cap is `--show-files`; replace `--limit`",
-        ),
-        (
-            &["sqlite-schema", "a.db", "--include-shadow"],
-            "shadow tables are included with `--with-shadow-tables`",
-        ),
-    ];
-
-    for (args, expected) in cases {
-        let output = run_contextmink_raw(&root, args);
-        assert_eq!(output.status.code(), Some(2), "args: {args:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains(expected),
-            "args: {args:?}\nstderr:\n{stderr}"
-        );
-    }
-}
-
-#[test]
 fn json_select_projects_array_fields_without_jq_filters() {
     let root = fixture_root("json-select");
 
@@ -3920,9 +3845,6 @@ fn json_find_pointers_select_exact_values_and_nested_shapes() {
         &["json-find", "pointers.json", "--key-contains", "line"],
     );
     assert!(human.contains("\"/line\\nname\" = 7"));
-    let retired = run_contextmink_raw(&root, &["json-select", "pointers.json", "--array", "items"]);
-    assert!(!retired.status.success());
-    assert!(String::from_utf8_lossy(&retired.stderr).contains("replace `--array` with `--at`"));
 }
 
 #[test]
@@ -5251,16 +5173,13 @@ fn msys_parent_rewritten_arguments_are_refused_before_work() {
 #[test]
 fn capture_refuses_flag_like_programs_before_spawn() {
     let root = fixture_root("capture-flag-like-program");
-    // Capture's trailing argv would otherwise execute a removed flag.
-    let removed = run_contextmink_raw(&root, &["capture", "--max-lines", "3", "--", "cargo"]);
-    assert_eq!(removed.status.code(), Some(1));
-    assert!(
-        removed.stdout.is_empty(),
-        "nothing may be spawned or receipted"
-    );
-    assert!(String::from_utf8_lossy(&removed.stderr).contains("`--show-lines`"));
+    // Capture's trailing argv would otherwise execute an unknown flag.
     let unknown = run_contextmink_raw(&root, &["capture", "--bogus", "--", "cargo"]);
     assert_eq!(unknown.status.code(), Some(1));
+    assert!(
+        unknown.stdout.is_empty(),
+        "nothing may be spawned or receipted"
+    );
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("not a capture option"));
 }
 
@@ -5339,18 +5258,16 @@ fn output_cap_arguments_name_the_display_flag_for_every_command() {
 }
 
 #[test]
-fn stale_hook_guard_registration_blocks_with_the_rename() {
-    let root = fixture_root("stale-hook-guard");
-    let output = run_contextmink_raw(&root, &["hook-guard", "--shell", "posix"]);
-    assert_eq!(output.status.code(), Some(2), "a stale hook must block");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("renamed `guard-hook`"), "{stderr}");
-    assert!(stderr.contains("/tool_input/command"), "{stderr}");
-
-    let dotted = run_contextmink_raw(
+fn guard_hook_blocks_on_a_command_field_that_is_not_a_json_pointer() {
+    let root = fixture_root("guard-hook-command-field");
+    let output = run_contextmink_raw(
         &root,
-        &["guard-hook", "--command-field", "tool_input.command"],
+        &["guard-hook", "--command-field", "tool_input/command"],
     );
-    assert_eq!(dotted.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&dotted.stderr).contains("JSON Pointer"));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a misconfigured hook must block"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("JSON Pointer"));
 }

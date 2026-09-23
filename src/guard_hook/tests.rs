@@ -188,8 +188,8 @@ fn command_field_accepts_only_json_pointers() {
         super::parse_command_field("/tool_input/command").unwrap(),
         "/tool_input/command"
     );
-    let refusal = super::parse_command_field("tool_input.command").unwrap_err();
-    assert!(refusal.contains("`/tool_input/command`"), "{refusal}");
+    let refusal = super::parse_command_field("tool_input/command").unwrap_err();
+    assert!(refusal.contains("/tool_input/command"), "{refusal}");
     assert!(super::parse_command_field("").is_err());
 }
 

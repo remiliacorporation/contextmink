@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -15,8 +15,8 @@ pub(crate) mod receipt;
 use receipt::{
     INSTALL_RECEIPT_PATH, MANAGED_RUNTIME_PATHS, RUNTIME_RECEIPT_PATH, build_install_receipt,
     build_runtime_receipt, load_install_receipt, load_runtime_receipt, managed_runtime_sha256,
-    managed_text_sha256, receipt_bytes, refuse_release_downgrade, refuse_runtime_release_downgrade,
-    runtime_receipt_bytes, validate_managed_runtime_path, validate_managed_text_path,
+    receipt_bytes, refuse_release_downgrade, refuse_runtime_release_downgrade,
+    runtime_receipt_bytes, same_managed_text, validate_managed_runtime_path,
 };
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
@@ -35,6 +35,10 @@ const AGENTS_SKILL_PATHS: &[&str] = &[
 const CLAUDE_SKILL_PATHS: &[&str] = &[
     ".claude/skills/contextmink/SKILL.md",
     ".claude/skills/contextmink-bridge/SKILL.md",
+];
+const SHARED_TEXT_PATHS: &[&str] = &[
+    "scripts/contextmink",
+    "tools/contextmink/agent_integration.md",
 ];
 // Compatibility is anchored in the shared `.agents/skills` contract. The
 // bootstrap catalog only selects that shared residence for common compatible
@@ -75,6 +79,20 @@ impl SkillTarget {
     fn installs_claude(self) -> bool {
         matches!(self, Self::Claude | Self::Both)
     }
+
+    /// Release-managed text paths a receipt with this target owns. The bridge
+    /// skill paths are included on every platform: they are Contextmink's
+    /// namespace even where the current host installs no bridge.
+    fn owned_text_paths(self) -> Vec<&'static str> {
+        let mut paths = SHARED_TEXT_PATHS.to_vec();
+        if self.installs_agents() {
+            paths.extend(AGENTS_SKILL_PATHS);
+        }
+        if self.installs_claude() {
+            paths.extend(CLAUDE_SKILL_PATHS);
+        }
+        paths
+    }
 }
 
 #[derive(Debug)]
@@ -84,7 +102,6 @@ pub(crate) struct SetupProjectRequest<'a> {
     /// callers can supply an extracted release binary explicitly.
     pub(crate) source_binary: Option<&'a Path>,
     pub(crate) dry_run: bool,
-    pub(crate) replace_managed: bool,
     pub(crate) skill_target: SkillTarget,
 }
 
@@ -117,7 +134,6 @@ pub(crate) enum SetupActionKind {
 pub(crate) struct SetupAction {
     pub(crate) path: PathBuf,
     pub(crate) action: SetupActionKind,
-    pub(crate) requires_replace_managed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -208,19 +224,12 @@ fn contextmink_skill_files(target: SkillTarget, windows: bool) -> Vec<ManagedFil
 struct PreflightFile {
     action: SetupActionKind,
     profile: Option<String>,
-    requires_replace_managed: bool,
 }
 
-struct SetupPreflight<'a> {
-    prior_sha256: Option<&'a str>,
-    dry_run: bool,
-    replace_managed: bool,
-    generated_profile: &'a str,
-}
-
-/// Install a project-local release without overwriting managed files that have
-/// diverged. Every destination is preflighted before the first mutation, so a
-/// refusal cannot leave a partially installed project.
+/// Install a project-local release. Release-managed files are written as the
+/// release ships them; repository-owned configuration is validated and kept.
+/// Every destination is preflighted before the first mutation, so a refusal
+/// cannot leave a partially installed project.
 pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupProjectResult> {
     let root = resolve_project_root(request.project_root, "setup-project")?;
     let generated_profile = project_profile(&root)?;
@@ -304,15 +313,9 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         });
     }
 
-    let prior_hashes = prior_receipt
+    let prior_text_paths = prior_receipt
         .as_ref()
-        .map(|receipt| {
-            receipt
-                .managed_files
-                .iter()
-                .map(|file| (file.path.clone(), file.sha256.clone()))
-                .collect::<BTreeMap<_, _>>()
-        })
+        .map(|receipt| receipt.skill_target.owned_text_paths())
         .unwrap_or_default();
     let runtime_receipt_relative = Path::new(RUNTIME_RECEIPT_PATH);
     validate_destination(&root, runtime_receipt_relative)?;
@@ -321,17 +324,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     if let Some(receipt) = prior_runtime_receipt.as_ref() {
         refuse_runtime_release_downgrade(receipt, "setup-project")?;
     }
-    let prior_runtime_hashes = prior_runtime_receipt
-        .as_ref()
-        .map(|receipt| {
-            receipt
-                .managed_files
-                .iter()
-                .map(|file| (file.path.clone(), file.sha256.clone()))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-
     let gitignore_relative = Path::new(".gitignore");
     validate_destination(&root, gitignore_relative)?;
     let gitignore_path = root.join(gitignore_relative);
@@ -394,7 +386,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         || existing_gitignore.is_none();
 
     let desired_receipt = build_install_receipt(
-        &managed,
         resolved_skill_target,
         manages_gitignore_block,
         managed_gitignore_file,
@@ -406,29 +397,13 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     for file in &managed {
         validate_destination(&root, &file.relative_path)?;
         let destination = root.join(&file.relative_path);
-        let normalized = normalized_path(&file.relative_path);
-        let prior_sha256 = match file.ownership {
-            SetupFileOwnership::ReleaseManagedText => prior_hashes.get(&normalized),
-            SetupFileOwnership::ReleaseManagedRuntime => prior_runtime_hashes.get(&normalized),
-            SetupFileOwnership::RepositoryOwnedConfig => None,
-        };
-        let preflight = preflight_setup_file(
-            &destination,
-            file,
-            SetupPreflight {
-                prior_sha256: prior_sha256.map(String::as_str),
-                dry_run: request.dry_run,
-                replace_managed: request.replace_managed,
-                generated_profile: &generated_profile,
-            },
-        )?;
+        let preflight = preflight_setup_file(&destination, file, &generated_profile)?;
         if let Some(repository_profile) = preflight.profile {
             profile = repository_profile;
         }
         actions.push(SetupAction {
             path: file.relative_path.clone(),
             action: preflight.action,
-            requires_replace_managed: preflight.requires_replace_managed,
         });
     }
 
@@ -460,13 +435,11 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::Unchanged,
-                    requires_replace_managed: false,
                 });
             } else if request.dry_run {
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::ModifiedRefusal,
-                    requires_replace_managed: false,
                 });
             } else {
                 return Err(anyhow!(
@@ -486,7 +459,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             actions.push(SetupAction {
                 path: relative,
                 action: SetupActionKind::PreserveUnowned,
-                requires_replace_managed: false,
             });
         }
     }
@@ -499,7 +471,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 runtime_receipt_path.display()
             )
         })?;
-        if managed_text_sha256(&existing) == managed_text_sha256(&desired_runtime_receipt_bytes) {
+        if same_managed_text(&existing, &desired_runtime_receipt_bytes) {
             SetupActionKind::Unchanged
         } else {
             SetupActionKind::Replace
@@ -510,52 +482,38 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     actions.push(SetupAction {
         path: runtime_receipt_relative.to_path_buf(),
         action: runtime_receipt_action,
-        requires_replace_managed: false,
     });
 
-    let desired_paths = desired_receipt
-        .managed_files
+    let desired_paths = managed
         .iter()
-        .map(|file| file.path.as_str())
+        .filter(|file| file.ownership == SetupFileOwnership::ReleaseManagedText)
+        .map(|file| normalized_path(&file.relative_path))
         .collect::<HashSet<_>>();
     let mut retired_paths = Vec::new();
-    if let Some(prior) = &prior_receipt {
-        for prior_file in &prior.managed_files {
-            if desired_paths.contains(prior_file.path.as_str()) {
-                continue;
-            }
-            let relative = PathBuf::from(&prior_file.path);
-            validate_managed_text_path(&relative)?;
-            validate_destination(&root, &relative)?;
-            let destination = root.join(&relative);
-            if !destination.exists() {
-                continue;
-            }
-            let existing = fs::read(&destination)
-                .with_context(|| format!("read retired managed file {}", destination.display()))?;
-            if managed_text_sha256(&existing) == prior_file.sha256 {
-                retired_paths.push(relative.clone());
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::RemoveRetired,
-                    requires_replace_managed: false,
-                });
-            } else if request.dry_run {
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::ModifiedRefusal,
-                    requires_replace_managed: false,
-                });
-            } else {
-                return Err(anyhow!(
-                    "setup-project refuses modified retired managed file {}; move or delete it deliberately, then rerun setup-project",
-                    destination.display()
-                ));
-            }
+    for path in &prior_text_paths {
+        if desired_paths.contains(*path) {
+            continue;
         }
+        let relative = PathBuf::from(path);
+        validate_destination(&root, &relative)?;
+        let destination = root.join(&relative);
+        if !destination.exists() {
+            continue;
+        }
+        if !destination.is_file() {
+            return Err(anyhow!(
+                "setup-project cannot remove non-file managed path {}; move it aside deliberately, then rerun setup-project",
+                destination.display()
+            ));
+        }
+        retired_paths.push(relative.clone());
+        actions.push(SetupAction {
+            path: relative,
+            action: SetupActionKind::RemoveRetired,
+        });
     }
     for path in AGENTS_SKILL_PATHS.iter().chain(CLAUDE_SKILL_PATHS) {
-        if desired_paths.contains(*path) || prior_hashes.contains_key(*path) {
+        if desired_paths.contains(*path) || prior_text_paths.contains(path) {
             continue;
         }
         let relative = PathBuf::from(path);
@@ -565,7 +523,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::UnownedRefusal,
-                    requires_replace_managed: false,
                 });
             } else {
                 return Err(anyhow!(
@@ -579,13 +536,12 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     actions.push(SetupAction {
         path: gitignore_relative.to_path_buf(),
         action: gitignore_action,
-        requires_replace_managed: false,
     });
 
     let receipt_action = if receipt_path.exists() {
         let existing = fs::read(&receipt_path)
             .with_context(|| format!("read project-install receipt {}", receipt_path.display()))?;
-        if managed_text_sha256(&existing) == managed_text_sha256(&desired_receipt_bytes) {
+        if same_managed_text(&existing, &desired_receipt_bytes) {
             SetupActionKind::Unchanged
         } else {
             SetupActionKind::Replace
@@ -596,14 +552,13 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     actions.push(SetupAction {
         path: receipt_relative.to_path_buf(),
         action: receipt_action,
-        requires_replace_managed: false,
     });
 
     let ready = actions.iter().all(|action| {
         !matches!(
             action.action,
             SetupActionKind::UnownedRefusal | SetupActionKind::ModifiedRefusal
-        ) && !action.requires_replace_managed
+        )
     });
 
     if !request.dry_run {
@@ -707,7 +662,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         .any(|action| action.action == SetupActionKind::UnownedRefusal)
     {
         next_actions.push(
-            "Move or delete each unreceipted Contextmink skill at a deselected path, or select the matching skill target, then rerun setup-project; --replace-managed does not authorize unowned deletion."
+            "Move or delete each unreceipted Contextmink skill at a deselected path, or select the matching skill target, then rerun setup-project."
                 .to_owned(),
         );
     }
@@ -721,7 +676,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         );
     }
     Ok(SetupProjectResult {
-        schema: "contextmink.project_setup.v2",
+        schema: "contextmink.project_setup.v3",
         project_root,
         profile,
         dry_run: request.dry_run,
@@ -767,40 +722,24 @@ pub(crate) fn uninstall_project(
     };
     let mut actions = Vec::new();
     let mut removable_paths = Vec::new();
-    for file in &receipt.managed_files {
-        let relative = PathBuf::from(&file.path);
-        validate_managed_text_path(&relative)?;
+    for path in receipt.skill_target.owned_text_paths() {
+        let relative = PathBuf::from(path);
         validate_destination(&root, &relative)?;
         let destination = root.join(&relative);
         if !destination.exists() {
-            actions.push(SetupAction {
-                path: relative,
-                action: SetupActionKind::Unchanged,
-                requires_replace_managed: false,
-            });
             continue;
         }
-        let existing = fs::read(&destination)
-            .with_context(|| format!("read managed file {}", destination.display()))?;
-        if managed_text_sha256(&existing) == file.sha256 {
-            removable_paths.push(relative.clone());
-            actions.push(SetupAction {
-                path: relative,
-                action: SetupActionKind::RemoveManaged,
-                requires_replace_managed: false,
-            });
-        } else if request.dry_run {
-            actions.push(SetupAction {
-                path: relative,
-                action: SetupActionKind::ModifiedRefusal,
-                requires_replace_managed: false,
-            });
-        } else {
+        if !destination.is_file() {
             return Err(anyhow!(
-                "uninstall-project refuses modified managed file {}; move or delete it deliberately, then rerun uninstall-project",
+                "uninstall-project cannot remove non-file managed path {}; move it aside deliberately, then rerun uninstall-project",
                 destination.display()
             ));
         }
+        removable_paths.push(relative.clone());
+        actions.push(SetupAction {
+            path: relative,
+            action: SetupActionKind::RemoveManaged,
+        });
     }
 
     let mut runtime_receipt_paths = HashSet::new();
@@ -815,7 +754,6 @@ pub(crate) fn uninstall_project(
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::Unchanged,
-                    requires_replace_managed: false,
                 });
                 continue;
             }
@@ -841,13 +779,11 @@ pub(crate) fn uninstall_project(
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::RemoveManaged,
-                    requires_replace_managed: false,
                 });
             } else if request.dry_run {
                 actions.push(SetupAction {
                     path: relative,
                     action: SetupActionKind::ModifiedRefusal,
-                    requires_replace_managed: false,
                 });
             } else {
                 return Err(anyhow!(
@@ -860,7 +796,6 @@ pub(crate) fn uninstall_project(
         actions.push(SetupAction {
             path: runtime_receipt_relative.to_path_buf(),
             action: SetupActionKind::RemoveManaged,
-            requires_replace_managed: false,
         });
     }
     for relative in MANAGED_RUNTIME_PATHS {
@@ -873,7 +808,6 @@ pub(crate) fn uninstall_project(
             actions.push(SetupAction {
                 path: relative,
                 action: SetupActionKind::PreserveUnowned,
-                requires_replace_managed: false,
             });
         }
     }
@@ -910,12 +844,10 @@ pub(crate) fn uninstall_project(
         } else {
             SetupActionKind::Unchanged
         },
-        requires_replace_managed: false,
     });
     actions.push(SetupAction {
         path: receipt_relative.to_path_buf(),
         action: SetupActionKind::RemoveManaged,
-        requires_replace_managed: false,
     });
 
     let ready = actions
@@ -962,7 +894,7 @@ pub(crate) fn uninstall_project(
         );
     }
     Ok(UninstallProjectResult {
-        schema: "contextmink.project_uninstall.v1",
+        schema: "contextmink.project_uninstall.v2",
         project_root: canonical_normalized(&root)
             .expect("uninstall-project root was canonicalized before rendering"),
         dry_run: request.dry_run,
@@ -1064,14 +996,13 @@ fn generated_config(profile: &str) -> Result<String> {
 fn preflight_setup_file(
     destination: &Path,
     file: &ManagedFile,
-    preflight: SetupPreflight<'_>,
+    generated_profile: &str,
 ) -> Result<PreflightFile> {
     if !destination.exists() {
         return Ok(PreflightFile {
             action: SetupActionKind::Create,
             profile: matches!(file.ownership, SetupFileOwnership::RepositoryOwnedConfig)
-                .then(|| preflight.generated_profile.to_owned()),
-            requires_replace_managed: false,
+                .then(|| generated_profile.to_owned()),
         });
     }
     if !destination.is_file() {
@@ -1096,7 +1027,6 @@ fn preflight_setup_file(
         return Ok(PreflightFile {
             action: SetupActionKind::PreserveRepositoryOwned,
             profile: Some(profile),
-            requires_replace_managed: false,
         });
     }
     let existing = fs::read(destination).with_context(|| {
@@ -1106,44 +1036,15 @@ fn preflight_setup_file(
         )
     })?;
     let content_matches = match file.ownership {
-        SetupFileOwnership::ReleaseManagedText => {
-            managed_text_sha256(&existing) == managed_text_sha256(&file.content)
-        }
+        SetupFileOwnership::ReleaseManagedText => same_managed_text(&existing, &file.content),
         SetupFileOwnership::ReleaseManagedRuntime => existing == file.content,
         SetupFileOwnership::RepositoryOwnedConfig => {
             unreachable!("repository-owned configuration returned before content comparison")
         }
     };
-    if !content_matches {
-        let receipt_owned = match file.ownership {
-            SetupFileOwnership::ReleaseManagedText => preflight
-                .prior_sha256
-                .is_some_and(|sha256| managed_text_sha256(&existing) == sha256),
-            SetupFileOwnership::ReleaseManagedRuntime => preflight
-                .prior_sha256
-                .is_some_and(|sha256| managed_runtime_sha256(&existing) == sha256),
-            SetupFileOwnership::RepositoryOwnedConfig => false,
-        };
-        if receipt_owned || preflight.replace_managed {
-            return Ok(PreflightFile {
-                action: SetupActionKind::Replace,
-                profile: None,
-                requires_replace_managed: false,
-            });
-        }
-        if preflight.dry_run {
-            return Ok(PreflightFile {
-                action: SetupActionKind::Replace,
-                profile: None,
-                requires_replace_managed: true,
-            });
-        }
-        return Err(anyhow!(
-            "setup-project found divergent release-managed file {}; rerun with --replace-managed after reviewing the replacement",
-            destination.display()
-        ));
-    }
-    let action = if file.executable && executable_bit_missing(destination)? {
+    let action = if !content_matches {
+        SetupActionKind::Replace
+    } else if file.executable && executable_bit_missing(destination)? {
         SetupActionKind::MakeExecutable
     } else {
         SetupActionKind::Unchanged
@@ -1151,7 +1052,6 @@ fn preflight_setup_file(
     Ok(PreflightFile {
         action,
         profile: None,
-        requires_replace_managed: false,
     })
 }
 
@@ -1288,9 +1188,6 @@ fn remove_empty_managed_directories(root: &Path) -> Result<()> {
         ".claude/skills/contextmink",
         ".agents/skills/contextmink-bridge",
         ".claude/skills/contextmink-bridge",
-        ".agents/skills/changelog-writing/agents",
-        ".agents/skills/changelog-writing",
-        ".claude/skills/changelog-writing",
         "tools/contextmink/bin",
         "tools/contextmink",
     ] {
@@ -1386,7 +1283,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_bridge_skill_install_reselection_and_modified_refusal() {
+    fn windows_bridge_skill_install_and_deselection() {
         let (project, binary) = fixture("windows-bridge-skill");
         let windows_binary = binary.with_file_name("contextmink.exe");
         fs::write(&windows_binary, b"windows runtime").unwrap();
@@ -1400,21 +1297,7 @@ mod tests {
         setup_project(install).unwrap();
         let skill = project.join(".agents/skills/contextmink-bridge/SKILL.md");
         assert_eq!(fs::read(&skill).unwrap(), BRIDGE_SKILL);
-        fs::write(&skill, b"modified bridge guidance").unwrap();
-        let mut deselect = request(&project, &windows_binary, false);
-        deselect.skill_target = SkillTarget::None;
-        assert!(
-            setup_project(deselect)
-                .unwrap_err()
-                .to_string()
-                .contains("modified retired")
-        );
-        assert!(
-            project
-                .join(".claude/skills/contextmink-bridge/SKILL.md")
-                .exists()
-        );
-        fs::write(&skill, BRIDGE_SKILL).unwrap();
+        fs::write(&skill, b"locally edited bridge guidance").unwrap();
         let mut deselect = request(&project, &windows_binary, false);
         deselect.skill_target = SkillTarget::None;
         setup_project(deselect).unwrap();
@@ -1463,7 +1346,6 @@ mod tests {
             project_root: project,
             source_binary: Some(binary),
             dry_run,
-            replace_managed: false,
             skill_target: SkillTarget::Both,
         }
     }
@@ -1497,12 +1379,6 @@ mod tests {
                 action.path == Path::new(path) && action.action == SetupActionKind::Create
             }));
         }
-        assert!(
-            result
-                .actions
-                .iter()
-                .all(|action| !action.path.to_string_lossy().contains("changelog-writing"))
-        );
         assert!(!project.join(".contextmink.toml").exists());
         assert!(!project.join("AGENTS.md").exists());
         cleanup(&project);
@@ -1638,38 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_claude_skill_upgrades_an_owned_router() {
-        let (project, binary) = fixture("canonical-claude-router");
-        let mut selected = request(&project, &binary, false);
-        selected.skill_target = SkillTarget::Claude;
-        let installed = setup_project(selected).unwrap();
-        assert_eq!(installed.resolved_skill_target, SkillTarget::Both);
-        let canonical = project.join(".agents/skills/contextmink/SKILL.md");
-        let router = project.join(".claude/skills/contextmink/SKILL.md");
-        let expected = fs::read(&router).unwrap();
-        assert_eq!(expected, fs::read(&canonical).unwrap());
-        let old_skill: &[u8] = b"---\nname: contextmink\ndescription: Legacy router\n---\nRead ../../../.agents/skills/contextmink/SKILL.md\n";
-        fs::write(&router, old_skill).unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        receipt
-            .managed_files
-            .iter_mut()
-            .find(|file| file.path == ".claude/skills/contextmink/SKILL.md")
-            .unwrap()
-            .sha256 = managed_text_sha256(old_skill);
-        fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
-        let preview = setup_project(request(&project, &binary, true)).unwrap();
-        assert!(preview.ready);
-        assert_eq!(fs::read(&router).unwrap(), old_skill);
-        setup_project(request(&project, &binary, false)).unwrap();
-        assert_eq!(fs::read(router).unwrap(), expected);
-        assert_eq!(fs::read(canonical).unwrap(), CONTEXTMINK_SKILL);
-        cleanup(&project);
-    }
-
-    #[test]
-    fn explicit_reselection_is_frozen_and_retires_only_hash_matching_skills() {
+    fn explicit_reselection_is_frozen_and_removes_deselected_skills() {
         let (project, binary) = fixture("skill-reselection");
         fs::write(project.join("AGENTS.md"), "agents\n").unwrap();
         fs::write(project.join("CLAUDE.md"), "claude\n").unwrap();
@@ -1693,25 +1538,17 @@ mod tests {
         assert!(!project.join(".claude/skills/contextmink/SKILL.md").exists());
 
         let agents_skill = project.join(".agents/skills/contextmink/SKILL.md");
-        fs::write(&agents_skill, "project modification\n").unwrap();
+        fs::write(&agents_skill, "local edit\n").unwrap();
         let mut no_skill = request(&project, &binary, true);
         no_skill.skill_target = SkillTarget::None;
         let dry_run = setup_project(no_skill).unwrap();
-        assert!(!dry_run.ready);
+        assert!(dry_run.ready);
         assert!(dry_run.actions.iter().any(|action| {
             action.path == Path::new(".agents/skills/contextmink/SKILL.md")
-                && action.action == SetupActionKind::ModifiedRefusal
+                && action.action == SetupActionKind::RemoveRetired
         }));
-        let mut no_skill = request(&project, &binary, false);
-        no_skill.skill_target = SkillTarget::None;
-        assert!(
-            setup_project(no_skill)
-                .unwrap_err()
-                .to_string()
-                .contains("modified retired managed file")
-        );
+        assert!(agents_skill.is_file());
 
-        fs::write(&agents_skill, CONTEXTMINK_SKILL).unwrap();
         let mut no_skill = request(&project, &binary, false);
         no_skill.skill_target = SkillTarget::None;
         let removed = setup_project(no_skill).unwrap();
@@ -1751,24 +1588,39 @@ mod tests {
     }
 
     #[test]
-    fn legacy_receipt_upgrade_freezes_its_derived_skill_target() {
-        let (project, binary) = fixture("legacy-receipt-upgrade");
-        setup_project(request(&project, &binary, false)).unwrap();
+    fn previous_receipt_upgrade_rewrites_the_current_schema() {
+        let (project, binary) = fixture("previous-receipt-upgrade");
+        let mut agents = request(&project, &binary, false);
+        agents.skill_target = SkillTarget::Agents;
+        setup_project(agents).unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let mut value: serde_json::Value =
             serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
-        value["schema"] = serde_json::Value::String("contextmink.project_install.v1".into());
-        value.as_object_mut().unwrap().remove("skill_target");
-        value["managed_runtime_paths"] = serde_json::json!(MANAGED_RUNTIME_PATHS);
+        value["schema"] = serde_json::Value::String("contextmink.project_install.v2".into());
+        value["managed_files"] = serde_json::json!([
+            {"path": "scripts/contextmink", "sha256": "0".repeat(64)}
+        ]);
         fs::write(&receipt_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
 
         let mut auto = request(&project, &binary, false);
         auto.skill_target = SkillTarget::Auto;
         let result = setup_project(auto).unwrap();
-        assert_eq!(result.resolved_skill_target, SkillTarget::Both);
-        let receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        assert_eq!(receipt.schema, receipt::INSTALL_RECEIPT_SCHEMA);
-        assert_eq!(receipt.skill_target, SkillTarget::Both);
+        assert_eq!(result.resolved_skill_target, SkillTarget::Agents);
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        assert_eq!(written["schema"], receipt::INSTALL_RECEIPT_SCHEMA);
+        assert!(written.get("managed_files").is_none());
+        assert_eq!(written["skill_target"], "agents");
+
+        value["schema"] = serde_json::Value::String("contextmink.project_install.v1".into());
+        fs::write(&receipt_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let error = setup_project(request(&project, &binary, false)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("rerun setup-project to reinstall"),
+            "{error}"
+        );
         cleanup(&project);
     }
 
@@ -1820,7 +1672,6 @@ mod tests {
             CONTEXTMINK_OPENAI_METADATA
         );
         assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
-        assert!(!project.join("scripts/contextmink.cmd").exists());
         if cfg!(windows) {
             assert_eq!(
                 fs::read(project.join("tools/contextmink/bin/contextmink-bridge.exe")).unwrap(),
@@ -1889,24 +1740,24 @@ mod tests {
     }
 
     #[test]
-    fn divergent_managed_file_refuses_before_any_write() {
+    fn divergent_release_file_is_rewritten() {
         let (project, binary) = fixture("divergence");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::remove_file(project.join(".contextmink.toml")).unwrap();
         fs::write(project.join("scripts/contextmink"), b"locally changed").unwrap();
 
-        let error = setup_project(request(&project, &binary, false)).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("found divergent release-managed file")
+        let result = setup_project(request(&project, &binary, false)).unwrap();
+        assert!(result.ready);
+        assert_eq!(
+            fs::read(project.join("scripts/contextmink")).unwrap(),
+            BASH_LAUNCHER
         );
-        assert!(!project.join(".contextmink.toml").exists());
+        assert!(project.join(".contextmink.toml").is_file());
         cleanup(&project);
     }
 
     #[test]
-    fn dry_run_reports_release_replacement_without_mutation_authority() {
+    fn dry_run_previews_release_replacement_without_writing() {
         let (project, binary) = fixture("dry-run-replacement");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
@@ -1915,12 +1766,11 @@ mod tests {
 
         let result = setup_project(request(&project, &binary, true)).unwrap();
         assert_eq!(result.profile, "owned");
+        assert!(result.ready);
         assert!(result.actions.iter().any(|action| {
             action.path == Path::new("scripts/contextmink")
                 && action.action == SetupActionKind::Replace
-                && action.requires_replace_managed
         }));
-        assert!(!result.ready);
         assert!(result.actions.iter().any(|action| {
             action.path == Path::new(".contextmink.toml")
                 && action.action == SetupActionKind::PreserveRepositoryOwned
@@ -1937,8 +1787,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_replacement_updates_release_files_and_preserves_configuration() {
-        let (project, binary) = fixture("replace-managed");
+    fn setup_rewrites_release_files_and_preserves_configuration() {
+        let (project, binary) = fixture("rewrite-release-files");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::write(project.join("scripts/contextmink"), b"older release").unwrap();
         fs::write(
@@ -1949,9 +1799,7 @@ mod tests {
         let owned_config = "profile = \"owned\"\nexclude_globs = [\"cache/**\"]\n";
         fs::write(project.join(".contextmink.toml"), owned_config).unwrap();
 
-        let mut replace = request(&project, &binary, false);
-        replace.replace_managed = true;
-        let result = setup_project(replace).unwrap();
+        let result = setup_project(request(&project, &binary, false)).unwrap();
         assert_eq!(result.profile, "owned");
         assert!(result.actions.iter().any(|action| {
             action.path == Path::new("scripts/contextmink")
@@ -1991,9 +1839,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut replace = request(&project, &binary, false);
-        replace.replace_managed = true;
-        let error = setup_project(replace).unwrap_err();
+        let error = setup_project(request(&project, &binary, false)).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -2002,151 +1848,6 @@ mod tests {
         assert_eq!(
             fs::read(project.join("scripts/contextmink")).unwrap(),
             b"older release"
-        );
-        cleanup(&project);
-    }
-
-    #[test]
-    fn receipt_owned_text_upgrades_without_replacement_authority() {
-        let (project, binary) = fixture("receipt-upgrade");
-        setup_project(request(&project, &binary, false)).unwrap();
-        let prior = b"prior managed launcher\n";
-        fs::write(project.join("scripts/contextmink"), prior).unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        install_receipt
-            .managed_files
-            .iter_mut()
-            .find(|file| file.path == "scripts/contextmink")
-            .unwrap()
-            .sha256 = managed_text_sha256(prior);
-        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
-
-        let result = setup_project(request(&project, &binary, false)).unwrap();
-        assert!(result.actions.iter().any(|action| {
-            action.path == Path::new("scripts/contextmink")
-                && action.action == SetupActionKind::Replace
-                && !action.requires_replace_managed
-        }));
-        assert_eq!(
-            fs::read(project.join("scripts/contextmink")).unwrap(),
-            BASH_LAUNCHER
-        );
-        cleanup(&project);
-    }
-
-    #[test]
-    fn receipt_retires_only_hash_matching_obsolete_skill_files() {
-        let (project, binary) = fixture("receipt-retirement");
-        setup_project(request(&project, &binary, false)).unwrap();
-        let retired_relative = Path::new(".agents/skills/changelog-writing/SKILL.md");
-        let retired = b"formerly managed general skill\n";
-        fs::create_dir_all(project.join(retired_relative).parent().unwrap()).unwrap();
-        fs::write(project.join(retired_relative), retired).unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        install_receipt
-            .managed_files
-            .push(receipt::ManagedFileReceipt {
-                path: normalized_path(retired_relative),
-                sha256: managed_text_sha256(retired),
-            });
-        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
-
-        let result = setup_project(request(&project, &binary, false)).unwrap();
-        assert!(result.actions.iter().any(|action| {
-            action.path == retired_relative && action.action == SetupActionKind::RemoveRetired
-        }));
-        assert!(!project.join(retired_relative).exists());
-        cleanup(&project);
-    }
-
-    #[test]
-    fn upgrade_retires_receipt_owned_cmd_diagnostic() {
-        let (project, binary) = fixture("cmd-retirement");
-        setup_project(request(&project, &binary, false)).unwrap();
-        let retired_relative = Path::new("scripts/contextmink.cmd");
-        let retired = b"receipt-owned diagnostic shim\r\n";
-        fs::write(project.join(retired_relative), retired).unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        install_receipt
-            .managed_files
-            .push(receipt::ManagedFileReceipt {
-                path: normalized_path(retired_relative),
-                sha256: managed_text_sha256(retired),
-            });
-        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
-
-        let result = setup_project(request(&project, &binary, false)).unwrap();
-        assert!(result.actions.iter().any(|action| {
-            action.path == retired_relative && action.action == SetupActionKind::RemoveRetired
-        }));
-        assert!(!project.join(retired_relative).exists());
-        cleanup(&project);
-    }
-
-    #[test]
-    fn upgrade_refuses_modified_receipt_owned_cmd_diagnostic() {
-        let (project, binary) = fixture("modified-cmd-retirement");
-        setup_project(request(&project, &binary, false)).unwrap();
-        let retired_relative = Path::new("scripts/contextmink.cmd");
-        fs::write(
-            project.join(retired_relative),
-            b"project-owned replacement\r\n",
-        )
-        .unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        install_receipt
-            .managed_files
-            .push(receipt::ManagedFileReceipt {
-                path: normalized_path(retired_relative),
-                sha256: managed_text_sha256(b"old receipt-owned shim\r\n"),
-            });
-        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
-
-        let dry_run = setup_project(request(&project, &binary, true)).unwrap();
-        assert!(!dry_run.ready);
-        assert!(dry_run.actions.iter().any(|action| {
-            action.path == retired_relative && action.action == SetupActionKind::ModifiedRefusal
-        }));
-        let error = setup_project(request(&project, &binary, false)).unwrap_err();
-        assert!(error.to_string().contains("modified retired managed file"));
-        assert_eq!(
-            fs::read(project.join(retired_relative)).unwrap(),
-            b"project-owned replacement\r\n"
-        );
-        cleanup(&project);
-    }
-
-    #[test]
-    fn modified_retired_skill_refuses_without_deleting_current_files() {
-        let (project, binary) = fixture("modified-retirement");
-        setup_project(request(&project, &binary, false)).unwrap();
-        let retired_relative = Path::new(".agents/skills/changelog-writing/SKILL.md");
-        fs::create_dir_all(project.join(retired_relative).parent().unwrap()).unwrap();
-        fs::write(project.join(retired_relative), b"project-owned version\n").unwrap();
-        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let mut install_receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
-        install_receipt
-            .managed_files
-            .push(receipt::ManagedFileReceipt {
-                path: normalized_path(retired_relative),
-                sha256: managed_text_sha256(b"old managed version\n"),
-            });
-        fs::write(&receipt_path, receipt_bytes(&install_receipt).unwrap()).unwrap();
-
-        let dry_run = setup_project(request(&project, &binary, true)).unwrap();
-        assert!(!dry_run.ready);
-        assert!(dry_run.actions.iter().any(|action| {
-            action.path == retired_relative && action.action == SetupActionKind::ModifiedRefusal
-        }));
-        let error = setup_project(request(&project, &binary, false)).unwrap_err();
-        assert!(error.to_string().contains("modified retired managed file"));
-        assert_eq!(
-            fs::read(project.join(retired_relative)).unwrap(),
-            b"project-owned version\n"
         );
         cleanup(&project);
     }
@@ -2276,7 +1977,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_requires_review_before_claiming_a_divergent_unreceipted_runtime() {
+    fn setup_replaces_a_divergent_runtime_at_its_install_path() {
         let (project, binary) = fixture("unreceipted-runtime");
         let installed = project.join(format!(
             "tools/contextmink/bin/contextmink{}",
@@ -2286,19 +1987,14 @@ mod tests {
         fs::write(&installed, "foreign runtime\n").unwrap();
 
         let dry_run = setup_project(request(&project, &binary, true)).unwrap();
-        assert!(!dry_run.ready);
+        assert!(dry_run.ready);
         assert!(dry_run.actions.iter().any(|action| {
             action.path == installed.strip_prefix(&project).unwrap()
                 && action.action == SetupActionKind::Replace
-                && action.requires_replace_managed
         }));
-        let error = setup_project(request(&project, &binary, false)).unwrap_err();
-        assert!(error.to_string().contains("divergent release-managed file"));
         assert_eq!(fs::read(&installed).unwrap(), b"foreign runtime\n");
 
-        let mut replace = request(&project, &binary, false);
-        replace.replace_managed = true;
-        setup_project(replace).unwrap();
+        setup_project(request(&project, &binary, false)).unwrap();
         assert_eq!(fs::read(&installed).unwrap(), b"contextmink-binary");
         assert!(project.join(RUNTIME_RECEIPT_PATH).is_file());
         cleanup(&project);
@@ -2331,28 +2027,22 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_refuses_modified_skill_before_removing_anything() {
-        let (project, binary) = fixture("uninstall-modified");
+    fn uninstall_removes_locally_edited_release_text() {
+        let (project, binary) = fixture("uninstall-edited");
         setup_project(request(&project, &binary, false)).unwrap();
         let skill = project.join(".agents/skills/contextmink/SKILL.md");
-        fs::write(&skill, b"project modification\n").unwrap();
+        fs::write(&skill, b"local edit\n").unwrap();
 
-        let dry_run = uninstall_project(UninstallProjectRequest {
-            project_root: &project,
-            running_binary: Some(&binary),
-            dry_run: true,
-        })
-        .unwrap();
-        assert!(!dry_run.ready);
-        let error = uninstall_project(UninstallProjectRequest {
+        let result = uninstall_project(UninstallProjectRequest {
             project_root: &project,
             running_binary: Some(&binary),
             dry_run: false,
         })
-        .unwrap_err();
-        assert!(error.to_string().contains("refuses modified managed file"));
-        assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
-        assert!(project.join("scripts/contextmink").is_file());
+        .unwrap();
+        assert!(result.ready);
+        assert!(!skill.exists());
+        assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
+        assert!(project.join(".contextmink.toml").is_file());
         cleanup(&project);
     }
 

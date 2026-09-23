@@ -1,13 +1,19 @@
 //! Receipt and integrity boundary shared by both personally installed executables.
 use crate::config::project_setup::receipt::managed_runtime_sha256 as sha256;
 use anyhow::{Context, Result, bail};
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 const TOOL: &str = "contextmink";
+pub(crate) const RECEIPT_SCHEMA: &str = "contextmink.user_install.v2";
+/// Read once so an upgrade or removal can rewrite it as the current schema.
+const PREVIOUS_RECEIPT_SCHEMA: &str = "contextmink.user_install.v1";
 
+/// Personal ownership: executables are bound to their raw-byte SHA-256, while
+/// release-managed skill and reference text is owned by path alone.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Receipt {
@@ -15,7 +21,68 @@ pub(crate) struct Receipt {
     pub(crate) version: String,
     pub(crate) home: PathBuf,
     pub(crate) installed: bool,
-    pub(crate) files: BTreeMap<String, String>,
+    pub(crate) runtime_files: BTreeMap<String, String>,
+    pub(crate) text_files: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousReceipt {
+    #[serde(rename = "schema")]
+    _schema: IgnoredAny,
+    version: String,
+    home: PathBuf,
+    installed: bool,
+    files: BTreeMap<String, String>,
+}
+
+impl Receipt {
+    /// True when the owned paths are exactly this platform's installation set.
+    pub(crate) fn owns_current_paths(&self) -> bool {
+        let text = self.text_files.iter().cloned().collect::<BTreeSet<_>>();
+        text.len() == self.text_files.len()
+            && text == text_paths().into_iter().collect()
+            && self.runtime_files.keys().cloned().collect::<BTreeSet<_>>()
+                == runtime_paths().into_iter().collect()
+    }
+}
+
+/// Parse `user-install.json`, reading the previous schema as the current one.
+pub(crate) fn parse_receipt(bytes: &[u8]) -> Result<Receipt> {
+    let envelope: serde_json::Value = serde_json::from_slice(bytes).context(
+        "invalid user-install.json; restore its verified backup or move it aside, then rerun setup-user from a verified release",
+    )?;
+    let schema = envelope
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    match schema.as_str() {
+        RECEIPT_SCHEMA => serde_json::from_value(envelope).context(
+            "invalid user-install.json; restore its verified backup or move it aside, then rerun setup-user from a verified release",
+        ),
+        PREVIOUS_RECEIPT_SCHEMA => {
+            let previous: PreviousReceipt = serde_json::from_value(envelope).context(
+                "invalid user-install.json; restore its verified backup or move it aside, then rerun setup-user from a verified release",
+            )?;
+            let runtime = runtime_paths();
+            let (runtime_files, text_files): (BTreeMap<_, _>, BTreeMap<_, _>) = previous
+                .files
+                .into_iter()
+                .partition(|(path, _)| runtime.contains(path));
+            Ok(Receipt {
+                schema: RECEIPT_SCHEMA.to_owned(),
+                version: previous.version,
+                home: previous.home,
+                installed: previous.installed,
+                runtime_files,
+                text_files: text_files.into_keys().collect(),
+            })
+        }
+        _ => bail!(
+            "unsupported personal receipt schema {schema:?}; move user-install.json aside, then rerun setup-user from a verified release to reinstall"
+        ),
+    }
 }
 
 pub(crate) fn personal_root() -> String {
@@ -30,25 +97,33 @@ pub(crate) fn binary_path() -> String {
     )
 }
 
-pub(crate) fn paths() -> Vec<String> {
-    let mut paths = retrieval_paths();
+pub(crate) fn bridge_path() -> String {
+    format!("{}/bin/contextmink-bridge.exe", personal_root())
+}
+
+/// Installed executables, which the receipt binds by content hash.
+pub(crate) fn runtime_paths() -> Vec<String> {
+    let mut paths = vec![binary_path()];
+    if cfg!(windows) {
+        paths.push(bridge_path());
+    }
+    paths
+}
+
+/// Release-managed skill and reference text, which the receipt owns by path.
+pub(crate) fn text_paths() -> Vec<String> {
+    let mut paths = vec![
+        format!("{}/agent_integration.md", personal_root()),
+        format!(".agents/skills/{TOOL}/SKILL.md"),
+        format!(".claude/skills/{TOOL}/SKILL.md"),
+    ];
     if cfg!(windows) {
         paths.extend([
-            format!("{}/bin/contextmink-bridge.exe", personal_root()),
             ".agents/skills/contextmink-bridge/SKILL.md".into(),
             ".claude/skills/contextmink-bridge/SKILL.md".into(),
         ]);
     }
     paths
-}
-
-pub(crate) fn retrieval_paths() -> Vec<String> {
-    vec![
-        binary_path(),
-        format!("{}/agent_integration.md", personal_root()),
-        format!(".agents/skills/{TOOL}/SKILL.md"),
-        format!(".claude/skills/{TOOL}/SKILL.md"),
-    ]
 }
 
 /// Refuse links and wrong file types at every boundary before reading or writing.
@@ -111,22 +186,19 @@ pub(crate) fn verify_runtime() -> Result<()> {
             "personal receipt is missing; run {TOOL} setup-user from a verified external release"
         )
     })?;
-    let receipt: Receipt = serde_json::from_slice(&bytes).context(
-        "invalid personal receipt; restore it or repair with setup-user from a verified release",
-    )?;
+    let receipt = parse_receipt(&bytes)?;
     let expected_root = receipt.home.join(personal_root());
     if !receipt.installed
-        || receipt.schema != format!("{TOOL}.user_install.v1")
+        || receipt.schema != RECEIPT_SCHEMA
         || receipt.version != env!("CARGO_PKG_VERSION")
         || fs::canonicalize(expected_root)? != fs::canonicalize(root)?
-        || receipt.files.len() != paths().len()
-        || receipt.files.keys().any(|p| !paths().contains(p))
+        || !receipt.owns_current_paths()
     {
         bail!(
             "personal installation identity differs; run {TOOL} setup-user from a verified external release"
         );
     }
-    for (relative, hash) in &receipt.files {
+    for (relative, hash) in &receipt.runtime_files {
         let file = validate_path(&receipt.home, relative)?;
         if sha256(
             &fs::read(&file)
@@ -134,7 +206,16 @@ pub(crate) fn verify_runtime() -> Result<()> {
         ) != *hash
         {
             bail!(
-                "personal file {} differs from its receipt; review it, then repair with setup-user --replace-managed",
+                "personal runtime {} differs from its receipt; repair with setup-user from a verified external release",
+                file.display()
+            );
+        }
+    }
+    for relative in &receipt.text_files {
+        let file = validate_path(&receipt.home, relative)?;
+        if !file.is_file() {
+            bail!(
+                "missing {}; repair with setup-user from a verified external release",
                 file.display()
             );
         }

@@ -37,11 +37,7 @@ pub(crate) fn parse_command_field(value: &str) -> Result<String, String> {
         Ok(value.to_owned())
     } else {
         Err(format!(
-            "--command-field takes a JSON Pointer such as {DEFAULT_COMMAND_FIELD}; write `{value}` as `/{}`",
-            value
-                .replace('~', "~0")
-                .replace('/', "~1")
-                .replace('.', "/")
+            "--command-field takes a JSON Pointer that starts with `/`, such as {DEFAULT_COMMAND_FIELD}; found `{value}`"
         ))
     }
 }

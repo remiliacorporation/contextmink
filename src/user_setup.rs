@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::user_installation::{
-    Receipt, binary_path, paths, personal_root, retrieval_paths, validate_path,
+    RECEIPT_SCHEMA, Receipt, binary_path, bridge_path, parse_receipt, personal_root, runtime_paths,
+    text_paths, validate_path,
 };
 use anyhow::{Context, Result, bail};
 
@@ -15,6 +16,16 @@ const TOOL: &str = "contextmink";
 const SKILL: &str = include_str!("../templates/skills/contextmink/SKILL.md");
 const BRIDGE_SKILL: &str = include_str!("../templates/skills/contextmink-bridge/SKILL.md");
 const REFERENCE: &[u8] = include_bytes!("../templates/agent_integration.md");
+
+/// Every path a receipt owns, executables first.
+fn owned_paths(receipt: &Receipt) -> Vec<String> {
+    receipt
+        .runtime_files
+        .keys()
+        .chain(&receipt.text_files)
+        .cloned()
+        .collect()
+}
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -54,12 +65,7 @@ fn publish(path: &Path, content: &[u8]) -> Result<()> {
     result
 }
 
-pub(crate) fn run(
-    home: Option<&Path>,
-    dry_run: bool,
-    replace: bool,
-    remove: bool,
-) -> Result<serde_json::Value> {
+pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<serde_json::Value> {
     let home = match home {
         Some(path) => path.to_path_buf(),
         None => std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
@@ -75,33 +81,19 @@ pub(crate) fn run(
     }
     let receipt_path = validate_path(&home, &format!("{}/user-install.json", personal_root()))?;
     let previous: Option<Receipt> = read_optional(&receipt_path)?
-        .map(|bytes| serde_json::from_slice(&bytes))
-        .transpose()
-        .context("invalid user-install.json; restore its verified backup before setup-user")?;
-    let schema = format!("{TOOL}.user_install.v1");
+        .map(|bytes| parse_receipt(&bytes))
+        .transpose()?;
     if let Some(receipt) = &previous {
-        // The pre-bridge Windows installer owned exactly the retrieval set.
-        // Accept that complete older set for upgrade/removal, never a partial
-        // current receipt or additional unowned paths.
-        let expected_paths = if cfg!(windows)
-            && semver::Version::parse(&receipt.version)? < semver::Version::new(0, 14, 0)
-        {
-            retrieval_paths()
-        } else {
-            paths()
-        };
-        if receipt.schema != schema
-            || receipt.home != home
-            || (receipt.installed && receipt.files.len() != expected_paths.len())
-            || (!receipt.installed && !receipt.files.is_empty())
-            || receipt.files.keys().any(|p| !expected_paths.contains(p))
+        if receipt.home != home
+            || (receipt.installed && !receipt.owns_current_paths())
+            || (!receipt.installed && !owned_paths(receipt).is_empty())
             || receipt
-                .files
+                .runtime_files
                 .values()
                 .any(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
         {
             bail!(
-                "personal receipt identity or paths are invalid; restore user-install.json for this home before setup-user"
+                "personal receipt identity or paths are invalid; restore user-install.json for this home, or move it aside and rerun setup-user to reinstall"
             );
         }
         if semver::Version::parse(&receipt.version)?
@@ -173,7 +165,7 @@ pub(crate) fn run(
                 "sibling bridge does not match {expected}; run setup-user from a complete verified Windows release"
             );
         }
-        let relative = format!("{}/bin/contextmink-bridge.exe", personal_root());
+        let relative = bridge_path();
         let binding = format!(
             "Personal bridge: `{}`. Use an explicitly selected project bridge when the project pins its own runtime.",
             home.join(&relative).to_string_lossy().replace('\\', "/")
@@ -196,37 +188,38 @@ pub(crate) fn run(
     }
     let mut actions = Vec::new();
     let selected_paths = if remove {
-        previous
-            .as_ref()
-            .context("uninstall-user requires an existing receipt")?
-            .files
-            .keys()
-            .cloned()
-            .collect()
+        owned_paths(
+            previous
+                .as_ref()
+                .context("uninstall-user requires an existing receipt")?,
+        )
     } else {
-        paths()
+        runtime_paths().into_iter().chain(text_paths()).collect()
     };
     for relative in selected_paths {
         let path = validate_path(&home, &relative)?;
         let existing = read_optional(&path)?;
-        let owned = previous.as_ref().and_then(|r| r.files.get(&relative));
+        let owned_hash = previous
+            .as_ref()
+            .and_then(|r| r.runtime_files.get(&relative));
         let action = match (existing.as_ref(), wanted.get(&relative)) {
             (Some(old), Some(new)) if old == new => "unchanged",
-            (Some(old), _) if owned.is_some_and(|hash| *hash == sha256(old)) => {
-                if remove {
-                    "remove"
-                } else {
-                    "replace"
-                }
-            }
-            (Some(_), Some(_)) if replace => "replace",
-            (Some(_), _) => bail!(
-                "{} is unowned or modified; review it and use setup-user --home {:?} --replace-managed to replace selected files, or move it aside before uninstall-user",
-                path.display(),
-                home
-            ),
+            (Some(_), Some(_)) => "replace",
             (None, Some(_)) => "create",
             (None, None) => "absent",
+            // Removal: text is owned by path; an executable only while its
+            // bytes still match the receipt.
+            (Some(old), None) => {
+                if runtime_paths().contains(&relative)
+                    && !owned_hash.is_some_and(|hash| *hash == sha256(old))
+                {
+                    bail!(
+                        "personal runtime {} differs from its receipt; restore it or move it aside, then rerun uninstall-user",
+                        path.display()
+                    );
+                }
+                "remove"
+            }
         };
         #[cfg(windows)]
         if matches!(action, "replace" | "remove")
@@ -271,12 +264,22 @@ pub(crate) fn run(
                 fs::set_permissions(&destination, fs::Permissions::from_mode(0o755))?;
             }
         }
+        let runtime = runtime_paths();
         let receipt = Receipt {
-            schema,
+            schema: RECEIPT_SCHEMA.to_owned(),
             version: env!("CARGO_PKG_VERSION").into(),
             home: home.clone(),
             installed: !remove,
-            files: wanted.iter().map(|(p, b)| (p.clone(), sha256(b))).collect(),
+            runtime_files: wanted
+                .iter()
+                .filter(|(p, _)| runtime.contains(p))
+                .map(|(p, b)| (p.clone(), sha256(b)))
+                .collect(),
+            text_files: wanted
+                .keys()
+                .filter(|p| !runtime.contains(p))
+                .cloned()
+                .collect(),
         };
         let bytes = serde_json::to_vec_pretty(&receipt)?;
         if read_optional(&receipt_path)?.as_deref() != Some(bytes.as_slice()) {

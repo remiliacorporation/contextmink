@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::{Args, Parser, Subcommand};
 
 use crate::config::project_setup::SkillTarget;
 use crate::destructive_guard::ShellDialect;
@@ -150,285 +150,17 @@ impl Command {
 }
 
 pub(crate) fn parse_cli(args: &[OsString]) -> Cli {
-    match Cli::try_parse_from(args) {
-        Ok(cli) => cli.resolve_command_options(),
-        Err(error) => {
-            if error.kind() == ErrorKind::InvalidSubcommand
-                && let Some(guidance) = renamed_command_guidance(args)
-            {
-                Cli::command()
-                    .error(ErrorKind::InvalidSubcommand, guidance)
-                    .exit();
-            }
-            if matches!(
-                error.kind(),
-                ErrorKind::UnknownArgument
-                    | ErrorKind::MissingRequiredArgument
-                    | ErrorKind::ArgumentConflict
-            ) && let Some(guidance) = noncanonical_form_guidance(args)
-            {
-                Cli::command()
-                    .error(ErrorKind::InvalidValue, guidance)
-                    .exit();
-            }
-            error.exit()
-        }
-    }
+    Cli::parse_from(args).resolve_command_options()
 }
 
-pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<String> {
-    let flag_present = |value: &str| {
-        args.iter().any(|arg| {
-            let arg = arg.to_string_lossy();
-            arg == value || arg.starts_with(&format!("{value}="))
-        })
-    };
-    let command = selected_subcommand(args)?;
-    if let Some(guidance) = misplaced_option_guidance(args, command) {
-        return Some(guidance);
-    }
-
-    if command == "json-select" && flag_present("--array") {
-        return Some(
-            "json-select uses `--at <KEY_OR_POINTER>` for arrays, objects, and scalars; replace `--array` with `--at`"
-                .to_owned(),
-        );
-    }
-    if command == "grep" && flag_present("--path") {
-        return Some(
-            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`"
-                .to_owned(),
-        );
-    }
-    if command == "grep" && !flag_present("--pattern") && !flag_present("--pattern-file") {
-        return Some(
-            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...` or `--pattern-file <FILE> <PATH>...`"
-                .to_owned(),
-        );
-    }
-    if command == "slice"
-        && ["--start", "--end", "--lines", "--start-line", "--end-line"]
-            .into_iter()
-            .any(flag_present)
-    {
-        return Some(
-            "slice selects a window with `--range START:END` or `--tail N`; without either it reads from line 1 up to `--line-ceiling` lines"
-                .to_owned(),
-        );
-    }
-    RENAMED_FLAGS
-        .iter()
-        .find(|(commands, old, _)| commands.contains(&command) && flag_present(old))
-        .map(|(_, _, guidance)| (*guidance).to_owned())
-}
-
-/// Configuration and receipt flags belong to the subcommands that use them.
-/// Name the placement fix, or say the option does not apply at all.
-fn misplaced_option_guidance(args: &[OsString], command: &str) -> Option<String> {
-    const SUBCOMMAND_OPTIONS: &[&str] = &[
-        "--config",
-        "--no-config",
-        "--fail-if-truncated",
-        "--require-complete-scope",
-    ];
-    let command_index = args.iter().position(|arg| arg.to_str() == Some(command))?;
-    let option_name = |arg: &OsString| {
-        let arg = arg.to_string_lossy();
-        let name = arg.split_once('=').map_or(arg.as_ref(), |(name, _)| name);
-        SUBCOMMAND_OPTIONS
-            .iter()
-            .copied()
-            .find(|option| *option == name)
-    };
-    let command_help = Cli::command();
-    let accepts = |option: &str| {
-        command_help
-            .find_subcommand(command)
-            .is_some_and(|subcommand| {
-                subcommand
-                    .get_arguments()
-                    .any(|arg| arg.get_long() == option.strip_prefix("--"))
-            })
-    };
-    for (index, arg) in args.iter().enumerate().skip(1) {
-        let Some(option) = option_name(arg) else {
-            continue;
-        };
-        if !accepts(option) {
-            let reason = if matches!(option, "--config" | "--no-config") {
-                "it does not read .contextmink.toml"
-            } else {
-                "it does not emit a contextmink receipt"
-            };
-            return Some(format!(
-                "{command} does not accept {option}: {reason}; remove {option}"
-            ));
-        }
-        if index < command_index {
-            return Some(format!(
-                "{option} is a {command} option; place it after the subcommand: `contextmink {command} {option} ...`"
-            ));
-        }
-    }
-    None
-}
-
-/// Guard commands are noun-first; removed spellings name their replacement.
-/// A stale `hook-guard` registration therefore exits 2 (blocking) with the
-/// fix on stderr instead of silently disabling the guard.
-pub(crate) fn renamed_command_guidance(args: &[OsString]) -> Option<&'static str> {
+/// The subcommand named by `args`, skipping only the global `--json` flag.
+pub(crate) fn selected_subcommand(args: &[OsString]) -> Option<&str> {
     args.iter()
         .skip(1)
-        .find(|arg| !arg.to_string_lossy().starts_with('-'))
-        .and_then(|arg| match arg.to_str()? {
-            "hook-guard" => Some(
-                "`hook-guard` was renamed `guard-hook`, and its `--command-field` now takes a JSON Pointer (`/tool_input/command`); update the hook command, for example by regenerating it with `contextmink guard-hook-snippet`",
-            ),
-            "hook-snippet" => Some(
-                "`hook-snippet` was renamed `guard-hook-snippet`; its output registers `guard-hook`",
-            ),
-            _ => None,
-        })
-}
-
-/// Replacement guidance for one removed flag spelling of `command`.
-pub(crate) fn renamed_flag_guidance(command: &str, flag: &str) -> Option<&'static str> {
-    let flag = flag.split_once('=').map_or(flag, |(name, _)| name);
-    RENAMED_FLAGS
-        .iter()
-        .find(|(commands, old, _)| commands.contains(&command) && *old == flag)
-        .map(|(_, _, guidance)| *guidance)
-}
-
-/// Removed flag spellings and the refusal that names their replacement.
-/// Display caps are `--show-*`; `--max-*` names only scope or admission caps.
-const RENAMED_FLAGS: &[(&[&str], &str, &str)] = &[
-    (
-        &["files", "grep", "grep-terms"],
-        "--limit",
-        "the displayed-file cap is `--show-files`; replace `--limit`",
-    ),
-    (
-        &["dirs"],
-        "--limit",
-        "the displayed-directory cap is `--show-dirs`; replace `--limit`",
-    ),
-    (
-        &["outline"],
-        "--limit",
-        "the displayed-row cap is `--show-items`; replace `--limit`",
-    ),
-    (
-        &["outline"],
-        "--max-items",
-        "the displayed-row cap is `--show-items`; replace `--max-items`",
-    ),
-    (
-        &["json-find"],
-        "--limit",
-        "the displayed-match cap is `--show-matches`; replace `--limit`",
-    ),
-    (
-        &["json-select", "sqlite"],
-        "--limit",
-        "the displayed-row cap is `--show-rows`; replace `--limit`",
-    ),
-    (
-        &["grep", "grep-terms"],
-        "--lines-per-file",
-        "the per-file sample cap is `--show-lines-per-file`; replace `--lines-per-file`",
-    ),
-    (
-        &["grep", "grep-terms"],
-        "--max-sample-lines",
-        "the total sample-line cap is `--show-lines`; replace `--max-sample-lines`",
-    ),
-    (
-        &["capture"],
-        "--max-lines",
-        "the displayed-line cap is `--show-lines`; replace `--max-lines`",
-    ),
-    (
-        &["capture"],
-        "--max-bytes",
-        "the per-stream retention cap is `--show-bytes-per-stream`; replace `--max-bytes`",
-    ),
-    (
-        &["slice"],
-        "--max-lines",
-        "the slice line ceiling is `--line-ceiling`; replace `--max-lines`",
-    ),
-    (
-        &[
-            "files",
-            "dirs",
-            "grep",
-            "grep-terms",
-            "slice",
-            "outline",
-            "sqlite-schema",
-            "capture",
-        ],
-        "--max-line-chars",
-        "the per-line character cap is `--show-line-chars`; replace `--max-line-chars`",
-    ),
-    (
-        &["json-find", "json-select", "sqlite"],
-        "--max-value-chars",
-        "the per-value character cap is `--show-value-chars`; replace `--max-value-chars`",
-    ),
-    (
-        &["sqlite-schema"],
-        "--max-tables",
-        "the displayed-table cap is `--show-tables`; replace `--max-tables`",
-    ),
-    (
-        &["sqlite-schema"],
-        "--max-columns",
-        "the displayed-column cap is `--show-columns`; replace `--max-columns`",
-    ),
-    (
-        &["sqlite-schema"],
-        "--max-indexes",
-        "the displayed-index cap is `--show-indexes`; replace `--max-indexes`",
-    ),
-    (
-        &["sqlite-schema"],
-        "--include-shadow",
-        "shadow tables are included with `--with-shadow-tables`; replace `--include-shadow`",
-    ),
-    (
-        &["sqlite-schema"],
-        "--include-system",
-        "system tables are included with `--with-system-tables`; replace `--include-system`",
-    ),
-    (
-        &["json-find"],
-        "--path-contains",
-        "JSON Pointer filters are `--pointer-contains`; replace `--path-contains`",
-    ),
-    (
-        &["json-find"],
-        "--path-regex",
-        "JSON Pointer filters are `--pointer-regex`; replace `--path-regex`",
-    ),
-];
-
-pub(crate) fn selected_subcommand(args: &[OsString]) -> Option<&str> {
-    let mut index = 1;
-    while index < args.len() {
-        let arg = args[index].to_str()?;
-        match arg {
-            "--config" => index += 2,
-            "--json" | "--fail-if-truncated" | "--require-complete-scope" | "--no-config" => {
-                index += 1;
-            }
-            value if value.starts_with("--config=") => index += 1,
-            value if SUBCOMMAND_NAMES.contains(&value) => return Some(value),
-            _ => return None,
-        }
-    }
-    None
+        .map(|arg| arg.to_str())
+        .find(|arg| *arg != Some("--json"))
+        .flatten()
+        .filter(|arg| SUBCOMMAND_NAMES.contains(arg))
 }
 
 #[derive(Debug, Subcommand)]
@@ -1097,11 +829,6 @@ pub(crate) enum Command {
             help = "Preflight and report every action without writing any file"
         )]
         dry_run: bool,
-        #[arg(
-            long,
-            help = "Replace reviewed unowned or modified personal destinations; receipt-owned upgrades need no flag"
-        )]
-        replace_managed: bool,
     },
     /// Remove receipt-owned personal skills and runtime; leaves projects untouched.
     #[command(after_help = "Removes only receipt-owned files. Always prints a JSON report.")]
@@ -1131,11 +858,6 @@ pub(crate) enum Command {
             help = "Preflight and report every action without writing any file"
         )]
         dry_run: bool,
-        #[arg(
-            long,
-            help = "Replace a reviewed modified or pre-receipt managed destination; receipt-owned upgrades need no flag and .contextmink.toml is always preserved"
-        )]
-        replace_managed: bool,
         #[arg(
             long,
             value_enum,

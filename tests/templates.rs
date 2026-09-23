@@ -30,10 +30,6 @@ fn integration_reference_is_one_compact_release_managed_file() {
             "integration reference is missing {required:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for retired in ["AGENTS.contextmink.md", "CLAUDE.contextmink.md"] {
-        assert!(!root.join("templates").join(retired).exists());
-    }
 }
 
 #[test]
@@ -125,8 +121,6 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
     let setup = include_str!("../docs/setup.md");
 
     assert!(setup.contains("templates/agent_integration.md"));
-    assert!(!setup.contains("AGENTS.contextmink.md"));
-    assert!(!setup.contains("CLAUDE.contextmink.md"));
     assert!(
         !setup.contains("Do not route everything through `contextmink`."),
         "setup.md should point to templates instead of duplicating snippet prose"
@@ -137,7 +131,6 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 fn public_setup_names_supported_project_skill_harnesses() {
     let surfaces = [
         ("README.md", include_str!("../README.md")),
-        ("SETUP.md", include_str!("../SETUP.md")),
         ("docs/setup.md", include_str!("../docs/setup.md")),
     ];
 
@@ -179,86 +172,12 @@ fn source_vendor_guidance_projects_the_contextmink_skill() {
         "agents/openai.yaml",
         "Select `agents`, `claude`, `both`, or `none`",
         "freeze the concrete choice",
-        "vendor hash still matches",
         "retrieval skill",
-        "explicitly review a divergent",
-        "existing destination instead of overwriting",
     ] {
         assert!(
             setup.contains(required),
             "source-vendor guidance is missing {required:?}"
         );
-    }
-    assert!(!setup.contains("templates/skills/changelog-writing/"));
-}
-
-#[test]
-fn public_guidance_uses_current_cli_forms() {
-    let surfaces = [
-        ("README.md", include_str!("../README.md")),
-        ("SETUP.md", include_str!("../SETUP.md")),
-        ("docs/setup.md", include_str!("../docs/setup.md")),
-        (
-            "templates/agent_integration.md",
-            include_str!("../templates/agent_integration.md"),
-        ),
-        (
-            "templates/skills/contextmink/SKILL.md",
-            include_str!("../templates/skills/contextmink/SKILL.md"),
-        ),
-        (
-            "templates/skills/contextmink-bridge/SKILL.md",
-            include_str!("../templates/skills/contextmink-bridge/SKILL.md"),
-        ),
-        (
-            ".github/workflows/release-artifacts.yml",
-            include_str!("../.github/workflows/release-artifacts.yml"),
-        ),
-    ];
-    let noncanonical_examples = [
-        "files --path ",
-        "files --path`",
-        "dirs --path",
-        "grep contextmink --path",
-        "scripts/contextmink grep contextmink",
-        "sqlite --path",
-        "sqlite-schema --path",
-        "files --max ",
-        "files --term",
-        "--require-complete-scan",
-        "--max-scan-files",
-        "--max-count-files",
-        "--max-matches",
-        "--max-scan-rows",
-        "--limit",
-        "--lines-per-file",
-        "--max-sample-lines",
-        "--max-lines",
-        "--max-line-chars",
-        "--max-value-chars",
-        "--max-bytes",
-        "--max-tables",
-        "--max-columns",
-        "--max-indexes",
-        "--include-shadow",
-        "--include-system",
-        "--path-regex",
-        "json-find --path-contains",
-        " hook-guard",
-        "`hook-guard",
-        " hook-snippet",
-        "`hook-snippet",
-        "DOT.PATH",
-        "tool_input.command",
-    ];
-
-    for (name, contents) in surfaces {
-        for noncanonical in noncanonical_examples {
-            assert!(
-                !contents.contains(noncanonical),
-                "{name} documents noncanonical CLI form {noncanonical:?}"
-            );
-        }
     }
 }
 
@@ -274,7 +193,6 @@ fn project_template_requires_explicit_policy_adaptation() {
 fn setup_guidance_preserves_repository_owned_configuration() {
     for (name, contents) in [
         ("README.md", include_str!("../README.md")),
-        ("SETUP.md", include_str!("../SETUP.md")),
         ("docs/setup.md", include_str!("../docs/setup.md")),
     ] {
         assert!(
@@ -303,8 +221,6 @@ fn source_checkout_dogfoods_repository_owned_guard_policy_when_present() {
     assert!(config.contains("profile = \"contextmink\""));
     assert!(config.contains("exclude_globs = [\"state/**\"]"));
     assert!(config.contains("destructive_guard_recursive_delete_fragments = [\"state\"]"));
-    assert!(config.contains("papertiger.sqlite"));
-    assert!(config.contains("papertiger-mise.sqlite"));
 }
 
 #[test]
@@ -325,8 +241,8 @@ fn release_workflow_verifies_extracted_project_integration() {
         "contextmink.release_manifest.v1",
         "source_commit",
         "--json setup-project",
-        "contextmink.project_setup.v2",
-        "contextmink.project_uninstall.v1",
+        "contextmink.project_setup.v3",
+        "contextmink.project_uninstall.v2",
         "project-install.json",
         "runtime-install.json",
         "--skill-target agents",
@@ -356,7 +272,17 @@ fn release_workflow_verifies_extracted_project_integration() {
     assert!(!workflow.contains("\"success\"[[:space:]]*:[[:space:]]*true"));
     assert!(!workflow.contains("$captureSmoke.exit_code"));
     assert!(!workflow.contains("$captureSmoke.success"));
-    assert!(!workflow.contains("changelog-writing"));
+    for duplicate in [
+        "SETUP.md",
+        "cp -R templates",
+        "Copy-Item -Recurse templates",
+    ] {
+        assert!(
+            !workflow.contains(duplicate),
+            "release workflow stages a duplicate copy via {duplicate:?}"
+        );
+    }
+    assert!(workflow.contains("docs/setup.md"));
 }
 
 #[test]

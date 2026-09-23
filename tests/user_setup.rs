@@ -23,7 +23,6 @@ impl Fixture {
             .args(args)
             .arg("--home")
             .arg(&self.0)
-            .env_remove("PAPERTIGER_DB")
             .output()
             .unwrap()
     }
@@ -131,37 +130,6 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
         original[&f.0.join("AGENTS.md")]
     );
     f.install();
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_personal_upgrade_adds_bridge_without_claiming_unowned_files() {
-    let f = Fixture::new();
-    f.install();
-    let receipt_path = f.0.join(".local/share/contextmink/user-install.json");
-    let mut receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
-    let files = receipt["files"].as_object_mut().unwrap();
-    let bridge_paths: Vec<_> = files
-        .keys()
-        .filter(|p| p.contains("contextmink-bridge"))
-        .cloned()
-        .collect();
-    for path in &bridge_paths {
-        files.remove(path);
-        fs::remove_file(f.0.join(path)).unwrap();
-    }
-    receipt["version"] = "0.13.0".into();
-    fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
-    let collision = f.0.join(".agents/skills/contextmink-bridge/SKILL.md");
-    fs::write(&collision, "Locally owned bridge guidance").unwrap();
-    let before = snapshot(&f.0);
-    assert!(!f.run(&["setup-user"]).status.success());
-    assert_eq!(snapshot(&f.0), before);
-    fs::remove_file(collision).unwrap();
-    f.install();
-    for path in bridge_paths {
-        assert!(f.0.join(path).is_file());
-    }
 }
 
 #[cfg(windows)]
@@ -297,24 +265,44 @@ fn missing_bridge_source_refuses_personal_setup_before_writes() {
     assert_eq!(snapshot(&home.0), before);
 }
 #[test]
-fn personal_collision_and_divergence_refuse_before_writes() {
+fn personal_setup_writes_release_text_and_owns_it_by_path() {
     let f = Fixture::new();
     fs::create_dir_all(f.skill().parent().unwrap()).unwrap();
-    fs::write(f.skill(), "Locally owned skill").unwrap();
-    let before = snapshot(&f.0);
-    assert!(!f.run(&["setup-user"]).status.success());
-    assert_eq!(snapshot(&f.0), before);
-    assert!(f.run(&["setup-user", "--replace-managed"]).status.success());
-    fs::write(f.skill(), "Modified installed skill").unwrap();
-    let before = snapshot(&f.0);
-    assert!(!f.run(&["setup-user"]).status.success());
-    assert!(!f.run(&["uninstall-user"]).status.success());
-    assert_eq!(snapshot(&f.0), before);
+    fs::write(f.skill(), "Existing skill at the install path").unwrap();
+    f.install();
+    let installed = fs::read(f.skill()).unwrap();
+    assert_ne!(installed, b"Existing skill at the install path");
+
+    fs::write(f.skill(), "Locally edited skill").unwrap();
+    let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
+    assert!(
+        runtime.status.success(),
+        "edited release text does not disable the runtime"
+    );
+    let preview: Value =
+        serde_json::from_slice(&f.run(&["setup-user", "--dry-run"]).stdout).unwrap();
+    assert!(preview["actions"].as_array().unwrap().iter().any(|action| {
+        action["path"].as_str().unwrap().ends_with("SKILL.md") && action["action"] == "replace"
+    }));
+    f.install();
+    assert_eq!(fs::read(f.skill()).unwrap(), installed);
+
+    fs::write(f.skill(), "Locally edited skill").unwrap();
+    assert!(f.run(&["uninstall-user"]).status.success());
+    assert!(!f.skill().exists());
+}
+
+#[test]
+fn personal_runtime_divergence_and_missing_text_fail_closed() {
+    let f = Fixture::new();
+    f.install();
+    fs::remove_file(f.skill()).unwrap();
     let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
     assert!(
         !runtime.status.success(),
-        "divergent skill/runtime pair must fail closed"
+        "a torn installation must fail closed"
     );
+    assert!(String::from_utf8_lossy(&runtime.stderr).contains("repair with setup-user"));
     if cfg!(windows) {
         let bridge = Command::new(f.runtime().with_file_name("contextmink-bridge.exe"))
             .args(["--print-argv", "--", "must-not-run"])
@@ -326,27 +314,38 @@ fn personal_collision_and_divergence_refuse_before_writes() {
         );
         assert!(bridge.stdout.is_empty());
     }
-    assert!(f.run(&["setup-user", "--replace-managed"]).status.success());
+    f.install();
+
+    fs::write(f.runtime(), b"divergent runtime").unwrap();
+    let before = snapshot(&f.0);
+    let removal = f.run(&["uninstall-user"]);
+    assert!(!removal.status.success());
+    assert!(String::from_utf8_lossy(&removal.stderr).contains("differs from its receipt"));
+    assert_eq!(snapshot(&f.0), before);
+    f.install();
+    assert!(f.run(&["uninstall-user"]).status.success());
+    assert!(!f.runtime().exists());
 }
+
 #[test]
 fn personal_receipt_cannot_claim_foreign_paths_or_downgrade() {
     let f = Fixture::new();
     f.install();
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
     let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    receipt["files"]["AGENTS.md"] = Value::String("0".repeat(64));
+    receipt["text_files"]
+        .as_array_mut()
+        .unwrap()
+        .push("AGENTS.md".into());
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
     let before = snapshot(&f.0);
     assert!(!f.run(&["uninstall-user"]).status.success());
     assert_eq!(snapshot(&f.0), before);
-    receipt["files"]
-        .as_object_mut()
-        .unwrap()
-        .remove("AGENTS.md");
+    receipt["text_files"].as_array_mut().unwrap().pop();
     receipt["version"] = Value::String("999.0.0".into());
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
     let before = snapshot(&f.0);
-    assert!(!f.run(&["setup-user", "--replace-managed"]).status.success());
+    assert!(!f.run(&["setup-user"]).status.success());
     assert_eq!(snapshot(&f.0), before);
 }
 #[test]
@@ -370,7 +369,7 @@ fn symlinked_skill_parent_refuses_without_touching_target() {
     let f = Fixture::new();
     let other = Fixture::new();
     std::os::unix::fs::symlink(&other.0, f.0.join(".agents")).unwrap();
-    assert!(!f.run(&["setup-user", "--replace-managed"]).status.success());
+    assert!(!f.run(&["setup-user"]).status.success());
     assert!(snapshot(&other.0).is_empty());
     fs::remove_file(f.0.join(".agents")).unwrap();
 }
@@ -381,36 +380,55 @@ fn incomplete_receipt_refuses_without_adopting_files() {
     f.install();
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
     let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    receipt["files"]
-        .as_object_mut()
+    let skill = format!(".agents/skills/{TOOL}/SKILL.md");
+    receipt["text_files"]
+        .as_array_mut()
         .unwrap()
-        .remove(&format!(".agents/skills/{TOOL}/SKILL.md"));
+        .retain(|path| *path != skill.as_str());
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
     let before = snapshot(&f.0);
-    assert!(!f.run(&["setup-user", "--replace-managed"]).status.success());
+    assert!(!f.run(&["setup-user"]).status.success());
     assert!(!f.run(&["uninstall-user"]).status.success());
     assert_eq!(snapshot(&f.0), before);
 }
 
 #[test]
-fn owned_personal_router_upgrades_to_complete_skill_without_replacement_flag() {
+fn previous_personal_receipt_upgrades_to_the_current_schema() {
     use sha2::Digest;
     let f = Fixture::new();
     f.install();
-    let relative = format!(".claude/skills/{TOOL}/SKILL.md");
-    let legacy =
-        b"---\nname: legacy-router\ndescription: Former router\n---\nRead the canonical skill.\n";
-    fs::write(f.0.join(&relative), legacy).unwrap();
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
-    let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    receipt["files"][&relative] = Value::String(format!("{:x}", sha2::Sha256::digest(legacy)));
-    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
-    let before = snapshot(&f.0);
-    assert!(f.run(&["setup-user", "--dry-run"]).status.success());
-    assert_eq!(snapshot(&f.0), before);
+    let current: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut files = serde_json::Map::new();
+    for (relative, hash) in current["runtime_files"].as_object().unwrap() {
+        files.insert(relative.clone(), hash.clone());
+    }
+    for relative in current["text_files"].as_array().unwrap() {
+        let relative = relative.as_str().unwrap();
+        let bytes = fs::read(f.0.join(relative)).unwrap();
+        files.insert(
+            relative.to_owned(),
+            Value::String(format!("{:x}", sha2::Sha256::digest(bytes))),
+        );
+    }
+    let previous = serde_json::json!({
+        "schema": "contextmink.user_install.v1",
+        "version": current["version"],
+        "home": current["home"],
+        "installed": true,
+        "files": files,
+    });
+    fs::write(&path, serde_json::to_vec(&previous).unwrap()).unwrap();
     f.install();
-    assert_eq!(
-        fs::read(f.skill()).unwrap(),
-        fs::read(f.0.join(relative)).unwrap()
-    );
+    let upgraded: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(upgraded["schema"], "contextmink.user_install.v2");
+    assert_eq!(upgraded["runtime_files"], current["runtime_files"]);
+    assert_eq!(upgraded["text_files"], current["text_files"]);
+
+    let mut unsupported = previous;
+    unsupported["schema"] = "contextmink.user_install.v0".into();
+    fs::write(&path, serde_json::to_vec(&unsupported).unwrap()).unwrap();
+    let refused = f.run(&["setup-user"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("to reinstall"));
 }
