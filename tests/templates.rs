@@ -55,7 +55,7 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
     );
     assert!(template.len() < 3300, "skill body must stay near 2.9 KB");
     for required in [
-        "Resolve `tools/contextmink/bin/contextmink[.exe]` from the project root",
+        "resolve `tools/contextmink/bin/contextmink[.exe]`",
         "don't guess",
         "PowerShell: invoke with `&`.",
         "`dirs`",

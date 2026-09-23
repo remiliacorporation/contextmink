@@ -13,10 +13,10 @@ user to name it. Return to direct tools when the exact result is known to be sma
 
 <!-- installed-command -->
 
-Resolve `tools/contextmink/bin/contextmink[.exe]` from the project root
-(Bash-vendored projects may use `scripts/contextmink`). Run from the project so
-its config applies. If it's missing, report the incomplete bundle; don't guess
-a path. PowerShell: invoke with `&`.
+For a project installation, resolve `tools/contextmink/bin/contextmink[.exe]`
+from the project root (Bash-vendored projects may use `scripts/contextmink`).
+Run from the project so its config applies. If no executable is installed,
+report the incomplete installation; don't guess a path. PowerShell: invoke with `&`.
 
 ## Retrieve progressively
 
@@ -54,8 +54,8 @@ Do not pipe bounded output through `head` or `tail`: that can remove the receipt
 
 Check `complete`. If false: `scope_complete: false` means only a subset was
 inspected (totals may be lower bounds; a no-match proves nothing);
-`output_truncated: true` means payload was omitted. Recheck relevant regions
-after edits.
+`output_truncated: true` means payload was omitted. A receipt describes files
+as they were when it ran; edits make it stale.
 
 Capture runs a command once. Check `child_exit_code`, `child_exit_zero` and
 `exit_expected`. Retain full producer output in files on the first run if it may

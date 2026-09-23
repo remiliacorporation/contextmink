@@ -14,8 +14,9 @@ MSYS rewriting. A bare `bash` or `sh` on PATH may select WSL or Cygwin instead.
 
 For a project installation, resolve
 `tools/contextmink/bin/contextmink-bridge.exe` from the project root. Invoke it
-with PowerShell's `&`; run from the consuming project. If absent, install a
-complete Windows Contextmink release rather than guessing another executable.
+with PowerShell's `&`; run from the consuming project. If absent, report that a
+complete Windows Contextmink release is needed rather than guessing another
+executable.
 
 ```powershell
 & $bridge --script scripts/verify.sh
