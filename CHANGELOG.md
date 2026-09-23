@@ -6,22 +6,24 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-23
+
 This release renames public flags and commands without compatibility aliases.
 Removed spellings are refused with their replacement named. Before or with the
 upgrade:
 
-1. Update scripts and saved invocations to the flag names below, and move
-   `--config`, `--no-config`, `--fail-if-truncated` and
-   `--require-complete-scope` after the subcommand (that placement already
-   works on 0.14).
-2. Replace every Claude or other harness hook that runs `hook-guard`: rerun
-   `contextmink guard-hook-snippet` and merge its output, or rename the command
-   to `guard-hook` and write any `--command-field` as a JSON Pointer. A hook
-   still calling `hook-guard` exits 2, which blocks every matched shell call
-   until it is updated.
-3. Upgrade personal installations with `setup-user` and project installations
-   with `setup-project` from the new release to refresh the skill and
-   integration reference.
+- Update scripts and saved invocations to the flag names below, and move
+  `--config`, `--no-config`, `--fail-if-truncated` and
+  `--require-complete-scope` after the subcommand (that placement already
+  works on 0.14).
+- Replace every Claude or other harness hook that runs `hook-guard`: rerun
+  `contextmink guard-hook-snippet` and merge its output, or rename the command
+  to `guard-hook` and write any `--command-field` as a JSON Pointer. A hook
+  still calling `hook-guard` exits 2, which blocks every matched shell call
+  until it is updated.
+- Upgrade personal installations with `setup-user` and project installations
+  with `setup-project` from the new release to refresh the skill and
+  integration reference.
 
 ### Added
 
@@ -38,7 +40,9 @@ upgrade:
 
 ### Changed
 
-- Release archives carry `contextmink.release_manifest.v3` (was `contextmink.release-manifest.v2`); update any script that checks the manifest schema.
+- Release archives carry `contextmink.release_manifest.v3` (was
+  `contextmink.release-manifest.v2`); update scripts that check the manifest
+  schema.
 - Display caps use `--show-*`, and `--max-*` now names only scope or
   input-admission limits:
   - `files`, `grep`, `grep-terms`: `--limit` → `--show-files`
