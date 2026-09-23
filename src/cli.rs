@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 
 use crate::config::project_setup::SkillTarget;
 use crate::destructive_guard::ShellDialect;
@@ -31,27 +31,127 @@ pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
 #[command(author, version, about)]
 pub(crate) struct Cli {
     /// Emit one JSON object instead of human-readable rows plus a receipt line.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     pub(crate) json: bool,
-    /// Exit nonzero after emitting a receipt if the command output was capped.
-    #[arg(long, global = true)]
+    /// Resolved from the subcommand's receipt options; false where none exist.
+    #[arg(skip)]
     pub(crate) fail_if_truncated: bool,
-    /// Exit nonzero after emitting a receipt if the inspected evidence scope is incomplete.
-    #[arg(long, global = true)]
+    #[arg(skip)]
     pub(crate) require_complete_scope: bool,
-    /// Read configuration from this TOML file instead of searching upward.
-    #[arg(long, global = true)]
+    /// Resolved from the subcommand's configuration options.
+    #[arg(skip)]
     pub(crate) config: Option<PathBuf>,
-    /// Ignore .contextmink.toml and use only built-in defaults.
-    #[arg(long, global = true)]
+    #[arg(skip)]
     pub(crate) no_config: bool,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
 
+/// Strictness for commands that emit `contextmink.receipt.v2`. Setup,
+/// removal, and guard commands do not accept these flags at all.
+#[derive(Debug, Clone, Default, Args)]
+#[command(next_help_heading = "Receipt options")]
+pub(crate) struct ReceiptOptions {
+    /// Exit nonzero after emitting a receipt if the command output was capped.
+    #[arg(long)]
+    pub(crate) fail_if_truncated: bool,
+    /// Exit nonzero after emitting a receipt if the inspected evidence scope is incomplete.
+    #[arg(long)]
+    pub(crate) require_complete_scope: bool,
+}
+
+/// Configuration selection for commands that read `.contextmink.toml`.
+#[derive(Debug, Clone, Default, Args)]
+#[command(next_help_heading = "Configuration options")]
+pub(crate) struct ConfigSource {
+    /// Read configuration from this TOML file instead of searching upward.
+    #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
+    pub(crate) config: Option<PathBuf>,
+    /// Ignore .contextmink.toml and use only built-in defaults.
+    #[arg(long)]
+    pub(crate) no_config: bool,
+}
+
+impl Cli {
+    /// Project the subcommand's option groups onto the fields every command
+    /// module reads, so strict-mode checks stay in one place.
+    fn resolve_command_options(mut self) -> Self {
+        if let Some(options) = self.command.receipt_options() {
+            self.fail_if_truncated = options.fail_if_truncated;
+            self.require_complete_scope = options.require_complete_scope;
+        }
+        if let Some(source) = self.command.config_source() {
+            self.config = source.config.clone();
+            self.no_config = source.no_config;
+        }
+        self
+    }
+}
+
+impl Command {
+    fn receipt_options(&self) -> Option<&ReceiptOptions> {
+        match self {
+            Command::Files {
+                receipt_options, ..
+            }
+            | Command::Dirs {
+                receipt_options, ..
+            }
+            | Command::Grep {
+                receipt_options, ..
+            }
+            | Command::GrepTerms {
+                receipt_options, ..
+            }
+            | Command::Slice {
+                receipt_options, ..
+            }
+            | Command::Outline {
+                receipt_options, ..
+            }
+            | Command::JsonFind {
+                receipt_options, ..
+            }
+            | Command::JsonSelect {
+                receipt_options, ..
+            }
+            | Command::Sqlite {
+                receipt_options, ..
+            }
+            | Command::SqliteSchema {
+                receipt_options, ..
+            }
+            | Command::Capture {
+                receipt_options, ..
+            } => Some(receipt_options),
+            _ => None,
+        }
+    }
+
+    fn config_source(&self) -> Option<&ConfigSource> {
+        match self {
+            Command::Files { config_source, .. }
+            | Command::Dirs { config_source, .. }
+            | Command::Grep { config_source, .. }
+            | Command::GrepTerms { config_source, .. }
+            | Command::Slice { config_source, .. }
+            | Command::Outline { config_source, .. }
+            | Command::JsonFind { config_source, .. }
+            | Command::JsonSelect { config_source, .. }
+            | Command::Sqlite { config_source, .. }
+            | Command::SqliteSchema { config_source, .. }
+            | Command::Capture { config_source, .. }
+            | Command::GuardHook { config_source, .. }
+            | Command::GuardCheck { config_source, .. }
+            | Command::GuardHookSnippet { config_source, .. } => Some(config_source),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn parse_cli(args: &[OsString]) -> Cli {
     match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
+        Ok(cli) => cli.resolve_command_options(),
         Err(error) => {
             if error.kind() == ErrorKind::InvalidSubcommand
                 && let Some(guidance) = renamed_command_guidance(args)
@@ -76,7 +176,7 @@ pub(crate) fn parse_cli(args: &[OsString]) -> Cli {
     }
 }
 
-pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static str> {
+pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<String> {
     let flag_present = |value: &str| {
         args.iter().any(|arg| {
             let arg = arg.to_string_lossy();
@@ -84,20 +184,26 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
         })
     };
     let command = selected_subcommand(args)?;
+    if let Some(guidance) = misplaced_option_guidance(args, command) {
+        return Some(guidance);
+    }
 
     if command == "json-select" && flag_present("--array") {
         return Some(
-            "json-select uses `--at <KEY_OR_POINTER>` for arrays, objects, and scalars; replace `--array` with `--at`",
+            "json-select uses `--at <KEY_OR_POINTER>` for arrays, objects, and scalars; replace `--array` with `--at`"
+                .to_owned(),
         );
     }
     if command == "grep" && flag_present("--path") {
         return Some(
-            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`",
+            "grep paths are positional; use `contextmink grep --pattern <PATTERN> <PATH>...`"
+                .to_owned(),
         );
     }
     if command == "grep" && !flag_present("--pattern") && !flag_present("--pattern-file") {
         return Some(
-            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...` or `--pattern-file <FILE> <PATH>...`",
+            "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...` or `--pattern-file <FILE> <PATH>...`"
+                .to_owned(),
         );
     }
     if command == "slice"
@@ -106,13 +212,65 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
             .any(flag_present)
     {
         return Some(
-            "slice selects a window with `--range START:END` or `--tail N`; without either it reads from line 1 up to `--line-ceiling` lines",
+            "slice selects a window with `--range START:END` or `--tail N`; without either it reads from line 1 up to `--line-ceiling` lines"
+                .to_owned(),
         );
     }
     RENAMED_FLAGS
         .iter()
         .find(|(commands, old, _)| commands.contains(&command) && flag_present(old))
-        .map(|(_, _, guidance)| *guidance)
+        .map(|(_, _, guidance)| (*guidance).to_owned())
+}
+
+/// Configuration and receipt flags belong to the subcommands that use them.
+/// Name the placement fix, or say the option does not apply at all.
+fn misplaced_option_guidance(args: &[OsString], command: &str) -> Option<String> {
+    const SUBCOMMAND_OPTIONS: &[&str] = &[
+        "--config",
+        "--no-config",
+        "--fail-if-truncated",
+        "--require-complete-scope",
+    ];
+    let command_index = args.iter().position(|arg| arg.to_str() == Some(command))?;
+    let option_name = |arg: &OsString| {
+        let arg = arg.to_string_lossy();
+        let name = arg.split_once('=').map_or(arg.as_ref(), |(name, _)| name);
+        SUBCOMMAND_OPTIONS
+            .iter()
+            .copied()
+            .find(|option| *option == name)
+    };
+    let command_help = Cli::command();
+    let accepts = |option: &str| {
+        command_help
+            .find_subcommand(command)
+            .is_some_and(|subcommand| {
+                subcommand
+                    .get_arguments()
+                    .any(|arg| arg.get_long() == option.strip_prefix("--"))
+            })
+    };
+    for (index, arg) in args.iter().enumerate().skip(1) {
+        let Some(option) = option_name(arg) else {
+            continue;
+        };
+        if !accepts(option) {
+            let reason = if matches!(option, "--config" | "--no-config") {
+                "it does not read .contextmink.toml"
+            } else {
+                "it does not emit a contextmink receipt"
+            };
+            return Some(format!(
+                "{command} does not accept {option}: {reason}; remove {option}"
+            ));
+        }
+        if index < command_index {
+            return Some(format!(
+                "{option} is a {command} option; place it after the subcommand: `contextmink {command} {option} ...`"
+            ));
+        }
+    }
+    None
 }
 
 /// Guard commands are noun-first; removed spellings name their replacement.
@@ -324,6 +482,10 @@ pub(crate) enum Command {
             help = "Maximum characters per printed path"
         )]
         show_line_chars: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Summarize directories with bounded recursive file counts.
     Dirs {
@@ -364,6 +526,10 @@ pub(crate) enum Command {
             help = "Maximum candidate files to count into directory summaries"
         )]
         max_files_counted: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Search text and report bounded file counts plus sample lines.
     ///
@@ -477,6 +643,10 @@ pub(crate) enum Command {
             help = "Maximum cumulative candidate bytes admitted for deterministic content inspection [default: no byte cap]"
         )]
         max_content_bytes: Option<u64>,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Search for literal terms without regex or shell-fragile pattern syntax.
     #[command(name = "grep-terms")]
@@ -588,6 +758,10 @@ pub(crate) enum Command {
             help = "Maximum cumulative candidate bytes admitted for deterministic content inspection [default: no byte cap]"
         )]
         max_content_bytes: Option<u64>,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Print a bounded line or character window from one text file.
     Slice {
@@ -637,6 +811,10 @@ pub(crate) enum Command {
             help = "Character count for character-window mode"
         )]
         chars: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Map declaration-shaped lines in one source file for orientation.
     ///
@@ -686,6 +864,10 @@ pub(crate) enum Command {
             help = "Maximum characters per declaration text field"
         )]
         show_line_chars: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
@@ -731,6 +913,10 @@ pub(crate) enum Command {
             help = "Maximum bytes materialized for one JSON document or retained for one JSONL record"
         )]
         max_document_bytes: u64,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Select JSON values or array rows and print bounded field summaries.
     #[command(name = "json-select")]
@@ -789,6 +975,10 @@ pub(crate) enum Command {
             help = "Maximum bytes materialized for one JSON document or retained for one JSONL record"
         )]
         max_document_bytes: u64,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Run a read-only `SQLite` query with bounded row output.
     Sqlite {
@@ -840,6 +1030,10 @@ pub(crate) enum Command {
             help = "Maximum characters per cell value"
         )]
         show_value_chars: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Summarize `SQLite` tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
@@ -882,24 +1076,46 @@ pub(crate) enum Command {
             help = "Maximum characters per printed schema line"
         )]
         show_line_chars: usize,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Install personal skills and a native runtime without changing consuming projects.
     #[command(
-        after_help = "Writes a host-local ownership receipt and never edits repository guidance or harness settings. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
+        after_help = "Writes a host-local ownership receipt and never edits repository guidance or harness settings. Always prints a JSON report."
     )]
     SetupUser {
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Existing home directory to install into [default: USERPROFILE on Windows, HOME elsewhere]"
+        )]
         home: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Preflight and report every action without writing any file"
+        )]
         dry_run: bool,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Replace reviewed unowned or modified personal destinations; receipt-owned upgrades need no flag"
+        )]
         replace_managed: bool,
     },
-    /// Remove receipt-owned personal skills and runtime; leaves projects untouched
+    /// Remove receipt-owned personal skills and runtime; leaves projects untouched.
+    #[command(after_help = "Removes only receipt-owned files. Always prints a JSON report.")]
     UninstallUser {
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Home directory whose personal receipt should be removed [default: USERPROFILE on Windows, HOME elsewhere]"
+        )]
         home: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Preflight and report every removal or refusal without writing any file"
+        )]
         dry_run: bool,
     },
     /// Install optional project-owned integration for shared repository adoption
@@ -930,7 +1146,7 @@ pub(crate) enum Command {
     },
     /// Remove receipt-owned project integration without touching repository-owned policy.
     #[command(
-        after_help = "Run this command from an extracted Contextmink release outside the project. Only --json applies globally; receipt strictness and configuration-selection flags do not apply."
+        after_help = "Run this command from an extracted Contextmink release outside the project."
     )]
     UninstallProject {
         #[arg(
@@ -989,6 +1205,10 @@ pub(crate) enum Command {
             help = "Non-interactive command argv to execute directly (child stdin is closed)"
         )]
         argv: Vec<String>,
+        #[command(flatten)]
+        receipt_options: ReceiptOptions,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Evaluate an agent `PreToolUse` hook payload (JSON on stdin) against the
     /// destructive-command guard; exit 2 blocks the tool call.
@@ -1014,6 +1234,8 @@ pub(crate) enum Command {
             help = "Shell dialect used by the intercepted command string"
         )]
         shell: ShellDialect,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Explain whether a direct argv or shell command would be allowed by the
     /// destructive-command guard. This command never spawns the input.
@@ -1038,6 +1260,8 @@ pub(crate) enum Command {
             help = "Already-tokenized argv to evaluate without executing"
         )]
         argv: Vec<String>,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
     /// Print a Claude settings JSON fragment that registers guard-hook.
     ///
@@ -1070,5 +1294,7 @@ pub(crate) enum Command {
             help = "JSON Pointer to the command string in the hook payload (for example /tool_input/command)"
         )]
         command_field: String,
+        #[command(flatten)]
+        config_source: ConfigSource,
     },
 }

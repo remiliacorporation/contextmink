@@ -432,11 +432,14 @@ below is the short map.
   deletion checks when their options are unambiguous. Options after `--` are
   filenames. The built-in prohibition on `git clean` remains unchanged.
 
-Global flags: `--json` emits one JSON object for machine consumption;
-`--fail-if-truncated` exits nonzero on capped output;
-`--require-complete-scope` exits nonzero when scope caps made totals lower
-bounds. Receipt strictness flags fail immediately on commands that do not emit
-`contextmink.receipt.v2`; they are never silently ignored.
+The only global flag is `--json`, which emits one JSON object for machine
+consumption. Receipt options follow the subcommand on every command that emits
+`contextmink.receipt.v2`: `--fail-if-truncated` exits nonzero on capped output,
+and `--require-complete-scope` exits nonzero when scope caps made totals lower
+bounds. Configuration options `--config FILE` and `--no-config` follow the
+subcommand on every command that reads `.contextmink.toml`. Setup and removal
+commands accept neither group; a misplaced or inapplicable option is refused
+with the fix rather than ignored.
 
 ## Examples
 
@@ -656,8 +659,8 @@ to the config file's directory and apply only inside that tree, so anchored
 rules hold from any working directory without leaking into foreign scan roots.
 Built-in build/dependency exclusions apply inside every explicit scan root.
 Empty profiles and the shipped placeholder profile are hard errors. Use
-`--config <file>` for an explicit policy or `--no-config` for built-in defaults
-only.
+`<command> --config <file>` for an explicit policy or `<command> --no-config`
+for built-in defaults only.
 Excludes quiet broad scans only: pass an explicit file or subdirectory when an
 excluded tree is the target, or `--with-excluded` to lift the globs for one
 command. Git ignore rules are separate; `--with-git-ignored` lifts those.

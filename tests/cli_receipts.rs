@@ -400,17 +400,29 @@ fn non_receipt_commands_reject_irrelevant_global_flags() {
     let strict = run_contextmink_raw(
         &root,
         &[
-            "--fail-if-truncated",
             "guard-check",
+            "--fail-if-truncated",
             "--command",
             "git status",
         ],
     );
     assert!(!strict.status.success());
     assert!(
-        String::from_utf8_lossy(&strict.stderr)
-            .contains("strictness flags apply only to commands that emit")
+        String::from_utf8_lossy(&strict.stderr).contains("receipt strictness flags do not apply")
     );
+    let before = run_contextmink_raw(
+        &root,
+        &[
+            "--fail-if-truncated",
+            "guard-check",
+            "--command",
+            "git status",
+        ],
+    );
+    assert_eq!(before.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&before.stderr).contains(
+        "guard-check does not accept --fail-if-truncated: it does not emit a contextmink receipt"
+    ));
 
     let hook_json = run_contextmink_raw(&root, &["--json", "guard-hook"]);
     assert!(!hook_json.status.success());
@@ -806,19 +818,48 @@ fn uninstall_project_removes_only_receipt_owned_integration() {
 #[test]
 fn setup_project_rejects_unrelated_global_flags() {
     let root = fixture_root("setup-project-global-flags");
-    for flag in [
-        "--no-config",
-        "--fail-if-truncated",
-        "--require-complete-scope",
+    for command in [
+        "setup-project",
+        "uninstall-project",
+        "setup-user",
+        "uninstall-user",
     ] {
-        let output = run_contextmink_raw(&root, &[flag, "setup-project", "."]);
-        assert!(!output.status.success(), "{flag} must be rejected");
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(
-            stderr.contains("setup-project accepts only its own flags plus --json"),
-            "unexpected stderr for {flag}: {stderr}"
-        );
+        for flag in [
+            "--no-config",
+            "--fail-if-truncated",
+            "--require-complete-scope",
+        ] {
+            for args in [[flag, command], [command, flag]] {
+                let output = run_contextmink_raw(&root, &args);
+                assert_eq!(output.status.code(), Some(2), "{args:?} must be rejected");
+                let stderr = String::from_utf8(output.stderr).unwrap();
+                assert!(
+                    stderr.contains(&format!("{command} does not accept {flag}")),
+                    "unexpected stderr for {args:?}: {stderr}"
+                );
+            }
+        }
+        let help = run_contextmink(&root, &[command, "--help"]);
+        for flag in [
+            "--config",
+            "--no-config",
+            "--fail-if-truncated",
+            "--require-complete-scope",
+        ] {
+            assert!(!help.contains(flag), "{command} --help lists {flag}");
+        }
+        assert!(help.contains("Global options"), "{help}");
     }
+
+    let misplaced = run_contextmink_raw(&root, &["--no-config", "files", "."]);
+    assert_eq!(misplaced.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&misplaced.stderr)
+            .contains("place it after the subcommand: `contextmink files --no-config ...`")
+    );
+    let grep_help = run_contextmink(&root, &["grep", "--help"]);
+    assert!(grep_help.contains("Receipt options"));
+    assert!(grep_help.contains("Configuration options"));
 }
 
 #[test]
@@ -1401,8 +1442,8 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
         &root,
         &[
             "--json",
-            "--fail-if-truncated",
             "slice",
+            "--fail-if-truncated",
             "sample.txt",
             "--range",
             "1:1",
@@ -1556,8 +1597,8 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
             "1",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:3",
@@ -1597,8 +1638,8 @@ fn capture_keeps_head_and_tail_when_line_capped() {
             "2",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:3",
@@ -1638,8 +1679,8 @@ fn capture_contiguous_byte_segments_preserve_every_line() {
             "2000",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "many-lines.txt",
             "--range",
             "1:400",
@@ -1677,8 +1718,8 @@ fn capture_json_applies_the_line_character_cap_to_payload_text() {
             "5",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:1",
@@ -1829,8 +1870,8 @@ fn capture_uses_capture_receipt_shape() {
             "1",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:1",
@@ -1872,7 +1913,7 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
 
     let output = run_contextmink_raw(
         &root,
-        &["--fail-if-truncated", "files", ".", "--show-files", "1"],
+        &["files", "--fail-if-truncated", ".", "--show-files", "1"],
     );
     assert!(!output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -1890,7 +1931,7 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
 
     let strict = run_contextmink_raw(
         &root,
-        &["--fail-if-truncated", "files", ".", "--show-files", "1"],
+        &["files", "--fail-if-truncated", ".", "--show-files", "1"],
     );
     assert!(!strict.status.success());
     let strict_stdout = String::from_utf8(strict.stdout).unwrap();
@@ -1899,8 +1940,8 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
     let display_capped = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scope",
             "files",
+            "--require-complete-scope",
             ".",
             "--show-files",
             "1",
@@ -1914,8 +1955,8 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
     let scan_capped = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scope",
             "grep",
+            "--require-complete-scope",
             "--pattern",
             "not-present",
             ".",
@@ -1942,8 +1983,8 @@ fn capture_propagates_unexpected_child_status_after_receipt() {
             "capture",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "missing.txt",
             "--range",
             "1:1",
@@ -1971,8 +2012,8 @@ fn capture_child_exit_precedes_strict_truncation_status() {
         &root,
         &[
             "--json",
-            "--fail-if-truncated",
             "capture",
+            "--fail-if-truncated",
             "--show-lines",
             "1",
             "--",
@@ -2004,8 +2045,8 @@ fn capture_successful_child_keeps_outer_success() {
             "capture",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:1",
@@ -2040,8 +2081,8 @@ fn capture_expect_exit_accepts_declared_nonzero_and_reports_child_exit_zero() {
             "0,1",
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "missing.txt",
             "--range",
             "1:1",
@@ -2074,8 +2115,8 @@ fn capture_receipt_out_writes_full_json_receipt() {
             receipt.to_str().unwrap(),
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:1",
@@ -2107,8 +2148,8 @@ fn capture_sidecar_failure_still_emits_the_stdout_receipt() {
             root.to_str().unwrap(),
             "--",
             bin,
-            "--no-config",
             "slice",
+            "--no-config",
             "sample.txt",
             "--range",
             "1:1",
@@ -2142,9 +2183,9 @@ fn capture_receipt_out_uses_the_same_bounded_long_line_text() {
             receipt.to_str().unwrap(),
             "--",
             bin,
-            "--no-config",
             "--json",
             "slice",
+            "--no-config",
             "long.txt",
             "--range",
             "1:1",
@@ -2859,8 +2900,8 @@ fn grep_stops_content_scan_at_matching_file_cap() {
     let guarded = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scope",
             "grep-terms",
+            "--require-complete-scope",
             "--term",
             "needle",
             "--max-matching-files",
@@ -3249,8 +3290,8 @@ fn canonical_limits_cap_outputs() {
     let guarded_scan = run_contextmink_raw(
         &root,
         &[
-            "--require-complete-scope",
             "sqlite",
+            "--require-complete-scope",
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
@@ -4237,11 +4278,11 @@ fn dirs_keeps_directory_totals_exact_when_file_counts_are_capped() {
         !run_contextmink_raw(
             &root,
             &[
-                "--require-complete-scope",
                 "dirs",
+                "--require-complete-scope",
                 "tree",
                 "--max-files-counted",
-                "1"
+                "1",
             ]
         )
         .status
@@ -4449,9 +4490,9 @@ fn bare_config_filename_keeps_excludes_for_absolute_scan_roots() {
         &root,
         &[
             "--json",
+            "files",
             "--config",
             ".contextmink.toml",
-            "files",
             &absolute_root,
             "--show-files",
             "50",

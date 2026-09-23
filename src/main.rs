@@ -95,7 +95,6 @@ fn run_application() -> Result<()> {
             dry_run,
             replace_managed,
         } => {
-            reject_inspection_globals(&cli, "setup-user", "installation")?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&user_setup::run(
@@ -108,7 +107,6 @@ fn run_application() -> Result<()> {
             return Ok(());
         }
         Command::UninstallUser { home, dry_run } => {
-            reject_inspection_globals(&cli, "uninstall-user", "removal")?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&user_setup::run(
@@ -126,7 +124,6 @@ fn run_application() -> Result<()> {
             replace_managed,
             skill_target,
         } => {
-            reject_inspection_globals(&cli, "setup-project", "installation")?;
             let result = setup_project(SetupProjectRequest {
                 project_root,
                 source_binary: None,
@@ -173,7 +170,6 @@ fn run_application() -> Result<()> {
             project_root,
             dry_run,
         } => {
-            reject_inspection_globals(&cli, "uninstall-project", "removal")?;
             let result = uninstall_project(UninstallProjectRequest {
                 project_root,
                 running_binary: None,
@@ -239,6 +235,7 @@ fn run_application() -> Result<()> {
             quiet,
             show_files,
             show_line_chars,
+            ..
         } => command_files(
             &cli,
             &config,
@@ -263,6 +260,7 @@ fn run_application() -> Result<()> {
             show_dirs,
             show_line_chars,
             max_files_counted,
+            ..
         } => command_dirs(
             &cli,
             &config,
@@ -296,6 +294,7 @@ fn run_application() -> Result<()> {
             max_content_files,
             max_file_bytes,
             max_content_bytes,
+            ..
         } => command_grep(
             &cli,
             &config,
@@ -343,6 +342,7 @@ fn run_application() -> Result<()> {
             max_content_files,
             max_file_bytes,
             max_content_bytes,
+            ..
         } => {
             let terms = collect_terms(terms, term_files)?;
             let mode = if *any { TermMode::Any } else { TermMode::All };
@@ -379,6 +379,7 @@ fn run_application() -> Result<()> {
             show_line_chars,
             char_start,
             chars,
+            ..
         } => command_slice(
             &cli,
             &config,
@@ -399,6 +400,7 @@ fn run_application() -> Result<()> {
             ignore_case,
             show_items,
             show_line_chars,
+            ..
         } => command_outline(
             &cli,
             &config,
@@ -421,6 +423,7 @@ fn run_application() -> Result<()> {
             show_matches,
             show_value_chars,
             max_document_bytes,
+            ..
         } => command_json_find(
             &cli,
             &config,
@@ -445,6 +448,7 @@ fn run_application() -> Result<()> {
             show_rows,
             show_value_chars,
             max_document_bytes,
+            ..
         } => command_json_select(
             &cli,
             &config,
@@ -470,6 +474,7 @@ fn run_application() -> Result<()> {
             max_rows_scanned,
             timeout_secs,
             show_value_chars,
+            ..
         } => command_sqlite(
             &cli,
             &config,
@@ -494,6 +499,7 @@ fn run_application() -> Result<()> {
             show_columns,
             show_indexes,
             show_line_chars,
+            ..
         } => command_sqlite_schema(
             &cli,
             &config,
@@ -515,6 +521,7 @@ fn run_application() -> Result<()> {
             expect_exit,
             receipt_out,
             argv,
+            ..
         } => command_capture(
             &cli,
             &config,
@@ -530,6 +537,7 @@ fn run_application() -> Result<()> {
             command_field,
             expected_root,
             shell,
+            ..
         } => command_guard_hook(
             &config.destructive_guard,
             command_field,
@@ -540,7 +548,15 @@ fn run_application() -> Result<()> {
             command,
             shell,
             argv,
+            ..
         } => {
+            // argv is trailing and accepts hyphen values; a flag-like first
+            // item is a misplaced or unsupported option, never a program.
+            if let Some(first) = argv.first().filter(|first| first.starts_with('-')) {
+                return Err(anyhow!(
+                    "guard-check received `{first}` as the first argv item; it is not a guard-check option (see `contextmink guard-check --help`). guard-check emits no receipt, so receipt strictness flags do not apply"
+                ));
+            }
             let (input_kind, evaluated_argv) = match (command.as_deref(), argv.is_empty()) {
                 (Some(command), true) => (
                     "shell_command",
@@ -603,6 +619,7 @@ fn run_application() -> Result<()> {
             guard_config,
             matchers,
             command_field,
+            ..
         } => command_guard_hook_snippet(
             binary.as_deref(),
             guard_config.as_deref(),
@@ -615,32 +632,9 @@ fn run_application() -> Result<()> {
 }
 
 fn validate_global_flags(cli: &Cli) -> Result<()> {
-    let strictness_requested = cli.fail_if_truncated || cli.require_complete_scope;
-    if strictness_requested
-        && matches!(
-            &cli.command,
-            Command::GuardHook { .. }
-                | Command::GuardCheck { .. }
-                | Command::GuardHookSnippet { .. }
-        )
-    {
-        return Err(anyhow!(
-            "receipt strictness flags apply only to commands that emit contextmink.receipt.v2"
-        ));
-    }
     if cli.json && matches!(&cli.command, Command::GuardHook { .. }) {
         return Err(anyhow!(
             "guard-hook uses the agent hook protocol; --json does not apply"
-        ));
-    }
-    Ok(())
-}
-
-fn reject_inspection_globals(cli: &Cli, command: &str, operation: &str) -> Result<()> {
-    if cli.config.is_some() || cli.no_config || cli.fail_if_truncated || cli.require_complete_scope
-    {
-        return Err(anyhow!(
-            "{command} accepts only its own flags plus --json; receipt strictness and configuration-selection flags do not apply to {operation}"
         ));
     }
     Ok(())
