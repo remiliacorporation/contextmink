@@ -162,7 +162,7 @@ jobs:
           cp -R templates/. "${bundle}/templates/"
           cat > "${bundle}/manifest.json" <<EOF
           {
-            "schema": "contextmink.release-manifest.v1",
+            "schema": "contextmink.release_manifest.v1",
             "name": "contextmink",
             "version": "${{ steps.names.outputs.version }}",
             "source_commit": "${GITHUB_SHA}",
@@ -193,7 +193,7 @@ jobs:
           Copy-Item -Recurse docs $bundle
           Copy-Item -Recurse templates $bundle
           $manifest = [ordered]@{
-            schema = "contextmink.release-manifest.v1"
+            schema = "contextmink.release_manifest.v1"
             name = "contextmink"
             version = "${{ steps.names.outputs.version }}"
             source_commit = "$env:GITHUB_SHA"
@@ -230,7 +230,7 @@ jobs:
           test -f "${bundle}/LICENSE-SSL"
           test -f "${bundle}/LICENSE-VPL"
           test -f "${bundle}/manifest.json"
-          grep -Fq '"schema": "contextmink.release-manifest.v2"' "${bundle}/manifest.json"
+          grep -Fq '"schema": "contextmink.release_manifest.v3"' "${bundle}/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "${bundle}/manifest.json"
           test -d "${bundle}/docs"
           test -d "${bundle}/templates"
@@ -349,7 +349,7 @@ jobs:
           if (!(Test-Path "$bundle/LICENSE-VPL")) { throw "LICENSE-VPL missing" }
           if (!(Test-Path "$bundle/manifest.json")) { throw "manifest.json missing" }
           $releaseManifest = Get-Content "$bundle/manifest.json" -Raw | ConvertFrom-Json
-          if ($releaseManifest.schema -ne "contextmink.release-manifest.v2") {
+          if ($releaseManifest.schema -ne "contextmink.release_manifest.v3") {
             throw "release manifest schema mismatch: $($releaseManifest.schema)"
           }
           if ($releaseManifest.source_commit -ne $env:GITHUB_SHA) {

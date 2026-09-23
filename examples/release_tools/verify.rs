@@ -17,7 +17,7 @@ pub fn project(bundle: &Path) -> Result<()> {
     let owned = bundle.join("tools/contextmink");
     let manifest = json(&owned.join("manifest.json"))?;
     ensure!(
-        manifest["schema"] == "contextmink.release-manifest.v2"
+        manifest["schema"] == "contextmink.release_manifest.v3"
             && manifest["layout"] == "project-overlay",
         "expected project-overlay release manifest"
     );

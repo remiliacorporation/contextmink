@@ -70,7 +70,7 @@ pub fn run(stage: &Path, archive: &Path) -> Result<()> {
         };
         fs::rename(child.path(), target)?;
     }
-    manifest["schema"] = "contextmink.release-manifest.v2".into();
+    manifest["schema"] = "contextmink.release_manifest.v3".into();
     manifest["layout"] = "project-overlay".into();
     manifest["binary_sha256"] = hashes.into();
     manifest["binary"] = format!("bin/{}", names[0]).into();

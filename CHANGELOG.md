@@ -38,6 +38,7 @@ upgrade:
 
 ### Changed
 
+- Release archives carry `contextmink.release_manifest.v3` (was `contextmink.release-manifest.v2`); update any script that checks the manifest schema.
 - Display caps use `--show-*`, and `--max-*` now names only scope or
   input-admission limits:
   - `files`, `grep`, `grep-terms`: `--limit` → `--show-files`
