@@ -16,6 +16,7 @@ mod hook_guard;
 mod hook_snippet;
 mod json_commands;
 mod json_input;
+mod msys_arguments;
 mod outline;
 mod output;
 mod process_boundary;
@@ -73,7 +74,20 @@ fn main() -> Result<()> {
 fn run_application() -> Result<()> {
     user_installation::verify_runtime()?;
     output::mark_command_start();
-    let cli = parse_cli();
+    let args = std::env::args_os().collect::<Vec<_>>();
+    if let Some(refusal) = msys_arguments::rewritten_argument_refusal(
+        &args,
+        &msys_arguments::MsysEnvironment::from_process(),
+    ) {
+        if cli::selected_subcommand(&args) == Some("hook-guard") {
+            // The hook protocol treats only exit 2 as blocking; a rewritten
+            // hook argument must not silently disable the guard.
+            eprintln!("contextmink hook-guard: {refusal}");
+            std::process::exit(2);
+        }
+        return Err(anyhow!(refusal));
+    }
+    let cli = parse_cli(&args);
     validate_global_flags(&cli)?;
     match &cli.command {
         Command::SetupUser {

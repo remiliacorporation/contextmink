@@ -609,7 +609,15 @@ repositories whose scripts are Bash-first while the agent runs in PowerShell:
 
 The `scripts/contextmink` launcher additionally shields slash-bearing JSON
 selectors, predicates, regexes, literal terms, SQL, and shell-command values
-from MSYS rewriting on Git Bash. Setup and boundary details:
+from MSYS rewriting on Git Bash. When the native `contextmink` executable is
+invoked directly from an MSYS shell (`MSYSTEM` set, `MSYS_NO_PATHCONV` unset)
+and any argument or `--flag=value` value begins with the MSYS installation
+root derived from its `<root>\usr\bin` PATH entry, such as
+`C:/Program Files/Git/`, it refuses before doing any work and names
+`MSYS_NO_PATHCONV=1` as the fix: a rewritten pointer, pattern, or path
+fragment would otherwise yield a confident answer about a different value.
+The bridge does not apply this check; it serves native callers, and Bash
+treats a rewritten path as the same file. Setup and boundary details:
 [docs/setup.md](docs/setup.md).
 
 ## Configuration

@@ -49,9 +49,8 @@ pub(crate) struct Cli {
     pub(crate) command: Command,
 }
 
-pub(crate) fn parse_cli() -> Cli {
-    let args = std::env::args_os().collect::<Vec<_>>();
-    match Cli::try_parse_from(&args) {
+pub(crate) fn parse_cli(args: &[OsString]) -> Cli {
+    match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => {
             if matches!(
@@ -59,7 +58,7 @@ pub(crate) fn parse_cli() -> Cli {
                 ErrorKind::UnknownArgument
                     | ErrorKind::MissingRequiredArgument
                     | ErrorKind::ArgumentConflict
-            ) && let Some(guidance) = noncanonical_form_guidance(&args)
+            ) && let Some(guidance) = noncanonical_form_guidance(args)
             {
                 Cli::command()
                     .error(ErrorKind::InvalidValue, guidance)
@@ -106,7 +105,7 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
     None
 }
 
-fn selected_subcommand(args: &[OsString]) -> Option<&str> {
+pub(crate) fn selected_subcommand(args: &[OsString]) -> Option<&str> {
     let mut index = 1;
     while index < args.len() {
         let arg = args[index].to_str()?;

@@ -5023,3 +5023,82 @@ fn slice_and_outline_flag_encoding_suspects_only_when_found() {
         "{text}"
     );
 }
+
+fn run_under_fake_git_bash(
+    root: &PathBuf,
+    args: &[&str],
+    stdin: &str,
+    opt_out: bool,
+) -> std::process::Output {
+    let mut path = std::ffi::OsString::from(r"C:\Fake Git\usr\bin;");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    let mut command = Command::new(env!("CARGO_BIN_EXE_contextmink"));
+    command
+        .current_dir(root)
+        .args(args)
+        .env("MSYSTEM", "MINGW64")
+        .env("PATH", path)
+        .env_remove("MSYS_NO_PATHCONV")
+        .env_remove("MSYS2_ARG_CONV_EXCL")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if opt_out {
+        command.env("MSYS_NO_PATHCONV", "1");
+    }
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn msys_rewritten_arguments_are_refused_before_work() {
+    let root = fixture_root("msys-rewrite");
+    let rewritten = [
+        "grep",
+        "--pattern",
+        "C:/Fake Git/skills/contextmink",
+        "--literal",
+        ".",
+    ];
+    let refused = run_under_fake_git_bash(&root, &rewritten, "", false);
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty(), "no receipt may be emitted");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("MSYS_NO_PATHCONV=1"), "{stderr}");
+    assert!(stderr.contains("`/skills/contextmink`"), "{stderr}");
+
+    let opted_out = run_under_fake_git_bash(&root, &rewritten, "", true);
+    assert!(
+        opted_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&opted_out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&opted_out.stdout).contains("CONTEXTMINK_RECEIPT "));
+
+    let ordinary = run_under_fake_git_bash(
+        &root,
+        &["--json", "json-select", "sidecar.json", "--at", "/nested"],
+        "",
+        false,
+    );
+    assert!(
+        ordinary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ordinary.stderr)
+    );
+
+    let hook = run_under_fake_git_bash(
+        &root,
+        &["hook-guard", "--expected-root", "C:/Fake Git/project"],
+        r#"{"tool_input":{"command":"echo ok"}}"#,
+        false,
+    );
+    assert_eq!(hook.status.code(), Some(2), "a hook refusal must block");
+    assert!(String::from_utf8_lossy(&hook.stderr).contains("MSYS_NO_PATHCONV=1"));
+}
