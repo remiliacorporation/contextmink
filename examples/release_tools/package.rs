@@ -103,7 +103,7 @@ pub fn run(stage: &Path, archive: &Path) -> Result<()> {
         }
     }
     fs::copy(
-        source.join("templates/AGENTS.contextmink.md"),
+        source.join("templates/agent_integration.md"),
         owned.join("agent_integration.md"),
     )?;
     for path in snapshot(&stage)?.keys() {

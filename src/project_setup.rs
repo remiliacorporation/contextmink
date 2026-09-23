@@ -20,7 +20,7 @@ use receipt::{
 };
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
-const CONTEXTMINK_INTEGRATION: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
+const CONTEXTMINK_INTEGRATION: &[u8] = include_bytes!("../templates/agent_integration.md");
 const CONTEXTMINK_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink/SKILL.md");
 const BRIDGE_SKILL: &[u8] = include_bytes!("../templates/skills/contextmink-bridge/SKILL.md");
 const CONTEXTMINK_OPENAI_METADATA: &[u8] =

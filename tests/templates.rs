@@ -1,12 +1,39 @@
 #[test]
-fn instruction_templates_are_policy_equivalent() {
-    let codex = include_str!("../templates/AGENTS.contextmink.md");
-    let claude = include_str!("../templates/CLAUDE.contextmink.md");
-
-    assert_eq!(
-        codex, claude,
-        "Codex and Claude contextmink guidance must stay equivalent"
+fn integration_reference_is_one_compact_release_managed_file() {
+    let reference = include_str!("../templates/agent_integration.md");
+    assert!(
+        reference.len() < 4096,
+        "the integration reference must stay compact; --help owns flag inventories"
     );
+    for required in [
+        "`scripts/contextmink` exists only in `setup-project` or source-vendored",
+        "PowerShell: `&",
+        "`complete`",
+        "`scope_complete: false`",
+        "`output_truncated: true`",
+        "`caps[]`",
+        "lower bounds",
+        "`no_match_scope",
+        "`all_null_fields`",
+        "`remaining_range`",
+        "`output_cap_arguments`",
+        "`child_exit_code`",
+        "`child_exit_zero`",
+        "`exit_expected`",
+        "`--skip-nested-repos`",
+        "`--with-excluded`",
+        "about 120 lines",
+        "MSYS_NO_PATHCONV=1",
+    ] {
+        assert!(
+            reference.contains(required),
+            "integration reference is missing {required:?}"
+        );
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for retired in ["AGENTS.contextmink.md", "CLAUDE.contextmink.md"] {
+        assert!(!root.join("templates").join(retired).exists());
+    }
 }
 
 #[test]
@@ -30,6 +57,21 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
         template.lines().count() < 120,
         "skill must remain a thin envelope"
     );
+    assert!(template.len() < 3300, "skill body must stay near 2.9 KB");
+    for required in [
+        "Resolve `tools/contextmink/bin/contextmink[.exe]` from the project root",
+        "don't guess",
+        "PowerShell: invoke with `&`.",
+        "`dirs`",
+        "If capped, raise only the flags named in `output_cap_arguments`.",
+        "Check `complete`.",
+        "a no-match proves nothing",
+        "prefix `MSYS_NO_PATHCONV=1`",
+        "unless `--any` is passed",
+        "guard-hook-snippet --help",
+    ] {
+        assert!(template.contains(required), "skill is missing {required:?}");
+    }
 
     let metadata = include_str!("../templates/skills/contextmink/agents/openai.yaml");
     assert!(metadata.contains("$contextmink"));
@@ -72,22 +114,6 @@ fn agent_skill_templates_are_thin_and_harness_equivalent() {
 }
 
 #[test]
-fn repository_changelog_skill_is_harness_equivalent() {
-    let agent_skill = include_str!("../.agents/skills/changelog-writing/SKILL.md");
-    let claude_skill = include_str!("../.claude/skills/changelog-writing/SKILL.md");
-    assert_eq!(agent_skill, claude_skill);
-    assert!(agent_skill.contains("source-faithful, human-facing changelogs"));
-    assert!(agent_skill.contains("Identify the exact previous-release and candidate revisions"));
-    assert!(agent_skill.contains("Compatibility:"));
-    assert!(agent_skill.contains("No material change"));
-    assert!(!agent_skill.contains("TODO"));
-
-    let metadata = include_str!("../.agents/skills/changelog-writing/agents/openai.yaml");
-    assert!(metadata.contains("$changelog-writing"));
-    assert!(metadata.contains("Write source-faithful human release notes"));
-}
-
-#[test]
 fn source_package_excludes_repository_harness_settings() {
     let manifest = include_str!("../Cargo.toml");
 
@@ -98,8 +124,9 @@ fn source_package_excludes_repository_harness_settings() {
 fn setup_points_to_templates_instead_of_duplicating_policy() {
     let setup = include_str!("../docs/setup.md");
 
-    assert!(setup.contains("templates/AGENTS.contextmink.md"));
-    assert!(setup.contains("templates/CLAUDE.contextmink.md"));
+    assert!(setup.contains("templates/agent_integration.md"));
+    assert!(!setup.contains("AGENTS.contextmink.md"));
+    assert!(!setup.contains("CLAUDE.contextmink.md"));
     assert!(
         !setup.contains("Do not route everything through `contextmink`."),
         "setup.md should point to templates instead of duplicating snippet prose"
@@ -172,12 +199,16 @@ fn public_guidance_uses_current_cli_forms() {
         ("SETUP.md", include_str!("../SETUP.md")),
         ("docs/setup.md", include_str!("../docs/setup.md")),
         (
-            "templates/AGENTS.contextmink.md",
-            include_str!("../templates/AGENTS.contextmink.md"),
+            "templates/agent_integration.md",
+            include_str!("../templates/agent_integration.md"),
         ),
         (
-            "templates/CLAUDE.contextmink.md",
-            include_str!("../templates/CLAUDE.contextmink.md"),
+            "templates/skills/contextmink/SKILL.md",
+            include_str!("../templates/skills/contextmink/SKILL.md"),
+        ),
+        (
+            "templates/skills/contextmink-bridge/SKILL.md",
+            include_str!("../templates/skills/contextmink-bridge/SKILL.md"),
         ),
         (
             ".github/workflows/release-artifacts.yml",
@@ -199,6 +230,26 @@ fn public_guidance_uses_current_cli_forms() {
         "--max-count-files",
         "--max-matches",
         "--max-scan-rows",
+        "--limit",
+        "--lines-per-file",
+        "--max-sample-lines",
+        "--max-lines",
+        "--max-line-chars",
+        "--max-value-chars",
+        "--max-bytes",
+        "--max-tables",
+        "--max-columns",
+        "--max-indexes",
+        "--include-shadow",
+        "--include-system",
+        "--path-regex",
+        "json-find --path-contains",
+        " hook-guard",
+        "`hook-guard",
+        " hook-snippet",
+        "`hook-snippet",
+        "DOT.PATH",
+        "tool_input.command",
     ];
 
     for (name, contents) in surfaces {
@@ -214,19 +265,9 @@ fn public_guidance_uses_current_cli_forms() {
 #[test]
 fn project_template_requires_explicit_policy_adaptation() {
     let config = include_str!("../templates/.contextmink.toml");
-    let guidance = include_str!("../templates/AGENTS.contextmink.md");
 
     assert!(config.contains("profile = \"replace-with-workspace-name\""));
     assert!(config.contains("Add only project-specific high-output paths"));
-    assert!(guidance.contains("intended workspace root"));
-    assert!(guidance.contains("& tools\\contextmink\\bin\\contextmink.exe"));
-    assert!(guidance.contains("When the target file is unknown"));
-    assert!(guidance.contains("repeated `--path-contains` values"));
-    assert!(guidance.contains("`--max-document-bytes`"));
-    assert!(guidance.contains("do not invent stdout/stderr chronology"));
-    assert!(guidance.contains("including tracked submodules and Git-ignored"));
-    assert!(guidance.contains("`--skip-nested-repos`"));
-    assert!(guidance.contains("explicit root"));
 }
 
 #[test]

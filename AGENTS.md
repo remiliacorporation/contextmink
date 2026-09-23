@@ -12,11 +12,7 @@ only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
 - **Project integration and release-managed files**: `docs/setup.md`.
-- **Human changelogs and release notes**: `.agents/skills/changelog-writing/SKILL.md`
-  is the repository-local reviewed copy of Papertiger's canonical skill; it is
-  not a Contextmink setup-managed capability.
-- **Capability triggers**: the dedicated section below; each trigger names its
-  own operational authority.
+- **Human changelogs and release notes**: the `changelog` skill.
 
 Do not grow this file with flag inventories, receipt schemas, or setup recipes.
 Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
@@ -63,8 +59,8 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 
 ## Source and Template Synchronization
 
-- `templates/AGENTS.contextmink.md` and
-  `templates/CLAUDE.contextmink.md` are equivalent integration references.
+- `templates/agent_integration.md` is the single integration reference,
+  installed as `tools/contextmink/agent_integration.md`.
 - `scripts/contextmink` and `templates/scripts/contextmink` stay byte-identical.
 - Give each setup-managed skill one template and install its canonical file
   under `.agents/skills`.
@@ -89,21 +85,6 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 - Use Contextmink itself for broad repository reconnaissance and for real
   downstream dogfood after changing retrieval, setup, bridge, capture, guard,
   or receipt behavior.
-
-## Capability Triggers
-
-Before broad or potentially high-output file, text, structured-data, or
-command-output reads, load the project Contextmink skill. Skip known-small
-direct reads and project-native compact or domain-query commands.
-
-Before the first edit or commit on multi-outcome or separate-commit work, or
-work matching an existing durable task, read
-`.agents/skills/papertiger/SKILL.md` for shared agent harnesses or
-`.claude/skills/papertiger/SKILL.md` for Claude Code completely and follow it.
-Skip one bounded edit, read-only review, intermediate steps inside one
-independently reviewable outcome, and domain-owned or shared-team lifecycle.
-Resume an existing durable task even when its next step is a bounded edit or
-read-only check.
 
 ## Verification
 

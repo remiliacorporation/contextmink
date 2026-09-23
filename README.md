@@ -101,7 +101,7 @@ commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
-remain intact. Project guidance triggers are optional for skills-capable agents.
+remain intact. No Contextmink trigger text belongs in project guidance; skill descriptions route selection.
 
 
 ## See the difference
@@ -228,7 +228,7 @@ namespaced skill points to the canonical
 selected, while its short discovery description is the only resident skill
 metadata. Other tools can own adjacent namespaced skills without sharing or
 duplicating Contextmink policy. Setup never edits harness settings, hooks,
-`AGENTS.md`, or `CLAUDE.md`. Skills-capable harnesses need no additional
+`AGENTS.md`, or `CLAUDE.md`. Project guidance needs no Contextmink
 discovery trigger; only explicit repository policy needs local adaptation.
 
 Setup manages only `.agents/skills/contextmink` and

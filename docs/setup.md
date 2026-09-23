@@ -83,7 +83,7 @@ commands stay direct; no `.ps1` or `.cmd` project wrappers are required.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
-remain intact. Project guidance triggers are optional for skills-capable agents.
+remain intact. No Contextmink trigger text belongs in project guidance; skill descriptions route selection.
 
 
 This guide is for adding `contextmink` to an existing repository.
@@ -547,18 +547,13 @@ copy of the Rust crate:
    vendor hash still matches, and refuse or explicitly review a divergent
    existing destination instead of overwriting or removing it silently.
 
-5. Treat the instruction templates as integration references for the tool
-   surfaces the target repository uses:
-
-   - Codex-facing policy starts from `templates/AGENTS.contextmink.md`.
-   - Claude-facing policy starts from `templates/CLAUDE.contextmink.md`.
-
-   The maintaining agent must inspect the existing guidance hierarchy and
-   adapt the relevant contract into the repository's actual `AGENTS.md`,
-   `CLAUDE.md`, or equivalent files. Never copy a template wholesale or assume
-   the target guidance is already conducive to contextmink. The two templates
-   are intentionally equivalent in generic policy; preserve repository-owned
-   shell, path, domain-tool, and output rules during the merge.
+5. Vendor `templates/agent_integration.md` as
+   `tools/contextmink/agent_integration.md`, the integration reference the
+   skill links to. Do not add Contextmink trigger text to `AGENTS.md`,
+   `CLAUDE.md`, or equivalent files; the skill description routes selection.
+   Record only genuinely repository-owned decisions there, such as
+   domain-tool precedence, nested-repository policy, or protected paths, and
+   preserve existing shell, path, and output rules.
 
 6. Verify the integration from the target repository root:
 
@@ -607,39 +602,28 @@ hard errors.
 
 Use the installed Contextmink skill as the discoverable operational envelope
 and `tools/contextmink/agent_integration.md` as its detailed integration
-reference. Release maintainers source the reference from the equivalent
-templates:
+reference. Both harness families read the same reference, sourced from the
+single `templates/agent_integration.md`.
 
-- `templates/AGENTS.contextmink.md` for Codex-facing guidance.
-- `templates/CLAUDE.contextmink.md` for Claude-facing guidance.
-
-Tests keep the two snippets equivalent so Codex and Claude guidance do not
-drift.
-
-The reference includes active-shell invocation guidance. Keep that split when
-adapting the repository: Bash-hosted sessions use the repo-local `scripts/contextmink`
-launcher, Windows PowerShell sessions use the installed native binary for
-direct contextmink commands, and
-`contextmink-bridge.exe --script scripts/contextmink ...` is the PowerShell
-bridge for the Bash launcher or other Bash-first repository scripts. The policy
-content is otherwise shell-agnostic.
+The reference states invocation for every shell: the native executable runs
+directly from any shell (PowerShell uses `&`), `scripts/contextmink` exists
+only in `setup-project` or source-vendored installs, and Git Bash callers
+prefix `MSYS_NO_PATHCONV=1` when an argument starts with `/`.
 
 Setup installs the canonical Contextmink skill under `.agents/skills`
 for compatible Agent Skills consumers. Claude Code discovers the same complete
 short body under `.claude/skills`, generated from the same source template. Codex-facing `agents/openai.yaml` metadata exists only under
-the shared Agent Skills directory. The
-source checkout's changelog-writing skill is repository-local development
-guidance and is not installed into consumer repositories. Do not fork the
-Contextmink semantic body by harness. An always-loaded discovery trigger is optional; the skill description supplies
-the ordinary selection boundary.
+the shared Agent Skills directory. Do not fork the
+Contextmink semantic body by harness. The skill description supplies the
+selection boundary; project guidance carries no Contextmink trigger.
 Ordinary retrieval uses the skill and command help; the detailed integration
 reference is loaded for setup, policy changes, or unfamiliar receipt semantics.
 
 ## Operational Notes
 
-Usage policy lives in the instruction templates merged into project guidance;
-flag details live in `contextmink <command> --help`. This section covers only
-host mechanics the templates do not:
+Usage policy lives in the skill and `templates/agent_integration.md`; flag
+details live in `contextmink <command> --help`. This section covers only host
+mechanics those do not:
 
 - Windows-to-Bash boundaries can expand wildcard globs before contextmink
   receives them; that is why the templates steer toward `--ext` over

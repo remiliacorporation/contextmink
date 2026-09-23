@@ -14,7 +14,7 @@ use crate::config::project_setup::receipt::managed_runtime_sha256 as sha256;
 const TOOL: &str = "contextmink";
 const SKILL: &str = include_str!("../templates/skills/contextmink/SKILL.md");
 const BRIDGE_SKILL: &str = include_str!("../templates/skills/contextmink-bridge/SKILL.md");
-const REFERENCE: &[u8] = include_bytes!("../templates/AGENTS.contextmink.md");
+const REFERENCE: &[u8] = include_bytes!("../templates/agent_integration.md");
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -303,7 +303,7 @@ pub(crate) fn run(
 
 fn installed_binding(home: &Path) -> String {
     format!(
-        "Personal executable: `{}`. Invoke this native binary from the consuming project's working directory. It honors local configuration when present; no project setup or config is required. Use an explicitly selected project runtime when its contract requires one.\n",
+        "Personal executable: `{}`. Prefer a project-pinned runtime when one exists.\n",
         home.join(binary_path())
             .to_string_lossy()
             .replace('\\', "/")

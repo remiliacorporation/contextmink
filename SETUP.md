@@ -78,7 +78,7 @@ Linux and macOS installations omit the bridge skill.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
-remain intact. Project guidance triggers are optional for skills-capable agents.
+remain intact. No Contextmink trigger text belongs in project guidance; skill descriptions route selection.
 
 
 The full setup guide is in [docs/setup.md](docs/setup.md). From the unpacked
@@ -103,7 +103,7 @@ The skill points to `tools/contextmink/agent_integration.md`. Setup
 never edits repository agent guidance or harness settings. An existing
 `.contextmink.toml` is validated and preserved as repository-owned
 configuration; invalid configuration fails before any write. The same command
-restores ignored host binaries in a fresh clone. No project guidance trigger is required in skills-capable harnesses. Adapt
+restores ignored host binaries in a fresh clone. No Contextmink trigger text belongs in project guidance. Adapt
 repository-owned policy only when the project needs custom behavior. Receipt-owned
 upgrades need no flag; use `--replace-managed` only for a reviewed modified or
 pre-receipt destination. The ignored
