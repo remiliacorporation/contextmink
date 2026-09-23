@@ -129,21 +129,13 @@ fn setup_points_to_templates_instead_of_duplicating_policy() {
 
 #[test]
 fn public_setup_names_supported_project_skill_harnesses() {
-    let surfaces = [
-        ("README.md", include_str!("../README.md")),
-        ("docs/setup.md", include_str!("../docs/setup.md")),
-    ];
-
-    for (name, surface) in surfaces {
-        for required in ["Codex", "Pi", "OMP", "OpenCode", "Claude"] {
-            assert!(
-                surface.contains(required),
-                "{name} is missing supported harness {required:?}"
-            );
-        }
+    let readme = include_str!("../README.md");
+    for required in ["Codex", "Pi", "OMP", "OpenCode", "Claude"] {
+        assert!(
+            readme.contains(required),
+            "README.md is missing supported harness {required:?}"
+        );
     }
-
-    let setup = include_str!("../docs/setup.md");
     for required in [
         "`.pi`",
         "`.omp`",
@@ -155,8 +147,42 @@ fn public_setup_names_supported_project_skill_harnesses() {
         "generated from one template",
     ] {
         assert!(
-            setup.contains(required),
-            "setup guide is missing harness discovery detail {required:?}"
+            readme.contains(required),
+            "README.md is missing harness discovery detail {required:?}"
+        );
+    }
+}
+
+#[test]
+fn readme_is_the_one_human_install_document() {
+    let readme = include_str!("../README.md");
+    let source = include_str!("../docs/setup.md");
+    for required in [
+        "Unpack it into the project root",
+        ".sha256",
+        "does not re-hash its binaries",
+        "setup-project",
+        "setup-user",
+        "guard-hook-snippet",
+        "shared between Windows and WSL",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README.md is missing install fact {required:?}"
+        );
+    }
+    // The shipped README must not link to a document the archive omits.
+    assert!(!readme.contains("](docs/"));
+    // Install facts have one owner: the source document points to the README.
+    for duplicate in [
+        "setup-user --dry-run",
+        "uninstall-project /path/to/repository",
+        "--skill-target auto",
+        "project-install.json",
+    ] {
+        assert!(
+            !source.contains(duplicate),
+            "docs/setup.md duplicates README install fact {duplicate:?}"
         );
     }
 }
@@ -191,23 +217,19 @@ fn project_template_requires_explicit_policy_adaptation() {
 
 #[test]
 fn setup_guidance_preserves_repository_owned_configuration() {
-    for (name, contents) in [
-        ("README.md", include_str!("../README.md")),
-        ("docs/setup.md", include_str!("../docs/setup.md")),
-    ] {
-        assert!(
-            contents.contains("repository-owned"),
-            "{name} must identify configuration ownership"
-        );
-        assert!(
-            contents.contains("preserve"),
-            "{name} must explain configuration preservation"
-        );
-        assert!(
-            contents.contains("missing") || contents.contains("fresh clone"),
-            "{name} must explain fresh-clone binary repair"
-        );
-    }
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("repository-owned"),
+        "README.md must identify configuration ownership"
+    );
+    assert!(
+        readme.contains("preserve"),
+        "README.md must explain configuration preservation"
+    );
+    assert!(
+        readme.contains("missing") || readme.contains("fresh clone"),
+        "README.md must explain fresh-clone binary repair"
+    );
 }
 
 #[test]
@@ -282,7 +304,10 @@ fn release_workflow_verifies_extracted_project_integration() {
             "release workflow stages a duplicate copy via {duplicate:?}"
         );
     }
-    assert!(workflow.contains("docs/setup.md"));
+    assert!(
+        !workflow.contains("docs/setup.md"),
+        "README.md is the one shipped human document"
+    );
 }
 
 #[test]

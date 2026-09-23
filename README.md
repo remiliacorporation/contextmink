@@ -22,90 +22,267 @@ ends with a machine-readable receipt that distinguishes:
 The result is less transcript churn, fewer repeated probes, and a reviewable
 record of what the agent actually saw.
 
-## Add to a project (default)
+## Install
 
-Download the archive for the machine where the agent runs, verify its checksum,
-and merge its contents into the project root, including the dot-directories:
+### Download and verify
+
+Download the archive for the machine where the agent runs from
+[GitHub Releases](https://github.com/remiliacorporation/contextmink/releases):
+
+- `contextmink-<version>-windows-x86_64.zip`
+- `contextmink-<version>-macos-x86_64.tar.gz`
+- `contextmink-<version>-macos-arm64.tar.gz`
+- `contextmink-<version>-linux-x86_64.tar.gz`
+
+Verify it against the adjacent `.sha256` file. This is the integrity check:
+Contextmink does not re-hash its binaries when they run.
+
+```bash
+sha256sum -c contextmink-<version>-<platform>.<archive-ext>.sha256
+```
+
+```powershell
+$archive = "contextmink-<version>-windows-x86_64.zip"
+$expected = ((Get-Content "$archive.sha256" -Raw).Trim() -split '\s+')[0]
+$actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "contextmink archive checksum mismatch" }
+```
+
+SQLite is bundled; the binary needs no runtime and runs from PowerShell, cmd,
+WSL, or any POSIX shell.
+
+### Unpack into the project root
+
+Each archive is a project overlay: every file ships once, at the path it is
+used from. Unpack it into the project root, including the dot-directories, and
+it is ready to use:
 
 ```text
 .agents/skills/contextmink/SKILL.md
+.agents/skills/contextmink/agents/openai.yaml
 .claude/skills/contextmink/SKILL.md
 tools/contextmink/bin/contextmink[.exe]
+tools/contextmink/agent_integration.md
+tools/contextmink/manifest.json
 tools/contextmink/README.md
+tools/contextmink/CHANGELOG.md
+tools/contextmink/LICENSE, LICENSE-SSL, LICENSE-VPL
 ```
 
-The skills and native executable are already in place. Start a fresh agent
-session; no install command, PATH change, AGENTS.md edit, or integration-guide
-reading is needed for ordinary work. Claude receives the same complete short
-skill body generated from the canonical template. Codex, Pi, Cursor, OMP and
-OpenCode can use the shared Agent Skills directory; model selection still
-remains discretionary.
+The Windows archive adds `tools/contextmink/bin/contextmink-bridge.exe` and a
+`contextmink-bridge` skill in `.agents` and `.claude` (see
+[Windows bridge](#windows-bridge)). `manifest.json` records the release version,
+source commit, and binary hashes.
 
-Only namespaced skills and `tools/contextmink` are shipped. Existing project guidance,
-configuration, receipts and databases are not included or overwritten. Preserve
-any customizations inside those tool-owned directories before replacing them.
-README, licenses, optional operating references and the source manifest live
-under `tools/contextmink`. Retrieval uses the project configuration when present and built-in defaults otherwise.
+Start a fresh agent session. No install command, PATH change, or `AGENTS.md`
+edit is needed: the skill tells the agent where the executable is. Claude reads
+`.claude/skills`; Codex, Pi, Cursor, OMP, OpenCode and other Agent Skills
+consumers read `.agents/skills`. Both copies have the same body. Skill
+descriptions support automatic selection; they do not guarantee a model picks
+the tool on every request.
 
-## Optional personal installation
+The archive never contains project guidance, configuration, receipts, or
+databases, so unpacking it overwrites nothing the project owns. Retrieval uses
+the project's `.contextmink.toml` when present and built-in defaults otherwise.
+To upgrade, unpack the newer archive over the old one.
 
-From a verified extracted release, run:
+The rest of this section is optional.
+
+### Managed project installation
+
+`setup-project` turns the overlay into a repository-owned integration. Use it
+when the repository wants a Bash launcher, a real configuration profile,
+a pinned skill selection, and an uninstall path. Run it from an unpacked release:
+
+```bash
+./tools/contextmink/bin/contextmink setup-project /path/to/repository --dry-run
+./tools/contextmink/bin/contextmink setup-project /path/to/repository
+```
+
+```powershell
+& .\tools\contextmink\bin\contextmink.exe setup-project C:\path\to\repository --dry-run
+& .\tools\contextmink\bin\contextmink.exe setup-project C:\path\to\repository
+```
+
+It preflights every destination before the first write, then installs:
+
+- this host's binaries in `tools/contextmink/bin/` (plus the bridge on Windows)
+  and a `.gitignore` entry for that directory;
+- the `scripts/contextmink` Bash launcher and
+  `tools/contextmink/agent_integration.md`;
+- the Contextmink skill at the selected discovery paths;
+- `.contextmink.toml` with a real profile named after the repository, if none
+  exists; and
+- `tools/contextmink/project-install.json` (`contextmink.project_install.v3`),
+  recording the release version, the resolved skill target, and the
+  `.gitignore` block or file setup created.
+
+Skills, the launcher, and the integration reference are release files: setup
+writes them as the release ships them and reports `replace` when a local copy
+differs. Keep project-specific guidance in `AGENTS.md`, `CLAUDE.md`, or
+`.contextmink.toml`. An existing `.contextmink.toml` is repository-owned: setup
+validates it, reports `preserve_repository_owned`, and never replaces it;
+invalid configuration fails before any write. Setup never edits `AGENTS.md`,
+`CLAUDE.md`, harness settings, or hooks. The `--dry-run` report
+(`contextmink.project_setup.v3`) lists every create, replace, and removal and
+its `ready` verdict; read its `next_actions`.
+
+**Skill target.** `--skill-target auto` (the default) resolves once and the
+receipt freezes the result. Detection is
+path-based rather than a closed harness allowlist: `.agents`, `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`,
+`opencode.json`, `opencode.jsonc`, or `AGENTS.md` select `agents`; `.claude` or
+`CLAUDE.md` select `both`, so shared discovery stays available; an unmarked
+project selects `none`. Pass `--skill-target agents|claude|both|none` to choose
+or reselect; deselected skill files are removed. An unreceipted file at a
+deselected Contextmink skill path makes the plan unready until you move it.
+Setup manages only `.agents/skills/contextmink` and `.claude/skills/contextmink`
+(plus the bridge skills on Windows); harness markers never create extra `.pi`,
+`.omp`, or `.opencode` copies. Both installed bodies are
+generated from one template. Pi requires project trust before loading project-local resources:
+save the decision, or pass `--approve` for a noninteractive run.
+
+**Adapting to the repository.** Add only this repository's generated or
+high-output trees to `exclude_globs`, and literal deletion fragments for
+irrecoverable paths (see [Configuration](#configuration)). Decide whether broad
+scans may cross nested repositories or should use exact roots or
+`--skip-nested-repos`. Keep project-native compilers, query tools, and
+diagnostics authoritative. Then verify from the repository root and a nested
+directory:
+
+```bash
+scripts/contextmink --json files . --show-files 1        # schema contextmink.receipt.v2, intended profile
+scripts/contextmink --json guard-check -- git clean      # decision "deny"
+```
+
+**Fresh clones and upgrades.** Repositories normally track the configuration,
+launcher, skills, integration reference, and install receipt, and ignore
+`tools/contextmink/bin/`. Rerunning `setup-project` from an unpacked release
+preserves the tracked configuration and restores missing host binaries. For an
+upgrade, rerun the newer release with `--dry-run` first; `auto` keeps the
+receipt's skill target. Do not hand-edit the receipt.
+
+**Binaries are owned by path.** The owned binary paths are fixed:
+`tools/contextmink/bin/contextmink`, `contextmink.exe`, and
+`contextmink-bridge.exe`. Setup writes the ones this host runs and never
+touches the others, so a checkout shared between Windows and WSL keeps both
+platforms' binaries: run `setup-project` from each host.
+
+**Removal.** Run `uninstall-project` from an unpacked matching or newer release
+outside the project; the project-local binary cannot remove itself, and the
+command refuses to try.
+
+```bash
+./tools/contextmink/bin/contextmink uninstall-project /path/to/repository --dry-run
+./tools/contextmink/bin/contextmink uninstall-project /path/to/repository
+```
+
+It requires `project-install.json`. It removes the launcher, skills, and
+integration reference the receipt's skill target implies, every owned binary
+path that exists (the other platform's included), and the `.gitignore` block
+setup created, without comparing content, then prunes empty Contextmink
+directories. It refuses a symlink or non-file at an owned path before deleting
+anything. `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, and
+unrelated skills stay; remove any obsolete project policy deliberately.
+
+### Personal installation
+
+`setup-user` installs Contextmink for every project on the machine instead of
+one. Run it from an unpacked release:
 
 ```sh
-# macOS/Linux, inside the extracted release
 ./tools/contextmink/bin/contextmink setup-user --dry-run
 ./tools/contextmink/bin/contextmink setup-user
 ```
 
 ```powershell
-# Windows PowerShell, inside the extracted release
 .\tools\contextmink\bin\contextmink.exe setup-user --dry-run
 .\tools\contextmink\bin\contextmink.exe setup-user
 ```
 
-This installs the retrieval skill in `~/.agents/skills/contextmink`, an identical generated skill
-in `~/.claude/skills/contextmink`, and a native runtime plus detailed reference under
-`~/.local/share/contextmink` (the same home-relative layout on Windows). The skill
-binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
-or consuming-project files are changed. `--home <existing-directory>` selects
-an explicit user home, including disposable test homes. Start a fresh agent
-session and verify the skill appears. Skill descriptions support automatic
-selection; they do not guarantee a model will choose the tool on every request.
-The installer writes both complete skill files itself and executes the copied
-runtime before reporting success; agents copy nothing.
+It writes the skill to `~/.agents/skills/contextmink` and
+`~/.claude/skills/contextmink`, bound to the exact installed executable, and the
+executable, integration reference and `user-install.json` receipt under
+`~/.local/share/contextmink` (the same home-relative layout on Windows). On
+Windows it also installs `contextmink-bridge.exe` and its skill. It changes no
+PATH, shell profile, guidance, hooks, or project files, and runs the installed
+executable before reporting success. `--home <existing-directory>` selects
+another home, such as a disposable test home.
 
-Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
-shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
-an explicit skill-directory setting. A synced skill does not install a native
-runtime in a remote/cloud environment: install there separately.
+The receipt (`contextmink.user_install.v2`) records the release version, the
+home, and the owned paths; it records no hashes. Each run of the personal
+executable or bridge checks that the receipt exists and names this release and
+this home, and refuses to run otherwise; rerun `setup-user` from a verified
+release to repair. Setup writes every owned path and `uninstall-user` removes
+every owned path, whatever they contain. `uninstall-user` keeps the receipt and
+never touches project installations or unrelated skills.
 
-A host-local `user-install.json` records the tool version, the installed skill
-and reference paths, and raw byte hashes of the installed executables.
-Ownership is by path: setup writes the release's files at every owned path,
-whatever they currently contain. The hashes exist because the installed runtime
-checks them before each run: it refuses a missing receipt, a missing file, or an
-executable that differs from its receipt. Run repair or upgrade from an external
-release, not the installed executable. Installation preflights
-all managed paths, but does not promise a crash-atomic multi-file transaction;
-an interrupted install must be repaired before the runtime can run.
+Run setup, repair, and removal from an unpacked release, not the installed
+executable. Setup preflights every path; on Windows it also checks that
+executables it must replace or remove are not locked, including during
+`--dry-run`, so close running Contextmink processes when it refuses. A process
+can still take a lock after preflight: setup is not a crash-atomic multi-file
+transaction: after an interruption the runtime may refuse to start until
+setup is rerun.
+Do not copy the receipt to another machine or home; install there instead. A
+synced skill does not install a runtime in a remote or cloud environment.
 
-`uninstall-user --dry-run` previews removal. `uninstall-user` removes the
-receipt's skill, reference and executable paths without comparing their
-content, and retains the lifecycle receipt;
-it never removes project installations or unrelated skills. Do not copy personal
-receipts between machines or move their home: install for the new home instead.
+### Guard hook
 
-Ordinary retrieval runs from the consuming project's cwd, with its local
-configuration when present and built-in defaults otherwise. Personal setup
-installs the native retrieval/capture executable. On Windows it also installs
-`contextmink-bridge.exe` and a separate `contextmink-bridge` skill for running
-project Bash scripts. Linux and macOS installations omit that skill. Native
-commands run directly from any shell.
+`guard-hook` applies Contextmink's destructive-command tripwire to an agent's
+shell calls as a Claude PreToolUse hook. Generate the settings fragment rather
+than writing it by hand, and merge it yourself:
 
-Use `setup-project` below only for explicit shared repository adoption, pinned
-project runtimes, or repository-owned policy. Existing project receipt choices
-remain intact. No Contextmink trigger text belongs in project guidance; skill descriptions route selection.
+```bash
+scripts/contextmink guard-hook-snippet
+```
 
+The fragment registers `guard-hook` for the `Bash` and `PowerShell` matchers
+with shell-safe single `command` strings and absolute paths, bound to the
+repository root that owns the selected `.contextmink.toml`. Put it in
+`.claude/settings.local.json`; use the shared `.claude/settings.json` only when
+the binary and config paths are the same in every supported checkout. For
+custom layouts pass `--binary` and `--guard-config`; see
+`contextmink guard-hook-snippet --help`. A hook whose payload `cwd` is outside
+the bound root allows with a diagnostic instead of applying another
+repository's policy; regenerate the fragment after moving a repository.
+
+The hook exits 2 to block a recognized destructive command. Any failure before
+or during evaluation also exits 2 and blocks every command, harmless ones
+included: a policy that cannot load, a failed personal-install check (for
+example a missing receipt or one from another release), a rewritten argument,
+or an internal error. The stderr message names the repair. Blocking requires an
+executable that starts: a missing binary exits with the shell's own status,
+which Claude treats as a non-blocking error, so remove the hook registration
+before `uninstall-user`. An unparseable hook payload allows with a note, so
+harness schema drift cannot disable all shell use.
+
+On Windows, raw backslash paths such as `F:\repo\tools\contextmink.exe` break
+inside a Bash hook command: Bash reads the backslashes as escapes. The
+generated fragment uses forward slashes and quotes paths with spaces. Every
+matcher's command is a POSIX string because Claude runs hooks through its POSIX
+hook runner; the matcher only selects the `--shell` dialect used to parse the
+intercepted command.
+
+### Running from each shell
+
+| Active shell | Command form |
+| --- | --- |
+| Bash (macOS, Linux, Git Bash, WSL) with `setup-project` | `scripts/contextmink ...` |
+| Any shell, native executable | `tools/contextmink/bin/contextmink ...` |
+| PowerShell, native executable | `& tools\contextmink\bin\contextmink.exe ...` |
+| PowerShell, Bash launcher or script | `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...` |
+
+PowerShell cannot open the extensionless `scripts/contextmink` directly. From
+Git Bash, prefix `MSYS_NO_PATHCONV=1` when calling the native executable with
+an argument that starts with `/`; see [Windows bridge](#windows-bridge).
+
+### From source
+
+`cargo install --path .` (Rust 1.95 or newer, edition 2024) builds and installs
+the binary. Building, vendoring the crate into another repository, and the
+release gates are covered in
+[docs/setup.md](https://github.com/remiliacorporation/contextmink/blob/master/docs/setup.md)
+in the source repository.
 
 ## See the difference
 
@@ -186,120 +363,13 @@ servers, indexers, debuggers, and project-specific validators remain the
 authority for their domains. Contextmink makes the surrounding discovery and
 evidence transfer bounded, explicit, and consistent.
 
-## Install
-
-Download the archive for your platform from
-[GitHub Releases](https://github.com/remiliacorporation/contextmink/releases),
-unpack it, and put `contextmink` on `PATH` or run it in place:
-
-```bash
-contextmink files . --show-files 20
-```
-
-Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
-SQLite bundled. The binary runs directly from PowerShell, cmd, WSL, or any
-POSIX shell.
-
-To build from source instead: `cargo build --release` (Rust 1.95 or newer,
-edition 2024).
-
-## Add to a project
-
-Run the unpacked release binary from the agent task responsible for maintaining
-the target repository:
-
-```bash
-./tools/contextmink/bin/contextmink setup-project /path/to/repository --dry-run
-./tools/contextmink/bin/contextmink setup-project /path/to/repository
-```
-
-On Windows PowerShell, use
-`& .\tools\contextmink\bin\contextmink.exe setup-project C:\path\to\repository`. The command copies
-the platform-appropriate release binaries, installs both project launchers,
-generates a real project profile, adds the binary directory to `.gitignore`,
-and installs a short Contextmink skill only for the selected harness paths. The
-default `--skill-target auto` resolves once from existing Agent Skills, Codex,
-Pi, OMP, OpenCode, and Claude markers. Compatibility is path-based: any harness
-that consumes project `.agents/skills` uses the `agents` target without needing
-a harness-specific integration. `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`,
-`opencode.json`, and `opencode.jsonc` are convenience markers for common
-consumers before `.agents` exists. `.claude` or `CLAUDE.md` selects `claude`;
-an unmarked project resolves to `none`. Use
-`--skill-target agents|claude|both|none` to select explicitly. The
-namespaced skill points to the canonical
-`tools/contextmink/agent_integration.md` reference; its body is loaded only when
-selected, while its short discovery description is the only resident skill
-metadata. Other tools can own adjacent namespaced skills without sharing or
-duplicating Contextmink policy. Setup never edits harness settings, hooks,
-`AGENTS.md`, or `CLAUDE.md`. Project guidance needs no Contextmink
-discovery trigger; only explicit repository policy needs local adaptation.
-
-Setup manages only `.agents/skills/contextmink` and
-`.claude/skills/contextmink`. Harness markers never create duplicate `.pi`,
-`.omp`, or `.opencode` skill copies.
-
-`setup-project` preflights every destination before writing and records the
-resolved skill target and installer-created ignore policy in
-`tools/contextmink/project-install.json`. Later `auto` runs preserve that
-concrete choice instead of redetecting opportunistically. Launchers, skills,
-and the integration reference are written as the release ships them. An
-explicit target removes deselected skill files; an unreceipted file at a
-deselected Contextmink skill path makes the plan unready until it is resolved
-manually. The ignored `tools/contextmink/bin/runtime-install.json`
-(`contextmink.runtime_install.v2`) records the host binary paths this checkout
-owns, without hashes: nothing checks a project binary's content before it runs.
-The path list lets a checkout shared between Windows and WSL keep the other
-platform's binary. Setup reads a `contextmink.runtime_install.v1` receipt once
-and rewrites it; an older or unknown runtime receipt is refused until it is
-moved aside and setup-project reruns. Dry-run JSON uses
-`contextmink.project_setup.v3`, with `requested_skill_target`,
-`resolved_skill_target`, and `ready` fields. An existing
-`.contextmink.toml` is repository-owned: setup validates it with the real
-configuration loader, reports `preserve_repository_owned`, and never compares
-or replaces it from the release template. Invalid configuration fails before
-any file is written. A dry run reports every create, replace, and removal
-without writing.
-
-This is also the fresh-clone repair path. Repositories normally track their
-configuration, launchers, skills, integration reference, and install receipt
-while ignoring `tools/contextmink/bin/`; running `setup-project` from an
-unpacked release preserves the tracked configuration and restores whichever
-host binaries are missing.
-
-The default is low-ceremony without assuming a harness. Use
-`--skill-target none` when the project wants Contextmink-managed runtime and
-launchers but no skill files; use a standalone binary install when it wants no
-project integration at all. For an unrecognized harness that consumes
-`.agents/skills`, select `agents` explicitly once; the receipt freezes that
-choice. A harness that requires a different directory should use `none` and a
-repository-owned guidance pointer instead of an installer guess. To remove a
-managed integration, run the matching or newer release binary from outside the
-project:
-
-```bash
-./tools/contextmink/bin/contextmink uninstall-project /path/to/repository --dry-run
-./tools/contextmink/bin/contextmink uninstall-project /path/to/repository
-```
-
-Removal requires the ownership receipt. It removes the launchers, skills, and
-integration reference that the receipt's skill target implies, removes every
-host binary path `runtime-install.json` owns without comparing content, and
-preserves
-`.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, unrelated harness content, and
-any runtime file without proven ownership. Review those repository-owned or
-retained files afterward and remove them only when the project does not want
-them.
-
-After integration, verify from the repository root:
-
-```bash
-scripts/contextmink --json files . --show-files 1
-scripts/contextmink --json guard-check -- git clean
-```
-
-The first result must carry `schema: "contextmink.receipt.v2"`; the second must
-report `decision: "deny"`. Shell-specific invocation and hermetic-install
-choices are covered in [docs/setup.md](docs/setup.md).
+Use the smallest scope that answers the question. For known root metadata,
+read its exact path or enumerate only root files in the host shell; a filename
+filter on a recursive `files` scan does not prune directory traversal. `dirs
+--depth` bounds displayed levels only. Prefer an outline, targeted grep, or a
+character window over repeated wide slices. Budget the **combined** output of
+parallel calls; per-command caps cannot prevent an outer tool from clipping the
+batch. Direct known-small reads remain appropriate and need no extra receipt.
 
 ## Commands
 
@@ -387,6 +457,11 @@ below is the short map.
   A missing `--at` target refuses. For UTF-8 JSONL, selection stays streaming
   and validates later records too. Selector syntax is validated before any
   inspection, including on empty input or when a preceding token is missing.
+  `--at /instructions --entries --fields address,disassembly` projects an
+  object of keyed records without enumerating opaque keys first: each JSON row
+  adds the exact `key`, a reusable escaped `pointer`, `value_type`, and separate
+  `missing_fields`/`null_fields`, in lexical key order. For JSONL, select a
+  record explicitly, for example `--at /1/instructions`.
 - `sqlite` — read-only query against the positional DB file from `--sql` or `--sql-file` with row caps,
   named JSON bindings via `--json-param NAME=FILE` / `--jsonl-param
   NAME=FILE`, a registered `hexint(x)` SQL function (parses `0x...` hex
@@ -395,14 +470,6 @@ below is the short map.
   only reads during preparation and execution, so `ATTACH`, `DETACH`, mutating
   pragmas, and future write-shaped statements are rejected independently of
   the read-only file open.
-- `setup-project` — install a project-local release and print the remaining
-  agent-owned configuration and guidance work. Records ownership, supports
-  frozen `--skill-target` selection and `--dry-run`, and writes release-managed
-  files as the release ships them.
-- `uninstall-project` — remove receipt-owned launchers, skills, integration
-  reference, and host binaries by path while preserving repository-owned
-  configuration, guidance, and unowned runtime files. Supports `--dry-run`;
-  refuses a symlink or non-file at an owned path.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument. `--with-shadow-tables` and `--with-system-tables`
   include virtual-table shadow tables and `sqlite_*` tables.
@@ -420,12 +487,14 @@ below is the short map.
   so a hostile argument cannot turn the transcript guard into a transcript
   dump. Captured commands must not deliberately escape containment by
   daemonizing into a new session or process group.
+- `setup-project` / `uninstall-project` — managed project installation and
+  removal; see [Managed project installation](#managed-project-installation).
+- `setup-user` / `uninstall-user` — personal installation and removal; see
+  [Personal installation](#personal-installation).
 - `guard-hook-snippet` — print a Claude settings JSON fragment that registers
-  `guard-hook` with shell-safe command strings. It only prints; merging the
-  fragment into a settings file is a reviewed edit by the caller.
+  `guard-hook`; see [Guard hook](#guard-hook). It only prints.
 - `guard-hook` — evaluate an agent PreToolUse hook payload from stdin against
-  the destructive-command guard; exits 2 to block a recognized destructive
-  command.
+  the destructive-command guard; exits 2 to block.
 - `guard-check --command <shell-text> [--shell posix|powershell|cmd]` (or
   `guard-check -- <argv...>`) —
   explain the guard decision without spawning the input. Default output is a
@@ -520,16 +589,33 @@ exact; `--max-content-files`, `--max-content-bytes`,
 `--max-matching-files`, or an oversized skipped file add a scope cap and make
 the match-side totals lower bounds. `no_match_scope` says whether a no-match verdict covered the
 `"complete_scope"` or a `"scanned_subset"`; `skipped_files_sample` names
-files skipped as too large or binary. Capture receipts record the child's
-`child_exit_code`, `child_exit_zero`, `expected_exit_codes`, and `exit_expected`
-(`--expect-exit CODE[,CODE...]` changes only expectedness, not the observed
-exit code or zero-code fact). After emitting the receipt, contextmink propagates every child status
-not declared by `--expect-exit`; a failed child therefore cannot become a
-successful outer workflow. Use `--receipt-out <file>` to write the full capture
-  receipt, including the same bounded stdout/stderr text emitted in JSON mode.
-  If the sidecar cannot be written, the stdout receipt is still emitted. An
-  unexpected child status remains the outer exit status even when strict
-  truncation also fails.
+files skipped as too large or binary.
+
+Capture receipts record the child's `child_exit_code`, `child_exit_zero`,
+`expected_exit_codes`, and `exit_expected` (`--expect-exit CODE[,CODE...]`
+changes only expectedness, not the observed exit code or zero-code fact). After
+emitting the receipt, contextmink propagates every child status not declared by
+`--expect-exit`; a failed child therefore cannot become a successful outer
+workflow. Use `--receipt-out <file>` to write the full capture receipt,
+including the same bounded stdout/stderr text emitted in JSON mode. If the
+sidecar cannot be written, the stdout receipt is still emitted. An unexpected
+child status remains the outer exit status even when strict truncation also
+fails.
+
+Capture receipts also report `executable.path`, `executable.source` and
+`executable.error`. On Windows, the process handle identifies the spawned image
+(including an interpreter when one was selected); it does not identify a later
+program launched by that interpreter. Elsewhere the receipt explicitly reports
+unobserved identity. A shell may select a different alias or shim: use an
+explicit native executable path when exact selection matters. Legitimate empty
+successful output remains successful.
+
+For costly or state-changing producers, arrange output retention **before** the
+run: redirect stdout/stderr to explicit producer-owned files, retain the native
+exit code, wait for completion, then inspect those files with `slice --tail`,
+character windows or `json-select`. `capture --receipt-out` stores the receipt
+and bounded displayed text, not omitted original output. A display cap is not a
+reason to repeat execution.
 
 ## Behavior notes
 
@@ -547,14 +633,13 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
 - Capture retains stdout and stderr as separately bounded streams. It does not
   invent a cross-stream chronology that the operating-system pipes cannot
   prove.
-- `contextmink-bridge` and `capture` refuse known destructive argv
-  before spawn. The evaluator preserves shell quoting and command boundaries,
-  resolves Git's actual subcommand, recursively inspects real shell payloads
-  and command substitutions, and matches protected paths only against deletion
-  operands. Recursive deletion of a protected tree is blocked with or without
-  a force flag. The
-  `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override is for human maintenance
-  only and prints a warning.
+- `contextmink-bridge` and `capture` refuse known destructive argv before
+  spawn, and `guard-hook` blocks the same commands in an agent shell. The evaluator preserves shell quoting and command
+  boundaries, resolves Git's actual subcommand, recursively inspects real shell
+  payloads and command substitutions, and matches protected paths only against
+  deletion operands. Recursive deletion of a protected tree is blocked with or
+  without a force flag. The `CONTEXTMINK_BRIDGE_ALLOW_DESTRUCTIVE=1` override
+  is for human maintenance only and prints a warning.
 - The destructive guard is a careless-command tripwire, not a containment or
   authorization boundary. The built-in `git clean` rule and opaque encoded
   PowerShell denial are always active, independent of repository cwd;
@@ -566,32 +651,10 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   repository-configured Git aliases, and runtime `eval` remain outside this
   evaluator; arbitrary dynamic behavior cannot be proven from a pre-execution
   command string.
-- `guard-hook` extends the same deny scan to agent-harness PreToolUse hooks:
-  it reads the hook event JSON from stdin, extracts the command string at
-  the JSON Pointer `--command-field POINTER` (default `/tool_input/command`,
-  the Claude Code shape), and exits 2 with the deny message on stderr to block the tool call.
-  Generate the Claude settings fragment with `contextmink guard-hook-snippet`; it
-  emits single `command` strings rather than a non-portable `args` array,
-  normalizes Windows paths to forward slashes for Bash hooks, and binds the
-  policy to its repository root with `--expected-root`. Each generated matcher
-  also passes its shell dialect explicitly, so PowerShell backtick escapes are
-  not interpreted as POSIX command substitutions. A copied or stale hook
-  whose payload `cwd` belongs to another checkout allows with a diagnostic
-  note instead of applying foreign config. Raw backslash
-  paths such as `F:\repo\tools\contextmink.exe` are wrong inside a Bash hook:
-  Bash treats the backslashes as escapes and tries to execute a collapsed path.
-  Any failure before or during guard evaluation fails closed with exit 2: a
-  discovered or explicit policy that cannot be loaded, a failed
-  personal-install self-check, a rewritten argument, or an internal error.
-  While the personal install is broken, `guard-hook` blocks every command,
-  harmless ones included, because it cannot vouch for any; the stderr message
-  names the repair (rerun `setup-user` from a verified release).
-  This needs an executable that starts: a missing or unloadable binary exits
-  with the shell's own status, which the harness does not treat as a block, so
-  remove the hook registration before `uninstall-user`.
-  Unparseable hook-event payloads allow with a stderr note: the guard blocks recognized
-  destructive commands, it does not validate harness payloads (fail-closed
-  payload handling turns any schema drift into a total shell outage).
+- `guard-hook` reads the hook event JSON from stdin and extracts the command
+  string at the JSON Pointer `--command-field POINTER` (default
+  `/tool_input/command`, the Claude Code shape). Failure handling is described
+  under [Guard hook](#guard-hook).
 - Broad scans cross nested Git repository roots by default, including tracked
   submodules and Git-ignored sibling repositories, apply each repository's own
   ignore rules, and disclose the exact `nested_repos_entered_total` plus a
@@ -605,51 +668,69 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   disclosed line-shape heuristics over comment/string-masked text; XML uses a
   lightweight element-stack parse. Indentation conveys nesting.
 
-## Windows
+## Windows bridge
 
-The binary itself needs no shell. One optional native bridge serves
-repositories whose scripts are Bash-first while the agent runs in PowerShell:
+The native binary needs no shell. `contextmink-bridge.exe` (Windows archive
+only) serves repositories whose scripts are Bash-first while the agent runs in
+PowerShell; POSIX hosts need no bridge.
 
-- `contextmink-bridge.exe` (Windows archive only) runs commands and repo bash
-  scripts from PowerShell: it locates Git Bash itself (Git for Windows only;
-  Cygwin/MSYS2 never substitute silently — point `CONTEXTMINK_BASH` at an
-  exotic shell explicitly), spawns direct commands without MSYS argument
-  rewriting, and takes argv as `--argv-b64` or `--argfile` so PowerShell 5.1
-  quoting cannot corrupt arguments. In direct mode a program spelled as a
-  path (`./gradlew`) resolves against `--cwd` like a POSIX exec. Files whose
-  first line begins `#!` enter Git Bash deterministically;
+```powershell
+# Direct command; slash-bearing arguments arrive verbatim:
+& tools\contextmink\bin\contextmink-bridge.exe -- <program> <args...>
+# Repository Bash script, Git Bash discovered automatically; the separator is optional:
+& tools\contextmink\bin\contextmink-bridge.exe --script scripts/some_tool.sh -- <args...>
+# Lossless single-token argv channel (immune to PowerShell 5.1 quote loss):
+$argv = @('grep', '-n', 'he said "hi"', 'notes.md')
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($argv -join [char]0)))
+& tools\contextmink\bin\contextmink-bridge.exe --argv-b64 $b64
+```
+
+- It locates Git Bash itself (Git for Windows only; Cygwin/MSYS2 never
+  substitute silently — point `CONTEXTMINK_BASH` at another shell explicitly),
+  spawns direct commands without MSYS argument rewriting, and takes argv as
+  `--argv-b64` or `--argfile` (UTF-8, one argument per line) so PowerShell 5.1
+  quoting cannot corrupt arguments. `--print-argv` shows exactly what arrived;
+  `--print-root` shows the resolved bridge root.
+- Relative paths resolve from `CONTEXTMINK_BRIDGE_ROOT`; otherwise caller-side
+  `.contextmink.toml`/`.git` discovery wins before executable-side discovery,
+  so personal and project-local bridges both stay anchored to the project they
+  serve. In direct mode a program spelled as a path (`./gradlew`) resolves
+  against `--cwd` like a POSIX exec, and bare names use the native Windows
+  `PATH`; pass `--login` for a utility supplied by Git Bash, such as `perl`.
+- Files whose first line begins `#!` enter Git Bash deterministically;
   `--script <path>` explicitly selects a Bash script and resolves it from the
   bridge root. An optional `--` immediately after the script path is consumed
   as the conventional argument separator; double it when the script itself
-  must receive a leading `--`. Bare commands in direct mode use the native Windows `PATH`;
-  pass `--login` when the command is a utility supplied by Git Bash, such as
-  `perl`. `--preserve-descendants` is the explicit exception for a
-  successful child that intentionally launches a persistent GUI or service;
-  ordinary commands remain kill-on-close supervised. Every bridge-owned Git
-  Bash boundary hex-relays startup argv before decoding it and installs scoped
-  MSYS conversion exclusions for the caller's slash-bearing values, so a
-  quoted `"$@"` forwarded to a native child preserves leading-slash selectors,
-  `@file` arguments, and JSON without caller-managed `MSYS2_ARG_CONV_EXCL` state.
-  `--print-argv` shows exactly what arrived; `--print-root` shows the resolved
-  bridge root.
-  Destructive argv matching the safety deny-list is refused before spawn;
+  must receive a leading `--`.
+- Every bridge-owned Git Bash boundary hex-relays startup argv before decoding
+  it and installs scoped MSYS conversion exclusions for the caller's
+  slash-bearing values, so a quoted `"$@"` forwarded to a native child
+  preserves leading-slash selectors, `@file` arguments, and JSON. Do not set
+  `MSYS2_ARG_CONV_EXCL` yourself.
+- `--preserve-descendants` is the explicit exception for a successful child
+  that intentionally launches a persistent GUI or service; ordinary commands
+  remain kill-on-close supervised.
+- Destructive argv matching the deny-list is refused before spawn;
   `--help` prints the current deny-list and break-glass override. The bridge
-  and `capture` share the same Rust process-boundary implementation; no
-  parallel shell bridge is retained.
+  and `capture` share one process-boundary implementation.
 
-The `scripts/contextmink` launcher additionally shields slash-bearing JSON
-selectors, predicates, regexes, literal terms, SQL, and shell-command values
-from MSYS rewriting on Git Bash. When the native `contextmink` executable is
-invoked directly from an MSYS shell (`MSYSTEM` set, `MSYS_NO_PATHCONV` unset,
-and the parent process image inside the MSYS root's `usr/bin` or `bin`) and any
-argument or `--flag=value` value begins with the MSYS installation
-root derived from its `<root>\usr\bin` PATH entry, such as
+The `scripts/contextmink` launcher shields slash-bearing JSON selectors,
+predicates, regexes, literal terms, SQL, and shell-command values from MSYS
+rewriting on Git Bash. Windows-to-Bash boundaries can also expand wildcard
+globs, so prefer `--ext` over `--glob '*.<ext>'` there. When the native
+`contextmink` executable is invoked directly from an MSYS shell (`MSYSTEM` set,
+`MSYS_NO_PATHCONV` unset, and the parent process image inside the MSYS root's
+`usr/bin` or `bin`) and any argument or `--flag=value` value begins with the
+MSYS installation root derived from its `<root>\usr\bin` PATH entry, such as
 `C:/Program Files/Git/`, it refuses before doing any work and names
-`MSYS_NO_PATHCONV=1` as the fix: a rewritten pointer, pattern, or path
-fragment would otherwise yield a confident answer about a different value.
-The bridge does not apply this check; it serves native callers, and Bash
-treats a rewritten path as the same file. Setup and boundary details:
-[docs/setup.md](docs/setup.md).
+`MSYS_NO_PATHCONV=1` as the fix: a rewritten pointer, pattern, or path fragment
+would otherwise yield a confident answer about a different value. The bridge
+does not apply this check; it serves native callers, and Bash treats a
+rewritten path as the same file.
+
+Do not launch a replacement Contextmink build through a running
+`contextmink-bridge`: let active bridge commands finish first, which avoids
+Windows executable-lock contention.
 
 ## Configuration
 
@@ -674,7 +755,9 @@ Accepted keys are `profile`, `exclude_globs`,
 malformed values are hard errors. Repository exclude globs match paths relative
 to the config file's directory and apply only inside that tree, so anchored
 rules hold from any working directory without leaking into foreign scan roots.
-Built-in build/dependency exclusions apply inside every explicit scan root.
+Built-in exclusions for common build and dependency trees (such as `.git`,
+`target`, `node_modules`, and `.venv`) apply inside every explicit scan root,
+so add only repository-specific high-output paths.
 Empty profiles and the template placeholder profile
 (`replace-with-workspace-name`) are hard errors. Use
 `<command> --config <file>` for an explicit policy or `<command> --no-config`
@@ -685,107 +768,6 @@ command. Git ignore rules are separate; `--with-git-ignored` lifts those.
 Configured destructive guard fragments are literal case-insensitive substrings
 matched by `contextmink-bridge`, `capture`, and `guard-hook` before a child
 process or agent shell command is allowed to run.
-
-## Development
-
-Do not launch contextmink's own replacement release build through a running
-`contextmink-bridge`. Let active bridge commands finish, then run
-`cargo build --release` from a standalone checkout, `scripts/contextmink` from
-a parent repository, or `cargo build --release --manifest-path
-tools/contextmink/Cargo.toml` from that parent repository. This avoids Windows
-executable-lock contention without adding self-update machinery.
-
-Native CI remains authoritative and runs formatting, tests, Clippy, package,
-and Rust 1.95 MSRV checks on Windows, Linux, and macOS. Run
-`scripts/verify_source.sh` for the same local source gates in dedicated
-`target/source-check`, `target/package-check`, and `target/msrv-check`
-directories, preventing prior local artifacts or Cargo's staged package build
-from contaminating the proof. On Windows, invoke it through
-`contextmink-bridge --script scripts/verify_source.sh`. Source checkouts also
-provide an optional cross-link rehearsal for every non-Windows release target.
-Install Zig plus `cargo-zigbuild`, then run `scripts/cross_check.sh`. Missing Rust targets fail
-with an exact `rustup` command; `scripts/cross_check.sh --install-targets` is the
-explicit opt-in to install them into the pinned toolchain. The rehearsal builds
-the full compile surface and release binaries for Linux x64, Intel macOS, and
-Apple Silicon macOS. A Windows host can report a missing Xcode SDK while still
-completing Zig compilation; native GitHub macOS jobs remain the link/runtime
-authority. The rehearsal denies crate warnings, accepts only the exact
-environment-owned Apple SDK probe and its summaries, and fails on any other
-warning. Zig is not a normal build dependency, and the repository does not
-retain host-specific compiler wrappers or logs.
-
-Before handing a commit to the public artifact workflow, run
-`scripts/verify_release.sh` (through `contextmink-bridge --script` on Windows).
-It requires pinned actionlint `1.7.12`, validates release notes and
-dispatch inputs, runs the isolated native source gate,
-then executes the complete Zig rehearsal. Pass `--install-targets` only when
-explicitly authorizing repair of missing pinned-toolchain components.
-
-Release packaging and extracted-install checks use the development-only Rust
-example `release_tools`, not an installed command or a Python runtime:
-
-```sh
-cargo run --locked --example release_tools -- notes 0.14.0
-cargo run --locked --example release_tools -- package-project <stage> <archive>
-cargo run --locked --example release_tools -- verify-project <extracted-overlay>
-cargo run --locked --example release_tools -- verify-user <extracted-binary>
-```
-
-Packaging uses the host's `tar` (Windows' built-in BSD tar for ZIP archives).
-Changelogs use user-visible categories and upgrade guidance;
-wrapped Markdown prose and fenced examples are accepted by the notes renderer.
-
-The GitHub Release Artifacts workflow defaults to building without publication.
-Set `artifact_version` to the crate version with a dated changelog section.
-Source, MSRV, and native platform jobs run concurrently; publication requires all
-of them to pass and an explicit `create_release=true` dispatch from `master`.
-Each build retains rendered notes, four native archives, and adjacent SHA-256
-files. The archive manifest identifies the source commit used for verification.
-
-Keep package verification in a separate Cargo target directory. `cargo package`
-verifies the staged source tree under `target/package`; sharing its fingerprints
-with a later checkout build can make that build reuse the staged artifact. CI
-uses `CARGO_TARGET_DIR=target/package-check cargo package --locked`. Use the same
-boundary for local package checks (in PowerShell, set `$env:CARGO_TARGET_DIR`
-before the command), then build the checkout in the ordinary target directory.
-
-### Captured execution and retained output
-
-Capture receipts report `executable.path`, `executable.source` and
-`executable.error`. On Windows, the process handle identifies the spawned image
-(including an interpreter when one was selected); it does not identify a later
-program launched by that interpreter. Elsewhere the receipt explicitly reports
-unobserved identity. `argv` and `effective_argv` retain their existing meanings.
-A shell may select a different alias or shim: use an explicit native executable
-path when exact selection matters. Legitimate empty successful output remains
-successful.
-
-For costly or state-changing producers, arrange output retention **before** the
-run: redirect stdout/stderr to explicit producer-owned files, retain the native
-exit code, wait for completion, then inspect those files with `slice --tail`,
-character windows or `json-select`. `capture --receipt-out` stores the receipt
-and bounded displayed text, not omitted original output. A display cap is not a
-reason to repeat execution.
-
-### Keyed object records
-
-`json-select FILE --at /instructions --entries --fields address,disassembly`
-projects an object of keyed records without enumerating opaque keys first. Each
-JSON row adds the exact `key`, reusable escaped `pointer`, `value_type`, and
-separate `missing_fields`/`null_fields`. Keys use deterministic lexical order;
-scalar and null children are retained. `--keys` inspects child shapes, and filters
-apply to each child value. Default object selection still produces one row.
-For JSONL, select a record explicitly, for example `--at /1/instructions`.
-
-### Retrieval scope and output budgets
-
-Use the smallest scope that answers the question. For known root metadata,
-read its exact path or enumerate only root files in the host shell; a filename
-filter on a recursive `files` scan does not prune directory traversal. `dirs
---depth` bounds displayed levels only. Prefer an outline, targeted grep, or a
-character window over repeated wide slices. Budget the **combined** output of
-parallel calls; per-command caps cannot prevent an outer tool from clipping the
-batch. Direct known-small reads remain appropriate and need no extra receipt.
 
 ## Scope
 

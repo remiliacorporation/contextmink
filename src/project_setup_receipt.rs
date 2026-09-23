@@ -1,25 +1,28 @@
 //! Persisted ownership for project-local Contextmink integration files.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::fs;
-use std::path::{Component, Path};
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use semver::Version;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use super::{ManagedFile, SetupFileOwnership, SkillTarget, normalized_path};
+use super::SkillTarget;
 
 pub(super) const INSTALL_RECEIPT_PATH: &str = "tools/contextmink/project-install.json";
 pub(super) const INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v3";
 /// Read once so an upgrade can rewrite it as the current schema.
 const PREVIOUS_INSTALL_RECEIPT_SCHEMA: &str = "contextmink.project_install.v2";
-pub(super) const RUNTIME_RECEIPT_PATH: &str = "tools/contextmink/bin/runtime-install.json";
-pub(super) const RUNTIME_RECEIPT_SCHEMA: &str = "contextmink.runtime_install.v2";
-/// Read once so the next setup can rewrite it as the current schema.
+/// The host-local runtime receipt Contextmink 0.15.0 wrote. Binaries are now
+/// owned by their fixed paths, so setup and uninstall remove this file once.
+pub(super) const PREVIOUS_RUNTIME_RECEIPT_PATH: &str = "tools/contextmink/bin/runtime-install.json";
 const PREVIOUS_RUNTIME_RECEIPT_SCHEMA: &str = "contextmink.runtime_install.v1";
+/// Every host binary path a project installation owns. Setup writes the ones
+/// this host runs and never touches the others, so a checkout shared between
+/// Windows and WSL keeps the other platform's binary; uninstall removes every
+/// one that exists. Binaries are verified at download, never before a run.
 pub(super) const MANAGED_RUNTIME_PATHS: &[&str] = &[
     "tools/contextmink/bin/contextmink",
     "tools/contextmink/bin/contextmink.exe",
@@ -52,35 +55,6 @@ struct PreviousInstallReceipt {
     managed_gitignore_file: bool,
 }
 
-/// Host-local runtime ownership: the binary paths this checkout installed.
-/// Ownership is by path; nothing checks a project binary's content before it
-/// runs, so the receipt records no content identity. Listing paths lets a
-/// checkout shared between hosts keep the other platform's binary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RuntimeInstallReceipt {
-    pub(super) schema: String,
-    pub(super) contextmink_version: String,
-    pub(super) managed_paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreviousRuntimeInstallReceipt {
-    #[serde(rename = "schema")]
-    _schema: IgnoredAny,
-    contextmink_version: String,
-    managed_files: Vec<PreviousManagedFile>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreviousManagedFile {
-    path: String,
-    #[serde(rename = "sha256")]
-    _sha256: IgnoredAny,
-}
-
 pub(super) fn build_install_receipt(
     skill_target: SkillTarget,
     managed_gitignore_block: bool,
@@ -95,34 +69,9 @@ pub(super) fn build_install_receipt(
     }
 }
 
-pub(super) fn build_runtime_receipt(
-    managed: &[ManagedFile],
-    retained: Vec<String>,
-) -> RuntimeInstallReceipt {
-    let mut managed_paths = managed
-        .iter()
-        .filter(|file| file.ownership == SetupFileOwnership::ReleaseManagedRuntime)
-        .map(|file| normalized_path(&file.relative_path))
-        .collect::<Vec<_>>();
-    managed_paths.extend(retained);
-    managed_paths.sort();
-    RuntimeInstallReceipt {
-        schema: RUNTIME_RECEIPT_SCHEMA.to_owned(),
-        contextmink_version: env!("CARGO_PKG_VERSION").to_owned(),
-        managed_paths,
-    }
-}
-
 pub(super) fn receipt_bytes(receipt: &InstallReceipt) -> Result<Vec<u8>> {
     let mut bytes =
         serde_json::to_vec_pretty(receipt).context("serialize project-install receipt")?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-pub(super) fn runtime_receipt_bytes(receipt: &RuntimeInstallReceipt) -> Result<Vec<u8>> {
-    let mut bytes =
-        serde_json::to_vec_pretty(receipt).context("serialize runtime-install receipt")?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -186,53 +135,33 @@ pub(super) fn load_install_receipt(path: &Path) -> Result<Option<InstallReceipt>
     Ok(Some(receipt))
 }
 
-pub(super) fn load_runtime_receipt(path: &Path) -> Result<Option<RuntimeInstallReceipt>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    if !path.is_file() {
-        return Err(anyhow!(
-            "runtime-install receipt is not a file: {}",
-            path.display()
-        ));
-    }
-    let bytes = fs::read(path)
-        .with_context(|| format!("read runtime-install receipt {}", path.display()))?;
-    let reinstall = || {
+/// True when `path` holds the previous release's runtime receipt, which the
+/// caller removes. Any other file there is refused rather than deleted.
+pub(super) fn previous_runtime_receipt_exists(path: &Path, operation: &str) -> Result<bool> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect {}", path.display()));
+        }
+    };
+    let unrecognized = || {
         format!(
-            "parse runtime-install receipt {}; move it aside, then rerun setup-project to reinstall",
+            "{operation} does not recognize {} as a Contextmink 0.15 runtime receipt; move it aside, then rerun {operation}",
             path.display()
         )
     };
-    let envelope: serde_json::Value = serde_json::from_slice(&bytes).with_context(reinstall)?;
-    let schema = envelope
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let receipt = match schema {
-        RUNTIME_RECEIPT_SCHEMA => serde_json::from_value(envelope).with_context(reinstall)?,
-        PREVIOUS_RUNTIME_RECEIPT_SCHEMA => {
-            let previous: PreviousRuntimeInstallReceipt =
-                serde_json::from_value(envelope).with_context(reinstall)?;
-            RuntimeInstallReceipt {
-                schema: RUNTIME_RECEIPT_SCHEMA.to_owned(),
-                contextmink_version: previous.contextmink_version,
-                managed_paths: previous
-                    .managed_files
-                    .into_iter()
-                    .map(|file| file.path)
-                    .collect(),
-            }
-        }
-        _ => {
-            return Err(anyhow!(
-                "unsupported runtime-install receipt schema {schema:?} in {}; move it aside, then rerun setup-project to reinstall",
-                path.display()
-            ));
-        }
-    };
-    validate_runtime_receipt(&receipt)?;
-    Ok(Some(receipt))
+    if !metadata.is_file() {
+        return Err(anyhow!(unrecognized()));
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let envelope: serde_json::Value = serde_json::from_slice(&bytes).with_context(unrecognized)?;
+    if envelope.get("schema").and_then(serde_json::Value::as_str)
+        != Some(PREVIOUS_RUNTIME_RECEIPT_SCHEMA)
+    {
+        return Err(anyhow!(unrecognized()));
+    }
+    Ok(true)
 }
 
 pub(super) fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
@@ -262,86 +191,14 @@ pub(super) fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_runtime_receipt(receipt: &RuntimeInstallReceipt) -> Result<()> {
-    if receipt.schema != RUNTIME_RECEIPT_SCHEMA {
-        return Err(anyhow!(
-            "unsupported runtime-install receipt schema {:?}; move it aside, then rerun setup-project to reinstall",
-            receipt.schema
-        ));
-    }
-    let version = Version::parse(&receipt.contextmink_version).map_err(|_| {
-        anyhow!(
-            "runtime-install receipt contextmink_version must be a canonical semantic version, found {:?}",
-            receipt.contextmink_version
-        )
-    })?;
-    if version.to_string() != receipt.contextmink_version {
-        return Err(anyhow!(
-            "runtime-install receipt contextmink_version must be canonical: expected {version}"
-        ));
-    }
-    let mut paths = HashSet::new();
-    for path in &receipt.managed_paths {
-        validate_managed_runtime_path(Path::new(path))?;
-        if normalized_path(Path::new(path)) != *path {
-            return Err(anyhow!(
-                "runtime-install receipt managed path must be canonical: {path}"
-            ));
-        }
-        if !paths.insert(path.as_str()) {
-            return Err(anyhow!(
-                "runtime-install receipt repeats managed path {path}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn refuse_release_downgrade(receipt: &InstallReceipt, operation: &str) -> Result<()> {
-    refuse_version_downgrade(&receipt.contextmink_version, operation, "project-install")
-}
-
-pub(super) fn refuse_runtime_release_downgrade(
-    receipt: &RuntimeInstallReceipt,
-    operation: &str,
-) -> Result<()> {
-    refuse_version_downgrade(&receipt.contextmink_version, operation, "runtime-install")
-}
-
-fn refuse_version_downgrade(version: &str, operation: &str, receipt: &str) -> Result<()> {
-    let installed = Version::parse(version)
-        .with_context(|| format!("parse validated {receipt} receipt version"))?;
+    let installed = Version::parse(&receipt.contextmink_version)
+        .context("parse validated project-install receipt version")?;
     let running = Version::parse(env!("CARGO_PKG_VERSION"))
         .context("parse running Contextmink package version")?;
     if installed > running {
         return Err(anyhow!(
             "{operation} refuses receipt version {installed} with older running Contextmink {running}; use Contextmink {installed} or newer"
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_managed_runtime_path(path: &Path) -> Result<()> {
-    validate_relative_path(path, "runtime")?;
-    let normalized = normalized_path(path);
-    if !MANAGED_RUNTIME_PATHS.contains(&normalized.as_str()) {
-        return Err(anyhow!(
-            "runtime ownership receipt names unsupported managed path {normalized}; this release will not modify or remove it"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_relative_path(path: &Path, kind: &str) -> Result<()> {
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(anyhow!(
-            "ownership receipt {kind} path must be a normalized project-relative path: {}",
-            path.display()
         ));
     }
     Ok(())
@@ -429,58 +286,51 @@ mod tests {
     }
 
     #[test]
-    fn runtime_receipt_rejects_unowned_paths() {
-        let receipt = RuntimeInstallReceipt {
-            schema: RUNTIME_RECEIPT_SCHEMA.to_owned(),
-            contextmink_version: env!("CARGO_PKG_VERSION").to_owned(),
-            managed_paths: vec!["tools/contextmink/bin/foreign".to_owned()],
-        };
-        let error = validate_runtime_receipt(&receipt).unwrap_err().to_string();
-        assert!(error.contains("unsupported managed path"), "{error}");
-    }
-
-    #[test]
-    fn previous_runtime_receipt_is_read_as_owned_paths() {
+    fn previous_runtime_receipt_is_recognized_and_other_files_are_refused() {
         let root = std::env::temp_dir().join(format!(
             "contextmink-previous-runtime-receipt-{}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("runtime-install.json");
+        assert!(!previous_runtime_receipt_exists(&path, "setup-project").unwrap());
         fs::write(
             &path,
             serde_json::json!({
                 "schema": PREVIOUS_RUNTIME_RECEIPT_SCHEMA,
-                "contextmink_version": env!("CARGO_PKG_VERSION"),
+                "contextmink_version": "0.15.0",
                 "managed_files": [
-                    {"path": "tools/contextmink/bin/contextmink.exe", "sha256": "0".repeat(64)},
                     {"path": "tools/contextmink/bin/contextmink", "sha256": "1".repeat(64)},
                 ],
             })
             .to_string(),
         )
         .unwrap();
-        let receipt = load_runtime_receipt(&path).unwrap().unwrap();
-        assert_eq!(receipt.schema, RUNTIME_RECEIPT_SCHEMA);
-        assert_eq!(
-            receipt.managed_paths,
-            [
-                "tools/contextmink/bin/contextmink.exe",
-                "tools/contextmink/bin/contextmink"
-            ]
-        );
+        assert!(previous_runtime_receipt_exists(&path, "setup-project").unwrap());
 
-        for unsupported in [
-            serde_json::json!({"schema": "contextmink.runtime_install.v0"}),
-            serde_json::json!({"contextmink_version": env!("CARGO_PKG_VERSION")}),
+        for unrecognized in [
+            serde_json::json!({"schema": "contextmink.runtime_install.v2"}).to_string(),
+            serde_json::json!({"contextmink_version": "0.15.0"}).to_string(),
+            "not json".to_owned(),
         ] {
-            fs::write(&path, unsupported.to_string()).unwrap();
-            let error = load_runtime_receipt(&path).unwrap_err().to_string();
+            fs::write(&path, unrecognized).unwrap();
+            let error = previous_runtime_receipt_exists(&path, "setup-project")
+                .unwrap_err()
+                .to_string();
             assert!(
-                error.contains("move it aside, then rerun setup-project to reinstall"),
+                error.contains("move it aside, then rerun setup-project"),
                 "{error}"
             );
         }
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let error = previous_runtime_receipt_exists(&path, "uninstall-project")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("move it aside, then rerun uninstall-project"),
+            "{error}"
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 }

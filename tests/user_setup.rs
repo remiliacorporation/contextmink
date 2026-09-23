@@ -331,6 +331,10 @@ fn assert_hook_blocks_while_broken(f: &Fixture) {
     }
 }
 
+fn receipt_path(f: &Fixture) -> PathBuf {
+    f.0.join(format!(".local/share/{TOOL}/user-install.json"))
+}
+
 #[test]
 fn guard_hook_blocks_every_command_while_the_personal_install_is_broken() {
     let f = Fixture::new();
@@ -340,27 +344,32 @@ fn guard_hook_blocks_every_command_while_the_personal_install_is_broken() {
     assert_eq!(healthy.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&healthy.stderr).contains("BLOCKED by contextmink guard-hook"));
 
-    fs::remove_file(f.skill()).unwrap();
+    let receipt = fs::read(receipt_path(&f)).unwrap();
+    fs::remove_file(receipt_path(&f)).unwrap();
     assert_hook_blocks_while_broken(&f);
 
-    f.install();
-    let mut tampered = fs::read(f.runtime()).unwrap();
-    tampered.extend_from_slice(b"tampered");
-    fs::write(f.runtime(), tampered).unwrap();
+    let mut other_release: Value = serde_json::from_slice(&receipt).unwrap();
+    other_release["version"] = Value::String("0.0.1".into());
+    fs::write(
+        receipt_path(&f),
+        serde_json::to_vec(&other_release).unwrap(),
+    )
+    .unwrap();
     assert_hook_blocks_while_broken(&f);
 }
 
 #[test]
-fn personal_runtime_divergence_and_missing_text_fail_closed() {
+fn personal_runtime_checks_its_receipt_but_never_hashes_itself() {
     let f = Fixture::new();
     f.install();
-    fs::remove_file(f.skill()).unwrap();
+    fs::remove_file(receipt_path(&f)).unwrap();
     let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
     assert!(
         !runtime.status.success(),
-        "a torn installation must fail closed"
+        "a runtime without its receipt must fail closed"
     );
-    assert!(String::from_utf8_lossy(&runtime.stderr).contains("repair with setup-user"));
+    assert!(String::from_utf8_lossy(&runtime.stderr).contains("setup-user"));
+    assert!(runtime.stdout.is_empty());
     if cfg!(windows) {
         let bridge = Command::new(f.runtime().with_file_name("contextmink-bridge.exe"))
             .args(["--print-argv", "--", "must-not-run"])
@@ -368,21 +377,27 @@ fn personal_runtime_divergence_and_missing_text_fail_closed() {
             .unwrap();
         assert!(
             !bridge.status.success(),
-            "personally installed bridge must verify the same receipt"
+            "personally installed bridge must check the same receipt"
         );
         assert!(bridge.stdout.is_empty());
     }
+    // setup-user rewrites every owned path and the receipt.
     f.install();
 
-    // A tampered executable that still loads refuses to run: the receipt hash
-    // is checked before any work.
-    let mut tampered = fs::read(f.runtime()).unwrap();
-    tampered.extend_from_slice(b"tampered");
-    fs::write(f.runtime(), tampered).unwrap();
+    // Binaries are verified at download, not before each run: a runtime whose
+    // bytes changed still runs while its receipt is consistent.
+    let mut appended = fs::read(f.runtime()).unwrap();
+    appended.extend_from_slice(b"appended");
+    fs::write(f.runtime(), appended).unwrap();
     let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
-    assert!(!runtime.status.success());
-    assert!(String::from_utf8_lossy(&runtime.stderr).contains("differs from its receipt"));
-    assert!(runtime.stdout.is_empty());
+    assert!(
+        runtime.status.success(),
+        "{}",
+        String::from_utf8_lossy(&runtime.stderr)
+    );
+    let receipt: Value = serde_json::from_slice(&fs::read(receipt_path(&f)).unwrap()).unwrap();
+    assert!(!receipt.to_string().contains("sha256"));
+    assert!(receipt.get("runtime_files").is_none());
 
     // Ownership is by path: uninstall removes a divergent binary.
     fs::write(f.runtime(), b"divergent runtime").unwrap();
@@ -402,7 +417,7 @@ fn personal_receipt_cannot_claim_foreign_paths_or_downgrade() {
     f.install();
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
     let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    receipt["text_files"]
+    receipt["files"]
         .as_array_mut()
         .unwrap()
         .push("AGENTS.md".into());
@@ -410,7 +425,7 @@ fn personal_receipt_cannot_claim_foreign_paths_or_downgrade() {
     let before = snapshot(&f.0);
     assert!(!f.run(&["uninstall-user"]).status.success());
     assert_eq!(snapshot(&f.0), before);
-    receipt["text_files"].as_array_mut().unwrap().pop();
+    receipt["files"].as_array_mut().unwrap().pop();
     receipt["version"] = Value::String("999.0.0".into());
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
     let before = snapshot(&f.0);
@@ -450,7 +465,7 @@ fn incomplete_receipt_refuses_without_adopting_files() {
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
     let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let skill = format!(".agents/skills/{TOOL}/SKILL.md");
-    receipt["text_files"]
+    receipt["files"]
         .as_array_mut()
         .unwrap()
         .retain(|path| *path != skill.as_str());
@@ -463,23 +478,22 @@ fn incomplete_receipt_refuses_without_adopting_files() {
 
 #[test]
 fn previous_personal_receipt_upgrades_to_the_current_schema() {
-    use sha2::Digest;
     let f = Fixture::new();
     f.install();
     let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
     let current: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    let mut files = serde_json::Map::new();
-    for (relative, hash) in current["runtime_files"].as_object().unwrap() {
-        files.insert(relative.clone(), hash.clone());
-    }
-    for relative in current["text_files"].as_array().unwrap() {
-        let relative = relative.as_str().unwrap();
-        let bytes = fs::read(f.0.join(relative)).unwrap();
-        files.insert(
-            relative.to_owned(),
-            Value::String(format!("{:x}", sha2::Sha256::digest(bytes))),
-        );
-    }
+    // The previous schema mapped each owned path to a content hash.
+    let files = current["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| {
+            (
+                path.as_str().unwrap().to_owned(),
+                Value::from("0".repeat(64)),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
     let previous = serde_json::json!({
         "schema": "contextmink.user_install.v1",
         "version": current["version"],
@@ -491,8 +505,7 @@ fn previous_personal_receipt_upgrades_to_the_current_schema() {
     f.install();
     let upgraded: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(upgraded["schema"], "contextmink.user_install.v2");
-    assert_eq!(upgraded["runtime_files"], current["runtime_files"]);
-    assert_eq!(upgraded["text_files"], current["text_files"]);
+    assert_eq!(upgraded["files"], current["files"]);
 
     let mut unsupported = previous;
     unsupported["schema"] = "contextmink.user_install.v0".into();

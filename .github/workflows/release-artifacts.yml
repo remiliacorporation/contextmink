@@ -155,10 +155,9 @@ jobs:
           set -euo pipefail
           bundle="dist/${{ steps.names.outputs.bundle }}"
           archive="dist/${{ steps.names.outputs.archive }}"
-          mkdir -p "${bundle}/docs"
+          mkdir -p "${bundle}"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${bundle}/"
           cp README.md CHANGELOG.md LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
-          cp docs/setup.md "${bundle}/docs/"
           cat > "${bundle}/manifest.json" <<EOF
           {
             "schema": "contextmink.release_manifest.v1",
@@ -185,11 +184,10 @@ jobs:
         run: |
           $bundle = "dist/${{ steps.names.outputs.bundle }}"
           $archive = "dist/${{ steps.names.outputs.archive }}"
-          New-Item -ItemType Directory -Force -Path "$bundle/docs" | Out-Null
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $bundle
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bridge_binary_name }}" $bundle
           Copy-Item README.md,CHANGELOG.md,LICENSE,LICENSE-SSL,LICENSE-VPL $bundle
-          Copy-Item docs/setup.md "$bundle/docs/"
           $manifest = [ordered]@{
             schema = "contextmink.release_manifest.v1"
             name = "contextmink"
@@ -229,9 +227,8 @@ jobs:
           test -f "${bundle}/manifest.json"
           grep -Fq '"schema": "contextmink.release_manifest.v3"' "${bundle}/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "${bundle}/manifest.json"
-          test -f "${bundle}/docs/setup.md"
           test ! -e "${bundle}/templates"
-          test ! -e "${bundle}/docs/evidence"
+          test ! -e "${bundle}/docs"
           test "$("${bundle}/bin/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/bin/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
           "${bundle}/bin/${{ matrix.binary_name }}" files src --show-files 1 > /tmp/contextmink-smoke.txt
@@ -253,7 +250,7 @@ jobs:
           grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' "${verify_root}/setup-smoke.json"
           grep -Eq '"resolved_skill_target"[[:space:]]*:[[:space:]]*"both"' "${verify_root}/setup-smoke.json"
           test -f "${project}/tools/contextmink/project-install.json"
-          test -f "${project}/tools/contextmink/bin/runtime-install.json"
+          test ! -e "${project}/tools/contextmink/bin/runtime-install.json"
           printf '{"result":{"total":17}}\n' > "${project}/selection.json"
           (cd "${project}" && scripts/contextmink --json json-select selection.json --at /result/total) > "${verify_root}/pointer-smoke.json"
           grep -Eq '"at"[[:space:]]*:[[:space:]]*"/result/total"' "${verify_root}/pointer-smoke.json"
@@ -351,9 +348,8 @@ jobs:
           if ($releaseManifest.source_commit -ne $env:GITHUB_SHA) {
             throw "release manifest source commit mismatch: $($releaseManifest.source_commit)"
           }
-          if (!(Test-Path "$bundle/docs/setup.md")) { throw "docs/setup.md missing" }
           if (Test-Path "$bundle/templates") { throw "templates duplicate installed files" }
-          if (Test-Path "$bundle/docs/evidence") { throw "historical evidence was packaged" }
+          if (Test-Path "$bundle/docs") { throw "source documentation was packaged" }
           $reportedVersion = & $binary --version
           if ($reportedVersion -ne "contextmink ${{ steps.names.outputs.version }}") {
             throw "binary version mismatch: $reportedVersion"
@@ -381,7 +377,7 @@ jobs:
           if ($setupSmoke.schema -ne "contextmink.project_setup.v3" -or !$setupSmoke.ready) { throw "setup-project schema or readiness mismatch" }
           if ($setupSmoke.resolved_skill_target -ne "both") { throw "setup-project auto target mismatch" }
           if (!(Test-Path "$project/tools/contextmink/project-install.json")) { throw "project-install receipt missing" }
-          if (!(Test-Path "$project/tools/contextmink/bin/runtime-install.json")) { throw "runtime-install receipt missing" }
+          if (Test-Path "$project/tools/contextmink/bin/runtime-install.json") { throw "setup-project wrote a runtime receipt" }
           if (!(Test-Path "$project/tools/contextmink/agent_integration.md")) { throw "agent integration reference missing" }
           $agentSkill = "$project/.agents/skills/contextmink/SKILL.md"
           $claudeSkill = "$project/.claude/skills/contextmink/SKILL.md"

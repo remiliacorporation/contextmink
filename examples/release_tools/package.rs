@@ -5,16 +5,15 @@ use std::fs;
 use std::path::{Component, Path};
 use std::process::Command;
 
-/// Documentation staged beside the binaries. Skills and the integration
-/// reference are generated at their installed paths, so each shipped file has
-/// exactly one copy.
+/// Documentation staged beside the binaries. `README.md` is the one human
+/// document; skills and the integration reference are generated at their
+/// installed paths, so each shipped file has exactly one copy.
 pub const STAGED_DOCUMENTS: &[&str] = &[
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
     "LICENSE-SSL",
     "LICENSE-VPL",
-    "docs/setup.md",
 ];
 
 pub fn run(stage: &Path, archive: &Path) -> Result<()> {
@@ -221,7 +220,8 @@ mod tests {
         }
         let owned = stage.join("tools/contextmink");
         assert!(owned.join("agent_integration.md").is_file());
-        assert!(owned.join("docs/setup.md").is_file());
+        assert!(owned.join("README.md").is_file());
+        assert!(!owned.join("docs").exists());
         assert!(!owned.join("templates").exists());
         assert!(!owned.join("SETUP.md").exists());
         assert!(

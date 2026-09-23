@@ -11,21 +11,10 @@ use crate::user_installation::{
 };
 use anyhow::{Context, Result, bail};
 
-use crate::digest::sha256;
 const TOOL: &str = "contextmink";
 const SKILL: &str = include_str!("../templates/skills/contextmink/SKILL.md");
 const BRIDGE_SKILL: &str = include_str!("../templates/skills/contextmink-bridge/SKILL.md");
 const REFERENCE: &[u8] = include_bytes!("../templates/agent_integration.md");
-
-/// Every path a receipt owns, executables first.
-fn owned_paths(receipt: &Receipt) -> Vec<String> {
-    receipt
-        .runtime_files
-        .keys()
-        .chain(&receipt.text_files)
-        .cloned()
-        .collect()
-}
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -86,11 +75,7 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
     if let Some(receipt) = &previous {
         if receipt.home != home
             || (receipt.installed && !receipt.owns_current_paths())
-            || (!receipt.installed && !owned_paths(receipt).is_empty())
-            || receipt
-                .runtime_files
-                .values()
-                .any(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
+            || (!receipt.installed && !receipt.files.is_empty())
         {
             bail!(
                 "personal receipt identity or paths are invalid; restore user-install.json for this home, or move it aside and rerun setup-user to reinstall"
@@ -188,11 +173,11 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
     }
     let mut actions = Vec::new();
     let selected_paths = if remove {
-        owned_paths(
-            previous
-                .as_ref()
-                .context("uninstall-user requires an existing receipt")?,
-        )
+        previous
+            .as_ref()
+            .context("uninstall-user requires an existing receipt")?
+            .files
+            .clone()
     } else {
         runtime_paths().into_iter().chain(text_paths()).collect()
     };
@@ -200,8 +185,7 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
         let path = validate_path(&home, &relative)?;
         let existing = read_optional(&path)?;
         // Ownership is by path: setup writes and uninstall removes every owned
-        // path whatever it contains. The runtime hashes in the receipt exist
-        // only for `verify_runtime`, which checks them before each run.
+        // path whatever it contains.
         let action = match (existing.as_ref(), wanted.get(&relative)) {
             (Some(old), Some(new)) if old == new => "unchanged",
             (Some(_), Some(_)) => "replace",
@@ -252,22 +236,12 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
                 fs::set_permissions(&destination, fs::Permissions::from_mode(0o755))?;
             }
         }
-        let runtime = runtime_paths();
         let receipt = Receipt {
             schema: RECEIPT_SCHEMA.to_owned(),
             version: env!("CARGO_PKG_VERSION").into(),
             home: home.clone(),
             installed: !remove,
-            runtime_files: wanted
-                .iter()
-                .filter(|(p, _)| runtime.contains(p))
-                .map(|(p, b)| (p.clone(), sha256(b)))
-                .collect(),
-            text_files: wanted
-                .keys()
-                .filter(|p| !runtime.contains(p))
-                .cloned()
-                .collect(),
+            files: wanted.keys().cloned().collect(),
         };
         let bytes = serde_json::to_vec_pretty(&receipt)?;
         if read_optional(&receipt_path)?.as_deref() != Some(bytes.as_slice()) {

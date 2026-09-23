@@ -36,8 +36,6 @@ mod process_boundary;
 #[path = "../process_supervision.rs"]
 mod process_supervision;
 
-#[path = "../digest.rs"]
-mod digest;
 #[path = "../user_installation.rs"]
 mod user_installation;
 
@@ -115,7 +113,7 @@ fn usage() -> String {
 }
 
 fn main() {
-    if let Err(error) = user_installation::verify_runtime() {
+    if let Err(error) = user_installation::check_installation() {
         eprintln!("contextmink-bridge: {error:#}");
         exit(EXIT_DATA);
     }

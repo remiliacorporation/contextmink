@@ -1,5 +1,4 @@
-//! Receipt and integrity boundary shared by both personally installed executables.
-use crate::digest::sha256;
+//! Receipt and consistency boundary shared by both personally installed executables.
 use anyhow::{Context, Result, bail};
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
@@ -13,8 +12,8 @@ pub(crate) const RECEIPT_SCHEMA: &str = "contextmink.user_install.v2";
 const PREVIOUS_RECEIPT_SCHEMA: &str = "contextmink.user_install.v1";
 
 /// Personal ownership is by path: setup writes and uninstall removes every
-/// owned path without comparing content. Executables also record their raw-byte
-/// SHA-256 because `verify_runtime` checks them before each run.
+/// owned path without comparing content. Binaries are verified at download
+/// through the release checksum, so the receipt records no content identity.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Receipt {
@@ -22,8 +21,7 @@ pub(crate) struct Receipt {
     pub(crate) version: String,
     pub(crate) home: PathBuf,
     pub(crate) installed: bool,
-    pub(crate) runtime_files: BTreeMap<String, String>,
-    pub(crate) text_files: Vec<String>,
+    pub(crate) files: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -40,11 +38,9 @@ struct PreviousReceipt {
 impl Receipt {
     /// True when the owned paths are exactly this platform's installation set.
     pub(crate) fn owns_current_paths(&self) -> bool {
-        let text = self.text_files.iter().cloned().collect::<BTreeSet<_>>();
-        text.len() == self.text_files.len()
-            && text == text_paths().into_iter().collect()
-            && self.runtime_files.keys().cloned().collect::<BTreeSet<_>>()
-                == runtime_paths().into_iter().collect()
+        let owned = self.files.iter().cloned().collect::<BTreeSet<_>>();
+        owned.len() == self.files.len()
+            && owned == runtime_paths().into_iter().chain(text_paths()).collect()
     }
 }
 
@@ -66,18 +62,12 @@ pub(crate) fn parse_receipt(bytes: &[u8]) -> Result<Receipt> {
             let previous: PreviousReceipt = serde_json::from_value(envelope).context(
                 "invalid user-install.json; restore its verified backup or move it aside, then rerun setup-user from a verified release",
             )?;
-            let runtime = runtime_paths();
-            let (runtime_files, text_files): (BTreeMap<_, _>, BTreeMap<_, _>) = previous
-                .files
-                .into_iter()
-                .partition(|(path, _)| runtime.contains(path));
             Ok(Receipt {
                 schema: RECEIPT_SCHEMA.to_owned(),
                 version: previous.version,
                 home: previous.home,
                 installed: previous.installed,
-                runtime_files,
-                text_files: text_files.into_keys().collect(),
+                files: previous.files.into_keys().collect(),
             })
         }
         _ => bail!(
@@ -102,7 +92,7 @@ pub(crate) fn bridge_path() -> String {
     format!("{}/bin/contextmink-bridge.exe", personal_root())
 }
 
-/// Installed executables, whose hashes the runtime checks before each run.
+/// Installed executables.
 pub(crate) fn runtime_paths() -> Vec<String> {
     let mut paths = vec![binary_path()];
     if cfg!(windows) {
@@ -155,8 +145,10 @@ pub(crate) fn validate_path(home: &Path, relative: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// A personal runtime refuses a torn or divergent installation before doing work.
-pub(crate) fn verify_runtime() -> Result<()> {
+/// A personal runtime refuses to run when its receipt is missing or names another
+/// release, home, or path set. This is a consistency check, not an integrity
+/// check: it reads one small file and never hashes the installed binaries.
+pub(crate) fn check_installation() -> Result<()> {
     let exe = std::env::current_exe().with_context(|| {
         format!("cannot resolve the running {TOOL} executable; run it by its installed path")
     })?;
@@ -204,28 +196,6 @@ pub(crate) fn verify_runtime() -> Result<()> {
         || !receipt.owns_current_paths()
     {
         bail!(identity_differs());
-    }
-    for (relative, hash) in &receipt.runtime_files {
-        let file = validate_path(&receipt.home, relative)?;
-        if sha256(
-            &fs::read(&file)
-                .with_context(|| format!("missing {}; repair with setup-user", file.display()))?,
-        ) != *hash
-        {
-            bail!(
-                "personal runtime {} differs from its receipt; repair with setup-user from a verified external release",
-                file.display()
-            );
-        }
-    }
-    for relative in &receipt.text_files {
-        let file = validate_path(&receipt.home, relative)?;
-        if !file.is_file() {
-            bail!(
-                "missing {}; repair with setup-user from a verified external release",
-                file.display()
-            );
-        }
     }
     Ok(())
 }

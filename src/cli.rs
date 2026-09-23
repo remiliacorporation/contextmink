@@ -846,6 +846,9 @@ pub(crate) enum Command {
         dry_run: bool,
     },
     /// Install optional project-owned integration for shared repository adoption
+    #[command(
+        after_help = "Writes this host's binaries under tools/contextmink/bin and never touches another platform's binary there. Binaries are verified at download against the release .sha256, not before each run."
+    )]
     SetupProject {
         #[arg(
             value_name = "PROJECT_ROOT",
@@ -868,7 +871,7 @@ pub(crate) enum Command {
     },
     /// Remove receipt-owned project integration without touching repository-owned policy.
     #[command(
-        after_help = "Run this command from an extracted Contextmink release outside the project."
+        after_help = "Removes every Contextmink binary under tools/contextmink/bin, including another platform's. Run this command from an extracted Contextmink release outside the project."
     )]
     UninstallProject {
         #[arg(

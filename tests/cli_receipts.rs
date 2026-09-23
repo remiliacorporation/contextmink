@@ -615,8 +615,9 @@ fn setup_project_installs_agent_capability_without_editing_guidance() {
     assert_eq!(install_receipt["managed_gitignore_file"], true);
     assert_eq!(install_receipt["skill_target"], "agents");
     assert!(
-        root.join("tools/contextmink/bin/runtime-install.json")
-            .is_file()
+        !root
+            .join("tools/contextmink/bin/runtime-install.json")
+            .exists()
     );
     assert!(install_receipt.get("managed_files").is_none());
     assert!(

@@ -11,7 +11,8 @@ This file is the always-loaded repository contract. Load operational detail
 only when needed:
 
 - **Product and command behavior**: `README.md` and `contextmink <command> --help`.
-- **Project integration and release-managed files**: `docs/setup.md`.
+- **Installing a release and project integration**: `README.md`; building,
+  vendoring and release packaging: `docs/setup.md`.
 - **Human changelogs and release notes**: the `changelog` skill.
 
 Do not grow this file with flag inventories, receipt schemas, or setup recipes.

@@ -15,34 +15,48 @@ All notable user-visible changes are documented here. Contextmink follows
   `CLAUDE.md` or `.contextmink.toml`, which setup never overwrites. Host
   binaries follow the same rule: setup writes and `uninstall-project`/
   `uninstall-user` remove every owned binary path without comparing content.
-  The personally installed runtime still refuses to run when its binary
-  differs from `user-install.json`.
-- The project runtime receipt `tools/contextmink/bin/runtime-install.json` is
-  `contextmink.runtime_install.v2` and records owned binary paths only, no
-  hashes. The next `setup-project` rewrites a v1 runtime receipt; an older one
-  is refused: move it aside and rerun `setup-project`.
+- Binaries are verified once, at download, against the release `.sha256`.
+  Nothing hashes them afterwards: the personally installed executable and
+  bridge no longer hash themselves before each run. They still refuse to run
+  unless `user-install.json` exists and names the running release and home.
+- Project binaries are owned by their fixed paths
+  (`tools/contextmink/bin/contextmink`, `contextmink.exe` and
+  `contextmink-bridge.exe`) instead of a runtime receipt. `setup-project`
+  writes this host's binaries and never touches the others, so a checkout
+  shared between Windows and WSL keeps both; `uninstall-project` removes every
+  one that exists. The next `setup-project` or `uninstall-project` deletes the
+  0.15.0 `tools/contextmink/bin/runtime-install.json`; any other file at that
+  path is refused: move it aside and rerun the command.
 - `guard-hook` fails closed on any failure before or during evaluation,
-  including a failed personal-install self-check (for example a deleted
-  personal skill or a tampered runtime): it exits 2 and blocks every command,
-  harmless ones included, until `setup-user` repairs the install. Claude Code
+  including a failed personal-install check (for example a missing
+  `user-install.json` or one from another release): it exits 2 and blocks
+  every command, harmless ones included, until `setup-user` repairs the
+  install. Claude Code
   treats any other nonzero hook exit as non-blocking, so this protection needs
   an executable that starts: remove the hook registration before
   `uninstall-user`.
 - Project receipts are `contextmink.project_install.v3` and personal receipts
-  `contextmink.user_install.v2`; neither records file hashes. The next
+  `contextmink.user_install.v2`; neither records file hashes, and the personal
+  receipt lists its owned paths in one `files` array. The next
   `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.
   An older receipt is refused: move it aside and rerun setup to reinstall.
 - `setup-project` reports `contextmink.project_setup.v3` and `uninstall-project`
   reports `contextmink.project_uninstall.v2`; update scripts that check these
   schemas.
 - Release archives contain the skills, `tools/contextmink/bin`, the
-  integration reference, `README.md`, `CHANGELOG.md`, licenses, the manifest
-  and `docs/setup.md`, which is the single setup document. `SETUP.md`,
-  `templates/` and `docs/evidence/` are no longer shipped.
+  integration reference, `README.md`, `CHANGELOG.md`, licenses and the
+  manifest. `README.md` is the one document for installing and using a
+  release. `docs/setup.md` now covers only building, vendoring and releasing
+  from source and stays in the source repository. `SETUP.md`, `templates/` and
+  `docs/` are no longer shipped.
+- The bridge skill tells the agent to report a missing Windows release instead
+  of installing one.
 
 ### Removed
 
 - `--replace-managed` on `setup-project` and `setup-user`.
+- The project runtime receipt `tools/contextmink/bin/runtime-install.json` and
+  the `preserve_unowned` setup and uninstall action.
 - Refusals that named the replacement for a flag or command renamed in 0.15.0.
   Those spellings, and global options placed before the subcommand, now fail
   with the ordinary usage error (exit 2).

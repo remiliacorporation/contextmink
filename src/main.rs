@@ -8,7 +8,6 @@ mod file_commands;
 // target, which shares this file via #[path] from src/bin/.
 #[path = "destructive_guard.rs"]
 mod destructive_guard;
-mod digest;
 mod encoding;
 mod files;
 mod grep_scan;
@@ -105,7 +104,7 @@ fn run_on_application_thread() -> Result<()> {
 }
 
 fn run_application() -> Result<()> {
-    user_installation::verify_runtime()?;
+    user_installation::check_installation()?;
     output::mark_command_start();
     let args = std::env::args_os().collect::<Vec<_>>();
     if let Some(refusal) = msys_arguments::rewritten_argument_refusal(
@@ -659,7 +658,6 @@ fn write_setup_actions(
             SetupActionKind::Replace => "replace",
             SetupActionKind::Unchanged => "unchanged",
             SetupActionKind::PreserveRepositoryOwned => "preserve_repository_owned",
-            SetupActionKind::PreserveUnowned => "preserve_unowned",
             SetupActionKind::MakeExecutable => "make_executable",
             SetupActionKind::UpdateGitignore => "update_gitignore",
             SetupActionKind::RemoveManaged => "remove_managed",
