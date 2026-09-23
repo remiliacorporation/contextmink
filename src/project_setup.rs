@@ -564,7 +564,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             .to_owned(),
         "Document the fresh-clone install step: rerunning setup-project preserves tracked configuration and restores ignored host binaries."
             .to_owned(),
-        "To remove Contextmink later, run uninstall-project from an extracted release binary outside the project; it removes only receipt-owned integration files and preserves repository-owned configuration and guidance."
+        "To remove Contextmink later, run uninstall-project from an extracted release binary outside the project; it removes Contextmink-owned integration files (including every host binary under tools/contextmink/bin) and preserves repository-owned configuration and guidance."
             .to_owned(),
     ];
     if actions
@@ -590,7 +590,8 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     })
 }
 
-/// Remove only receipt-owned Contextmink integration surfaces. Repository-owned
+/// Remove Contextmink-owned integration surfaces: the receipt-selected skills and
+/// reference plus every host binary at the fixed tools/contextmink/bin paths. Repository-owned
 /// configuration and always-loaded guidance remain explicit project decisions.
 pub(crate) fn uninstall_project(
     request: UninstallProjectRequest<'_>,

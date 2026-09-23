@@ -869,7 +869,7 @@ pub(crate) enum Command {
         )]
         skill_target: SkillTarget,
     },
-    /// Remove receipt-owned project integration without touching repository-owned policy.
+    /// Remove Contextmink-owned project integration without touching repository-owned policy.
     #[command(
         after_help = "Removes every Contextmink binary under tools/contextmink/bin, including another platform's. Run this command from an extracted Contextmink release outside the project."
     )]
@@ -877,7 +877,7 @@ pub(crate) enum Command {
         #[arg(
             value_name = "PROJECT_ROOT",
             default_value = ".",
-            help = "Existing repository root whose receipt-owned Contextmink integration should be removed"
+            help = "Existing repository root whose Contextmink-owned integration should be removed"
         )]
         project_root: PathBuf,
         #[arg(

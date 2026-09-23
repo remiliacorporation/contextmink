@@ -147,7 +147,7 @@ pub(super) fn previous_runtime_receipt_exists(path: &Path, operation: &str) -> R
     };
     let unrecognized = || {
         format!(
-            "{operation} does not recognize {} as a Contextmink 0.15 runtime receipt; move it aside, then rerun {operation}",
+            "{operation} does not recognize {} as a Contextmink 0.13-0.15 runtime receipt; move it aside, then rerun {operation}",
             path.display()
         )
     };
