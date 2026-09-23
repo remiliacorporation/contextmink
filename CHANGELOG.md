@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-23
+
+Retrieval commands and receipt output are unchanged. Verify the archive against
+its published `.sha256`, then upgrade a personal installation with `setup-user`
+and a project with `setup-project` from the new release or by unpacking the
+archive over the project root. Scripts that pass `--replace-managed` or check
+setup result schemas need updating.
+
 ### Changed
 
 - Installed skills, the integration reference and the launcher are release
@@ -31,10 +39,9 @@ All notable user-visible changes are documented here. Contextmink follows
   including a failed personal-install check (for example a missing
   `user-install.json` or one from another release): it exits 2 and blocks
   every command, harmless ones included, until `setup-user` repairs the
-  install. Claude Code
-  treats any other nonzero hook exit as non-blocking, so this protection needs
-  an executable that starts: remove the hook registration before
-  `uninstall-user`.
+  install. Claude Code treats any other nonzero hook exit as non-blocking, so
+  this protection needs an executable that starts: remove the hook
+  registration before `uninstall-user`.
 - Project receipts are `contextmink.project_install.v3` and personal receipts
   `contextmink.user_install.v2`; neither records file hashes, and the personal
   receipt lists its owned paths in one `files` array. The next
@@ -49,8 +56,6 @@ All notable user-visible changes are documented here. Contextmink follows
   release. `docs/setup.md` now covers only building, vendoring and releasing
   from source and stays in the source repository. `SETUP.md`, `templates/` and
   `docs/` are no longer shipped.
-- The bridge skill tells the agent to report a missing Windows release instead
-  of installing one.
 
 ### Removed
 
@@ -60,6 +65,14 @@ All notable user-visible changes are documented here. Contextmink follows
 - Refusals that named the replacement for a flag or command renamed in 0.15.0.
   Those spellings, and global options placed before the subcommand, now fail
   with the ordinary usage error (exit 2).
+
+### Fixed
+
+- The personally installed Contextmink skill no longer tells agents to report
+  an incomplete bundle in a project without its own runtime; the
+  project-runtime instructions apply only to project installations. The bridge
+  skill reports a missing Windows release instead of telling the agent to
+  install one.
 
 ## [0.15.0] - 2026-09-23
 
