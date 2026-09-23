@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+### Changed
+
+- The Contextmink skill states that repeated `grep-terms --term` values must
+  all match one line unless `--any` is passed, so a multi-symbol lookup no
+  longer reads a complete-scope no-match as proven absence.
+
 ## [0.14.1] - 2026-09-22
 
 Retrieval commands and receipt schemas are unchanged. Upgrade personal

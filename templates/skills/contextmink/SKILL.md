@@ -38,7 +38,8 @@ contextmink sqlite DB --sql-file QUERY.sql --limit 20
 contextmink capture --max-lines 40 -- PROGRAM ARGS
 ```
 
-`grep-terms --term TEXT [PATH]` avoids fragile literal quoting. Grep's `--limit`
+`grep-terms --term TEXT [PATH]` avoids fragile literal quoting; repeated terms
+must all match one line unless `--any` is passed. Grep's `--limit`
 counts files, `--lines-per-file` counts matches per file, and `--max-sample-lines`
 bounds displayed lines. A capped slice gives `remaining_range` for follow-up.
 Narrow before raising caps. Budget batched calls together; per-command caps do
