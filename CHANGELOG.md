@@ -6,11 +6,89 @@ All notable user-visible changes are documented here. Contextmink follows
 
 ## [Unreleased]
 
+This release renames public flags and commands without compatibility aliases.
+Removed spellings are refused with their replacement named. Before or with the
+upgrade:
+
+1. Update scripts and saved invocations to the flag names below, and move
+   `--config`, `--no-config`, `--fail-if-truncated` and
+   `--require-complete-scope` after the subcommand (that placement already
+   works on 0.14).
+2. Replace every Claude or other harness hook that runs `hook-guard`: rerun
+   `contextmink guard-hook-snippet` and merge its output, or rename the command
+   to `guard-hook` and write any `--command-field` as a JSON Pointer. A hook
+   still calling `hook-guard` exits 2, which blocks every matched shell call
+   until it is updated.
+3. Upgrade personal installations with `setup-user` and project installations
+   with `setup-project` from the new release to refresh the skill and
+   integration reference.
+
+### Added
+
+- The native executable refuses to run under Git Bash/MSYS when an argument, or
+  the value of a `--flag=value` argument, starts with the MSYS installation root
+  (for example `C:/Program Files/Git/`). The
+  refusal names `MSYS_NO_PATHCONV=1` as the fix. Previously a rewritten pattern
+  such as `/skills/contextmink` silently searched for a Windows path and
+  reported a complete-scope no-match. `guard-hook` exits 2 on this refusal.
+- Every receipt with an output cap carries `output_cap_arguments`, naming the
+  display flags whose caps were exhausted. Before this release only `grep` and
+  `grep-terms` reported it.
+
 ### Changed
 
+- Display caps use `--show-*`, and `--max-*` now names only scope or
+  input-admission limits:
+  - `files`, `grep`, `grep-terms`: `--limit` → `--show-files`
+  - `dirs`: `--limit` → `--show-dirs`
+  - `outline`: `--limit` → `--show-items`
+  - `json-find`: `--limit` → `--show-matches`
+  - `json-select`, `sqlite`: `--limit` → `--show-rows`
+  - `grep`, `grep-terms`: `--lines-per-file` → `--show-lines-per-file`,
+    `--max-sample-lines` → `--show-lines`
+  - `capture`: `--max-lines` → `--show-lines`, `--max-bytes` →
+    `--show-bytes-per-stream`
+  - `sqlite-schema`: `--max-tables`/`--max-columns`/`--max-indexes` →
+    `--show-tables`/`--show-columns`/`--show-indexes`
+  - wherever present: `--max-line-chars` → `--show-line-chars`,
+    `--max-value-chars` → `--show-value-chars`
+- `slice` selects a window only with `--range START:END` or `--tail N`, and
+  `--max-lines` is now `--line-ceiling`. Without a window it reads from line 1 up
+  to the ceiling (default 220) and reports the remainder as `remaining_range`.
+  The old default was a complete-looking 120-line window.
+- `json-find` `--path-contains`/`--path-regex` are now
+  `--pointer-contains`/`--pointer-regex`. In `json-find` and
+  `sqlite-schema --name-contains`, repeated `--*-contains` values must now all
+  match, as in `files`, `outline` and `json-select`. Use the matching regex
+  flag for alternatives.
+- `sqlite-schema` `--include-shadow`/`--include-system` are now
+  `--with-shadow-tables`/`--with-system-tables`.
+- `hook-guard` is now `guard-hook` and `hook-snippet` is now
+  `guard-hook-snippet`. `--command-field` takes a JSON Pointer (default
+  `/tool_input/command`), and a dotted path is refused. When the pointer is not
+  the default, generated hooks prefix it with `MSYS_NO_PATHCONV=1`.
+- `--json` is the only global flag. Receipt options
+  (`--fail-if-truncated`, `--require-complete-scope`) are accepted after the
+  subcommand by receipt-emitting commands. Configuration options (`--config`,
+  `--no-config`) are accepted after the subcommand by commands that read
+  `.contextmink.toml`. `setup-user`, `uninstall-user`, `setup-project` and
+  `uninstall-project` no longer list or accept them.
+- `capture` and `guard-check` refuse a flag-like first argv item. Before, an
+  unknown or removed option could be executed or evaluated as the command.
+- The installed integration reference is one shorter
+  `tools/contextmink/agent_integration.md`. The skill uses the new names and
+  points setup, configuration and hook questions at command help. Setup
+  guidance no longer recommends adding Contextmink trigger text to
+  `AGENTS.md` or `CLAUDE.md`; you can remove existing trigger text.
 - The Contextmink skill states that repeated `grep-terms --term` values must
   all match one line unless `--any` is passed, so a multi-symbol lookup no
   longer reads a complete-scope no-match as proven absence.
+
+### Fixed
+
+- `guard-hook-snippet` help and setup documentation no longer claim that it
+  installs a hook or emits a PowerShell call operator. It prints a POSIX
+  command fragment for you to review and merge.
 
 ## [0.14.1] - 2026-09-22
 
