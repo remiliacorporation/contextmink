@@ -208,7 +208,9 @@ fn parent_image() -> Option<String> {
     unsafe { CloseHandle(parent) };
     match (own_created, parent_created) {
         (Some(own), Some(parent)) if parent <= own && queried != 0 => {
-            String::from_utf16(&buffer[..size as usize]).ok()
+            // Root comparison is ASCII-prefix based; lossy decoding cannot
+            // make a non-MSYS image look like one under the detected root.
+            Some(String::from_utf16_lossy(&buffer[..size as usize]))
         }
         _ => None,
     }
