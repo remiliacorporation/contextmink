@@ -22,7 +22,7 @@ fn claude_snippet_uses_command_string_not_args() {
         &PathBuf::from("F:/work/example"),
         false,
         &["Bash".to_owned()],
-        "tool_input.command",
+        "/tool_input/command",
     );
 
     let hook = &settings["hooks"]["PreToolUse"][0]["hooks"][0];
@@ -38,7 +38,7 @@ fn windows_paths_are_bash_safe() {
         &PathBuf::from(r"F:\work\example"),
         false,
         &["Bash".to_owned()],
-        "tool_input.command",
+        "/tool_input/command",
     );
 
     let command = command_for(&settings, "Bash");
@@ -60,16 +60,16 @@ fn paths_with_spaces_are_shell_quoted_per_matcher() {
         &PathBuf::from("C:/Users/Agent/My Repo"),
         false,
         &["Bash".to_owned(), "PowerShell".to_owned()],
-        "tool_input.command",
+        "/tool_input/command",
     );
 
     assert_eq!(
         command_for(&settings, "Bash"),
-        "'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell posix"
+        "'C:/Program Files/contextmink/contextmink.exe' guard-hook --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell posix"
     );
     assert_eq!(
         command_for(&settings, "PowerShell"),
-        "'C:/Program Files/contextmink/contextmink.exe' hook-guard --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell powershell"
+        "'C:/Program Files/contextmink/contextmink.exe' guard-hook --config 'C:/Users/Agent/My Repo/.contextmink.toml' --expected-root 'C:/Users/Agent/My Repo' --shell powershell"
     );
     assert!(!command_for(&settings, "PowerShell").starts_with('&'));
 }
@@ -82,11 +82,11 @@ fn custom_command_field_and_no_config_are_emitted() {
         &PathBuf::from("/work/example"),
         true,
         &["Bash".to_owned()],
-        "tool.payload.command",
+        "/tool/payload/command",
     );
 
     assert_eq!(
         command_for(&settings, "Bash"),
-        "/opt/contextmink/contextmink hook-guard --no-config --expected-root /work/example --shell posix --command-field tool.payload.command"
+        "MSYS_NO_PATHCONV=1 /opt/contextmink/contextmink guard-hook --no-config --expected-root /work/example --shell posix --command-field /tool/payload/command"
     );
 }

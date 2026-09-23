@@ -12,8 +12,8 @@ mod digest;
 mod encoding;
 mod files;
 mod grep_scan;
-mod hook_guard;
-mod hook_snippet;
+mod guard_hook;
+mod guard_hook_snippet;
 mod json_commands;
 mod json_input;
 mod msys_arguments;
@@ -42,8 +42,8 @@ use file_commands::{
     GrepCaps, command_dirs, command_files, command_grep, command_grep_with_matcher, command_slice,
 };
 use files::display_path;
-use hook_guard::command_hook_guard;
-use hook_snippet::command_hook_snippet;
+use guard_hook::command_guard_hook;
+use guard_hook_snippet::command_guard_hook_snippet;
 use json_commands::{command_json_find, command_json_select};
 use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
@@ -79,10 +79,10 @@ fn run_application() -> Result<()> {
         &args,
         &msys_arguments::MsysEnvironment::from_process(),
     ) {
-        if cli::selected_subcommand(&args) == Some("hook-guard") {
+        if cli::selected_subcommand(&args) == Some("guard-hook") {
             // The hook protocol treats only exit 2 as blocking; a rewritten
             // hook argument must not silently disable the guard.
-            eprintln!("contextmink hook-guard: {refusal}");
+            eprintln!("contextmink guard-hook: {refusal}");
             std::process::exit(2);
         }
         return Err(anyhow!(refusal));
@@ -213,9 +213,9 @@ fn run_application() -> Result<()> {
     }
     let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
         Ok(config) => config,
-        Err(error) if matches!(cli.command, Command::HookGuard { .. }) => {
+        Err(error) if matches!(cli.command, Command::GuardHook { .. }) => {
             eprintln!(
-                "contextmink hook-guard: destructive-command policy could not be loaded: {error:#}"
+                "contextmink guard-hook: destructive-command policy could not be loaded: {error:#}"
             );
             std::process::exit(2);
         }
@@ -526,11 +526,11 @@ fn run_application() -> Result<()> {
             receipt_out.as_ref(),
             argv,
         ),
-        Command::HookGuard {
+        Command::GuardHook {
             command_field,
             expected_root,
             shell,
-        } => command_hook_guard(
+        } => command_guard_hook(
             &config.destructive_guard,
             command_field,
             expected_root.as_deref(),
@@ -598,12 +598,12 @@ fn run_application() -> Result<()> {
                 Ok(())
             }
         }
-        Command::HookSnippet {
+        Command::GuardHookSnippet {
             binary,
             guard_config,
             matchers,
             command_field,
-        } => command_hook_snippet(
+        } => command_guard_hook_snippet(
             binary.as_deref(),
             guard_config.as_deref(),
             cli.config.as_deref(),
@@ -619,16 +619,18 @@ fn validate_global_flags(cli: &Cli) -> Result<()> {
     if strictness_requested
         && matches!(
             &cli.command,
-            Command::HookGuard { .. } | Command::GuardCheck { .. } | Command::HookSnippet { .. }
+            Command::GuardHook { .. }
+                | Command::GuardCheck { .. }
+                | Command::GuardHookSnippet { .. }
         )
     {
         return Err(anyhow!(
             "receipt strictness flags apply only to commands that emit contextmink.receipt.v2"
         ));
     }
-    if cli.json && matches!(&cli.command, Command::HookGuard { .. }) {
+    if cli.json && matches!(&cli.command, Command::GuardHook { .. }) {
         return Err(anyhow!(
-            "hook-guard uses the agent hook protocol; --json does not apply"
+            "guard-hook uses the agent hook protocol; --json does not apply"
         ));
     }
     Ok(())

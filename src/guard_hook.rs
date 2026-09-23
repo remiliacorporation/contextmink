@@ -27,7 +27,26 @@ use crate::destructive_guard::{
 /// Exit code that hook protocols treat as "block this tool call".
 const EXIT_BLOCK: i32 = 2;
 
-pub(crate) fn command_hook_guard(
+/// JSON Pointer to the command string in Claude-compatible hook payloads.
+pub(crate) const DEFAULT_COMMAND_FIELD: &str = "/tool_input/command";
+
+/// Accept only an RFC 6901 pointer below the payload root, matching the
+/// selector syntax of the json-* commands.
+pub(crate) fn parse_command_field(value: &str) -> Result<String, String> {
+    if value.starts_with('/') {
+        Ok(value.to_owned())
+    } else {
+        Err(format!(
+            "--command-field takes a JSON Pointer such as {DEFAULT_COMMAND_FIELD}; write `{value}` as `/{}`",
+            value
+                .replace('~', "~0")
+                .replace('/', "~1")
+                .replace('.', "/")
+        ))
+    }
+}
+
+pub(crate) fn command_guard_hook(
     config: &DestructiveGuardConfig,
     command_field: &str,
     expected_root: Option<&Path>,
@@ -36,7 +55,7 @@ pub(crate) fn command_hook_guard(
     let mut raw = String::new();
     std::io::stdin()
         .read_to_string(&mut raw)
-        .context("hook-guard: reading hook payload from stdin")?;
+        .context("guard-hook: reading hook payload from stdin")?;
     match evaluate_hook_payload_for_root(
         &raw,
         command_field,
@@ -47,19 +66,19 @@ pub(crate) fn command_hook_guard(
     ) {
         HookVerdict::Allow => Ok(()),
         HookVerdict::AllowWithNote { note } => {
-            eprintln!("[contextmink hook-guard] {note}; allowing");
+            eprintln!("[contextmink guard-hook] {note}; allowing");
             Ok(())
         }
         HookVerdict::AllowWithOverride { message } => {
             eprintln!(
-                "[contextmink hook-guard] WARNING: destructive command allowed by \
+                "[contextmink guard-hook] WARNING: destructive command allowed by \
                  {env}=1 break-glass override: {message}",
                 env = crate::destructive_guard::ALLOW_DESTRUCTIVE_ENV
             );
             Ok(())
         }
         HookVerdict::Deny { message } => {
-            eprintln!("BLOCKED by contextmink hook-guard: {message}");
+            eprintln!("BLOCKED by contextmink guard-hook: {message}");
             std::process::exit(EXIT_BLOCK);
         }
     }
@@ -82,7 +101,7 @@ pub(crate) enum HookVerdict {
 }
 
 /// Pure evaluation: parse the payload, pull the command string at
-/// `command_field` (a dot-separated object path), and scan it as a shell
+/// `command_field` (a JSON Pointer), and scan it as a shell
 /// payload so word-splitting matches what a shell would execute.
 #[cfg(test)]
 pub(crate) fn evaluate_hook_payload(
@@ -137,17 +156,11 @@ pub(crate) fn evaluate_hook_payload_for_root(
             };
         }
     };
-    let mut cursor = &payload;
-    for key in command_field.split('.') {
-        match cursor.get(key) {
-            Some(next) => cursor = next,
-            None => {
-                return HookVerdict::AllowWithNote {
-                    note: format!("hook payload has no `{command_field}` field"),
-                };
-            }
-        }
-    }
+    let Some(cursor) = payload.pointer(command_field) else {
+        return HookVerdict::AllowWithNote {
+            note: format!("hook payload has no `{command_field}` field"),
+        };
+    };
     let Some(command) = cursor.as_str() else {
         return HookVerdict::AllowWithNote {
             note: format!("hook payload `{command_field}` is not a string"),
@@ -214,5 +227,5 @@ fn hook_cwd_is_within(cwd: &Path, expected_root: &Path) -> bool {
 }
 
 #[cfg(test)]
-#[path = "hook_guard/tests.rs"]
+#[path = "guard_hook/tests.rs"]
 mod tests;

@@ -295,7 +295,7 @@ jobs:
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.receipt.v2"' "${verify_root}/root-smoke.json"
           (cd "${project}" && scripts/contextmink --json guard-check -- git clean) > "${verify_root}/guard-smoke.json"
           grep -Eq '"decision"[[:space:]]*:[[:space:]]*"deny"' "${verify_root}/guard-smoke.json"
-          (cd "${project}" && scripts/contextmink --json hook-snippet --binary "tools/contextmink/bin/${{ matrix.binary_name }}" --guard-config .contextmink.toml) > "${verify_root}/hook-smoke.json"
+          (cd "${project}" && scripts/contextmink --json guard-hook-snippet --binary "tools/contextmink/bin/${{ matrix.binary_name }}" --guard-config .contextmink.toml) > "${verify_root}/hook-smoke.json"
           grep -q '"PreToolUse"' "${verify_root}/hook-smoke.json"
           (cd "${project}" && scripts/contextmink --json capture -- "tools/contextmink/bin/${{ matrix.binary_name }}" --version) > "${verify_root}/capture-smoke.json"
           grep -Eq '"child_exit_code"[[:space:]]*:[[:space:]]*0' "${verify_root}/capture-smoke.json"
@@ -433,7 +433,7 @@ jobs:
           try {
             $rootSmoke = (& $projectBinary --json files . --show-files 1 | Out-String) | ConvertFrom-Json
             $guardSmoke = (& $projectBinary --json guard-check -- git clean | Out-String) | ConvertFrom-Json
-            $hookSmoke = (& $projectBinary --json hook-snippet --binary $projectBinary --guard-config "$project/.contextmink.toml" | Out-String) | ConvertFrom-Json
+            $hookSmoke = (& $projectBinary --json guard-hook-snippet --binary $projectBinary --guard-config "$project/.contextmink.toml" | Out-String) | ConvertFrom-Json
             $captureSmoke = (& $projectBinary --json capture -- $projectBinary --version | Out-String) | ConvertFrom-Json
           } finally {
             Pop-Location
@@ -441,7 +441,7 @@ jobs:
           if ($rootSmoke.profile -ne "integration-project") { throw "root config discovery failed" }
           if ($rootSmoke.schema -ne "contextmink.receipt.v2") { throw "root receipt schema mismatch" }
           if ($guardSmoke.decision -ne "deny") { throw "guard-check integration smoke failed" }
-          if (!$hookSmoke.hooks.PreToolUse) { throw "hook-snippet integration smoke failed" }
+          if (!$hookSmoke.hooks.PreToolUse) { throw "guard-hook-snippet integration smoke failed" }
           if ($captureSmoke.child_exit_code -ne 0 -or !$captureSmoke.child_exit_zero -or !$captureSmoke.exit_expected) {
             throw "capture exit contract smoke failed"
           }

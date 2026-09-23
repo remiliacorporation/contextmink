@@ -412,7 +412,7 @@ fn non_receipt_commands_reject_irrelevant_global_flags() {
             .contains("strictness flags apply only to commands that emit")
     );
 
-    let hook_json = run_contextmink_raw(&root, &["--json", "hook-guard"]);
+    let hook_json = run_contextmink_raw(&root, &["--json", "guard-hook"]);
     assert!(!hook_json.status.success());
     assert!(String::from_utf8_lossy(&hook_json.stderr).contains("hook protocol"));
 }
@@ -822,14 +822,14 @@ fn setup_project_rejects_unrelated_global_flags() {
 }
 
 #[test]
-fn hook_snippet_emits_claude_command_hooks() {
-    let root = fixture_root("hook-snippet");
+fn guard_hook_snippet_emits_claude_command_hooks() {
+    let root = fixture_root("guard-hook-snippet");
     let binary = root.join("tools/contextmink/contextmink.exe");
     let config = root.join(".contextmink.toml");
     let snippet = parse_json_output(
         &root,
         &[
-            "hook-snippet",
+            "guard-hook-snippet",
             "--binary",
             binary.to_str().unwrap(),
             "--guard-config",
@@ -850,7 +850,7 @@ fn hook_snippet_emits_claude_command_hooks() {
         .find(|entry| entry["matcher"] == "PowerShell")
         .expect("PowerShell matcher");
     let bash_command = bash["hooks"][0]["command"].as_str().unwrap();
-    assert!(bash_command.contains("hook-guard --config"));
+    assert!(bash_command.contains("guard-hook --config"));
     assert!(!bash_command.contains('\\'));
     assert!(bash["hooks"][0].get("args").is_none());
     let powershell_command = powershell["hooks"][0]["command"].as_str().unwrap();
@@ -860,12 +860,12 @@ fn hook_snippet_emits_claude_command_hooks() {
 
 #[test]
 fn emitted_bash_hook_executes_end_to_end() {
-    let root = fixture_root("hook-snippet-bash-exec");
+    let root = fixture_root("guard-hook-snippet-bash-exec");
     let config = root.join(".contextmink.toml");
     let snippet = parse_json_output(
         &root,
         &[
-            "hook-snippet",
+            "guard-hook-snippet",
             "--binary",
             env!("CARGO_BIN_EXE_contextmink"),
             "--guard-config",
@@ -918,7 +918,7 @@ fn explicitly_missing_hook_policy_fails_closed() {
     let output = run_contextmink_raw(
         &root,
         &[
-            "hook-guard",
+            "guard-hook",
             "--config",
             missing.to_str().unwrap(),
             "--expected-root",
@@ -942,7 +942,7 @@ fn malformed_discovered_hook_policy_fails_closed() {
     let output = run_contextmink_raw(
         &root,
         &[
-            "hook-guard",
+            "guard-hook",
             "--expected-root",
             root.to_str().unwrap(),
             "--shell",
@@ -5145,7 +5145,7 @@ fn msys_rewritten_arguments_are_refused_before_work() {
 
     let hook = run_under_fake_git_bash(
         &root,
-        &["hook-guard", "--expected-root", "C:/Fake Git/project"],
+        &["guard-hook", "--expected-root", "C:/Fake Git/project"],
         r#"{"tool_input":{"command":"echo ok"}}"#,
         false,
     );
@@ -5241,4 +5241,21 @@ fn output_cap_arguments_name_the_display_flag_for_every_command() {
         &["--json", "slice", "long.txt", "--line-ceiling", "5"],
     );
     assert_eq!(whole["remaining_range"], "6:30");
+}
+
+#[test]
+fn stale_hook_guard_registration_blocks_with_the_rename() {
+    let root = fixture_root("stale-hook-guard");
+    let output = run_contextmink_raw(&root, &["hook-guard", "--shell", "posix"]);
+    assert_eq!(output.status.code(), Some(2), "a stale hook must block");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("renamed `guard-hook`"), "{stderr}");
+    assert!(stderr.contains("/tool_input/command"), "{stderr}");
+
+    let dotted = run_contextmink_raw(
+        &root,
+        &["guard-hook", "--command-field", "tool_input.command"],
+    );
+    assert_eq!(dotted.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&dotted.stderr).contains("JSON Pointer"));
 }

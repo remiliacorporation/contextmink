@@ -355,3 +355,19 @@ fn removed_flag_spellings_are_refused_with_their_replacement() {
             .is_some_and(|guidance| guidance.contains("--show-bytes-per-stream"))
     );
 }
+
+#[test]
+fn renamed_guard_commands_name_their_replacement() {
+    for (old, new) in [
+        ("hook-guard", "`guard-hook`"),
+        ("hook-snippet", "`guard-hook-snippet`"),
+    ] {
+        let argv = ["contextmink", old]
+            .into_iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        let error = Cli::try_parse_from(&argv).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        assert!(cli::renamed_command_guidance(&argv).unwrap().contains(new));
+    }
+}

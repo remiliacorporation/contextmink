@@ -105,7 +105,7 @@ pub(crate) fn evaluate_argv(
 /// command belongs to a foreign or unlocated cwd: opaque PowerShell payloads
 /// and git clean remain blocked, but one repository's path policy cannot bleed
 /// into another checkout.
-#[allow(dead_code)] // The bridge uses the fully scoped evaluator; hook-guard selects this variant.
+#[allow(dead_code)] // The bridge uses the fully scoped evaluator; guard-hook selects this variant.
 pub(crate) fn evaluate_argv_with_config_scope(
     argv: &[String],
     config: &DestructiveGuardConfig,

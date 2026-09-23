@@ -150,10 +150,10 @@ case "${OS:-}:$(uname -s 2>/dev/null || true)" in
         continue
       fi
       case "$arg" in
-        --at | --fields)
+        --at | --fields | --command-field)
           next_selector=1
           ;;
-        --at=/* | --fields=/*)
+        --at=/* | --fields=/* | --command-field=/*)
           conv_excl+=("$arg")
           ;;
         --where | --where-contains | --key-contains | --key-regex | --path-contains | --pointer-contains | --pointer-regex | --value-contains | --pattern | --prefix | --contains | --term | --name-contains | --sql | --command)

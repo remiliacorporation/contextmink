@@ -412,9 +412,10 @@ below is the short map.
   so a hostile argument cannot turn the transcript guard into a transcript
   dump. Captured commands must not deliberately escape containment by
   daemonizing into a new session or process group.
-- `hook-snippet` — print a Claude `.claude/settings.json` fragment that
-  registers `hook-guard` with shell-safe command strings.
-- `hook-guard` — evaluate an agent PreToolUse hook payload from stdin against
+- `guard-hook-snippet` — print a Claude settings JSON fragment that registers
+  `guard-hook` with shell-safe command strings. It only prints; merging the
+  fragment into a settings file is a reviewed edit by the caller.
+- `guard-hook` — evaluate an agent PreToolUse hook payload from stdin against
   the destructive-command guard; exits 2 to block a recognized destructive
   command.
 - `guard-check --command <shell-text> [--shell posix|powershell|cmd]` (or
@@ -460,7 +461,7 @@ scripts/contextmink sqlite state.sqlite --sql-file join.sql --jsonl-param queue=
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
 scripts/contextmink sqlite-schema state.sqlite --name-contains user --show-tables 8
 scripts/contextmink capture --show-lines 40 -- some-tool --compact-target query
-scripts/contextmink hook-snippet
+scripts/contextmink guard-hook-snippet
 ```
 
 ## Receipts
@@ -554,11 +555,11 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   repository-configured Git aliases, and runtime `eval` remain outside this
   evaluator; arbitrary dynamic behavior cannot be proven from a pre-execution
   command string.
-- `hook-guard` extends the same deny scan to agent-harness PreToolUse hooks:
+- `guard-hook` extends the same deny scan to agent-harness PreToolUse hooks:
   it reads the hook event JSON from stdin, extracts the command string at
-  `--command-field DOT.PATH` (default `tool_input.command`, the Claude Code
-  shape), and exits 2 with the deny message on stderr to block the tool call.
-  Generate the Claude settings fragment with `contextmink hook-snippet`; it
+  the JSON Pointer `--command-field POINTER` (default `/tool_input/command`,
+  the Claude Code shape), and exits 2 with the deny message on stderr to block the tool call.
+  Generate the Claude settings fragment with `contextmink guard-hook-snippet`; it
   emits single `command` strings rather than a non-portable `args` array,
   normalizes Windows paths to forward slashes for Bash hooks, and binds the
   policy to its repository root with `--expected-root`. Each generated matcher
@@ -661,7 +662,7 @@ Excludes quiet broad scans only: pass an explicit file or subdirectory when an
 excluded tree is the target, or `--with-excluded` to lift the globs for one
 command. Git ignore rules are separate; `--with-git-ignored` lifts those.
 Configured destructive guard fragments are literal case-insensitive substrings
-matched by `contextmink-bridge`, `capture`, and `hook-guard` before a child
+matched by `contextmink-bridge`, `capture`, and `guard-hook` before a child
 process or agent shell command is allowed to run.
 
 ## Development

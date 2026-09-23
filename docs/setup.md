@@ -319,10 +319,10 @@ Adapt the installation to the project before copying generic policy:
 8. Optional: generate a Claude hook fragment from the installed binary:
 
    ```bash
-   scripts/contextmink hook-snippet
+   scripts/contextmink guard-hook-snippet
    ```
 
-   The generated fragment registers `hook-guard` for `Bash` and `PowerShell`
+   The generated fragment registers `guard-hook` for `Bash` and `PowerShell`
    PreToolUse hooks. It uses single `command` strings, not a separate `args`
    field, and emits shell-safe absolute paths for each matcher. Machine-specific
    output belongs in `.claude/settings.local.json`; commit it to shared
@@ -390,7 +390,7 @@ repair, and active-shell invocation all work end to end.
 
 ## Optional: Claude PreToolUse Hook Guard
 
-`hook-guard` is the same command-aware destructive-command evaluator used by
+`guard-hook` is the same command-aware destructive-command evaluator used by
 `contextmink-bridge` and `capture`, exposed as a Claude PreToolUse hook.
 It preserves quoting and command boundaries, resolves Git's actual subcommand,
 binds protected-path rules to deletion operands, and parses Bash and PowerShell
@@ -406,7 +406,7 @@ runtime `eval` remain outside its threat model.
 Generate the settings fragment instead of hand-writing it:
 
 ```bash
-scripts/contextmink hook-snippet
+scripts/contextmink guard-hook-snippet
 ```
 
 The generated hook is bound to the directory containing the selected
@@ -424,7 +424,7 @@ config paths are stable across every supported checkout.
 For source-vendored or custom layouts, pass explicit paths:
 
 ```bash
-scripts/contextmink hook-snippet \
+scripts/contextmink guard-hook-snippet \
   --binary F:/repo/tools/contextmink/target/release/contextmink.exe \
   --guard-config F:/repo/.contextmink.toml
 ```
@@ -432,8 +432,12 @@ scripts/contextmink hook-snippet \
 On Windows, Claude `Bash` hooks are shell command strings. Do not put raw
 backslash paths in that string: `F:\repo\tools\contextmink.exe` is parsed by
 Bash as escape sequences and collapses before execution. The generated snippet
-normalizes Windows paths to `F:/repo/...`, quotes paths with spaces, and emits
-PowerShell hooks with the call operator when needed. Prefer the generated
+normalizes Windows paths to `F:/repo/...` and quotes paths with spaces. Every
+matcher's hook, including `PowerShell`, is a POSIX command string because Claude
+launches hooks through its POSIX hook runner; the matcher only selects the
+`--shell` dialect used to parse the intercepted command. A non-default
+`--command-field` pointer is emitted with a scoped `MSYS_NO_PATHCONV=1` prefix so
+Git Bash does not rewrite it. Prefer the generated
 single-string `command` form unless the host's hook schema has been verified to
 support an `args` field.
 

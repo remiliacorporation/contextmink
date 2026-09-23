@@ -22,9 +22,9 @@ pub(crate) const SUBCOMMAND_NAMES: &[&str] = &[
     "setup-project",
     "uninstall-project",
     "capture",
-    "hook-guard",
+    "guard-hook",
     "guard-check",
-    "hook-snippet",
+    "guard-hook-snippet",
 ];
 
 #[derive(Debug, Parser)]
@@ -53,6 +53,13 @@ pub(crate) fn parse_cli(args: &[OsString]) -> Cli {
     match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => {
+            if error.kind() == ErrorKind::InvalidSubcommand
+                && let Some(guidance) = renamed_command_guidance(args)
+            {
+                Cli::command()
+                    .error(ErrorKind::InvalidSubcommand, guidance)
+                    .exit();
+            }
             if matches!(
                 error.kind(),
                 ErrorKind::UnknownArgument
@@ -106,6 +113,24 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
         .iter()
         .find(|(commands, old, _)| commands.contains(&command) && flag_present(old))
         .map(|(_, _, guidance)| *guidance)
+}
+
+/// Guard commands are noun-first; removed spellings name their replacement.
+/// A stale `hook-guard` registration therefore exits 2 (blocking) with the
+/// fix on stderr instead of silently disabling the guard.
+pub(crate) fn renamed_command_guidance(args: &[OsString]) -> Option<&'static str> {
+    args.iter()
+        .skip(1)
+        .find(|arg| !arg.to_string_lossy().starts_with('-'))
+        .and_then(|arg| match arg.to_str()? {
+            "hook-guard" => Some(
+                "`hook-guard` was renamed `guard-hook`, and its `--command-field` now takes a JSON Pointer (`/tool_input/command`); update the hook command, for example by regenerating it with `contextmink guard-hook-snippet`",
+            ),
+            "hook-snippet" => Some(
+                "`hook-snippet` was renamed `guard-hook-snippet`; its output registers `guard-hook`",
+            ),
+            _ => None,
+        })
 }
 
 /// Replacement guidance for one removed flag spelling of `command`.
@@ -967,12 +992,13 @@ pub(crate) enum Command {
     },
     /// Evaluate an agent `PreToolUse` hook payload (JSON on stdin) against the
     /// destructive-command guard; exit 2 blocks the tool call.
-    HookGuard {
+    GuardHook {
         #[arg(
             long = "command-field",
-            default_value = "tool_input.command",
-            value_name = "DOT.PATH",
-            help = "Dot-separated JSON object path of the command string in the hook payload"
+            default_value = crate::guard_hook::DEFAULT_COMMAND_FIELD,
+            value_name = "POINTER",
+            value_parser = crate::guard_hook::parse_command_field,
+            help = "JSON Pointer to the command string in the hook payload (for example /tool_input/command)"
         )]
         command_field: String,
         #[arg(
@@ -1013,8 +1039,11 @@ pub(crate) enum Command {
         )]
         argv: Vec<String>,
     },
-    /// Print a Claude settings fragment that installs hook-guard safely.
-    HookSnippet {
+    /// Print a Claude settings JSON fragment that registers guard-hook.
+    ///
+    /// Only prints the fragment; merging it into a settings file is the
+    /// caller's reviewed edit. Nothing is installed or modified.
+    GuardHookSnippet {
         #[arg(
             long,
             value_name = "FILE",
@@ -1024,7 +1053,7 @@ pub(crate) enum Command {
         #[arg(
             long = "guard-config",
             value_name = "FILE",
-            help = "Config path passed to hook-guard; defaults to --config or discovered .contextmink.toml"
+            help = "Config path passed to guard-hook; defaults to --config or discovered .contextmink.toml"
         )]
         guard_config: Option<PathBuf>,
         #[arg(
@@ -1035,9 +1064,10 @@ pub(crate) enum Command {
         matchers: Vec<String>,
         #[arg(
             long = "command-field",
-            default_value = "tool_input.command",
-            value_name = "DOT.PATH",
-            help = "Dot-separated JSON object path of the command string in the hook payload"
+            default_value = crate::guard_hook::DEFAULT_COMMAND_FIELD,
+            value_name = "POINTER",
+            value_parser = crate::guard_hook::parse_command_field,
+            help = "JSON Pointer to the command string in the hook payload (for example /tool_input/command)"
         )]
         command_field: String,
     },

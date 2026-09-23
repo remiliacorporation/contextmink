@@ -5,12 +5,12 @@ use serde_json::{Value, json};
 
 use crate::config::find_config_path;
 use crate::destructive_guard::ShellDialect;
+use crate::guard_hook::DEFAULT_COMMAND_FIELD;
 use crate::output::emit_json;
 
-const DEFAULT_COMMAND_FIELD: &str = "tool_input.command";
 const DEFAULT_MATCHERS: &[&str] = &["Bash", "PowerShell"];
 
-pub(crate) fn command_hook_snippet(
+pub(crate) fn command_guard_hook_snippet(
     binary: Option<&Path>,
     guard_config: Option<&Path>,
     cli_config: Option<&Path>,
@@ -126,7 +126,7 @@ fn hook_command(
     command_field: &str,
 ) -> String {
     let binary = hook_path(binary);
-    let mut args = vec!["hook-guard".to_owned()];
+    let mut args = vec!["guard-hook".to_owned()];
     if let Some(config) = guard_config {
         args.push("--config".to_owned());
         args.push(hook_path(config));
@@ -142,12 +142,20 @@ fn hook_command(
         args.push(command_field.to_owned());
     }
     // Claude executes every command hook through its POSIX hook runner. `shell`
-    // describes the intercepted command dialect passed to hook-guard; it never
+    // describes the intercepted command dialect passed to guard-hook; it never
     // changes the syntax used to launch the hook itself.
-    std::iter::once(shell_word(&binary, quote_bash))
+    let command = std::iter::once(shell_word(&binary, quote_bash))
         .chain(args.iter().map(|arg| shell_word(arg, quote_bash)))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    // A Windows POSIX hook runner is Git Bash, which would rewrite a leading-`/`
+    // pointer into a Windows path; guard-hook then refuses (exit 2) and blocks
+    // every tool call. Scope the opt-out to this one hook invocation.
+    if command_field == DEFAULT_COMMAND_FIELD {
+        command
+    } else {
+        format!("MSYS_NO_PATHCONV=1 {command}")
+    }
 }
 
 fn hook_path(path: &Path) -> String {
@@ -177,5 +185,5 @@ fn quote_bash(value: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "hook_snippet/tests.rs"]
+#[path = "guard_hook_snippet/tests.rs"]
 mod tests;

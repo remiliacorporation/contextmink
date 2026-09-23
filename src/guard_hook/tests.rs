@@ -7,7 +7,7 @@ use super::{
 use crate::config::DestructiveGuardConfig;
 use crate::destructive_guard::ShellDialect;
 
-const FIELD: &str = "tool_input.command";
+const FIELD: &str = super::DEFAULT_COMMAND_FIELD;
 
 fn protected_config() -> DestructiveGuardConfig {
     DestructiveGuardConfig {
@@ -153,7 +153,7 @@ fn unparseable_payloads_allow_with_note() {
         ("{not json", "not valid JSON"),
         (
             r#"{"tool_name": "Bash"}"#,
-            "has no `tool_input.command` field",
+            "has no `/tool_input/command` field",
         ),
         (r#"{"tool_input": {"command": 42}}"#, "is not a string"),
     ] {
@@ -170,10 +170,27 @@ fn unparseable_payloads_allow_with_note() {
 #[test]
 fn custom_command_field_path_is_honored() {
     let raw = r#"{"cmd": "git clean -fd"}"#;
-    match evaluate_hook_payload(raw, "cmd", &protected_config(), false) {
+    match evaluate_hook_payload(raw, "/cmd", &protected_config(), false) {
         HookVerdict::Deny { message } => assert!(message.contains("git clean")),
         other => panic!("expected deny via custom field, got {other:?}"),
     }
+    // RFC 6901 escapes address keys containing `/` or `~`.
+    let escaped = r#"{"a/b": {"c~d": "git clean -fd"}}"#;
+    assert!(matches!(
+        evaluate_hook_payload(escaped, "/a~1b/c~0d", &protected_config(), false),
+        HookVerdict::Deny { .. }
+    ));
+}
+
+#[test]
+fn command_field_accepts_only_json_pointers() {
+    assert_eq!(
+        super::parse_command_field("/tool_input/command").unwrap(),
+        "/tool_input/command"
+    );
+    let refusal = super::parse_command_field("tool_input.command").unwrap_err();
+    assert!(refusal.contains("`/tool_input/command`"), "{refusal}");
+    assert!(super::parse_command_field("").is_err());
 }
 
 #[test]

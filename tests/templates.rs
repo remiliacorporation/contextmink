@@ -298,7 +298,7 @@ fn release_workflow_verifies_extracted_project_integration() {
         ".agents/skills/contextmink/SKILL.md",
         ".claude/skills/contextmink/SKILL.md",
         "scripts/contextmink --json guard-check",
-        "scripts/contextmink --json hook-snippet",
+        "scripts/contextmink --json guard-hook-snippet",
         "child_exit_code",
         "child_exit_zero",
         "exit_expected",
@@ -499,7 +499,7 @@ fn launcher_builds_workspace_member_at_the_path_it_executes() {
 fn launcher_declares_json_pointer_filter_exclusions() {
     let launcher = include_str!("../templates/scripts/contextmink");
 
-    assert!(launcher.contains("--at | --fields)"));
+    assert!(launcher.contains("--at | --fields | --command-field)"));
     assert!(launcher.contains("--where | --where-contains | --key-contains"));
     assert!(launcher.contains("--where=*/* | --where-contains=*/* | --key-contains=*/*"));
 }
