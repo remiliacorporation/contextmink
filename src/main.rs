@@ -49,7 +49,40 @@ use outline::command_outline;
 use sqlite::{command_sqlite, command_sqlite_schema};
 use text::{TermMode, TextMatcher, collect_terms};
 
+/// Exit code that hook protocols treat as "block this tool call"; any other
+/// nonzero exit is a non-blocking hook error that lets the tool call run.
+const GUARD_HOOK_EXIT_BLOCK: i32 = 2;
+
 fn main() -> Result<()> {
+    use std::io::Write as _;
+
+    // Decide hook mode from raw argv before any other work, so every later
+    // failure (the personal-install self-check, argv rewriting, policy
+    // loading, payload reading, or a panic) blocks instead of failing open.
+    let guard_hook =
+        cli::selected_subcommand(&std::env::args_os().collect::<Vec<_>>()) == Some("guard-hook");
+    if guard_hook {
+        std::panic::set_hook(Box::new(|info| {
+            let message = format!(
+                "BLOCKED by contextmink guard-hook: the guard panicked before reaching a decision ({info}); this is a Contextmink defect: report it, then install a fixed release with setup-user or setup-project"
+            );
+            let _ = writeln!(std::io::stderr(), "{message}"); // guardrail: allow-ignore-result exit 2 must not depend on stderr
+            std::process::exit(GUARD_HOOK_EXIT_BLOCK);
+        }));
+    }
+    match run_on_application_thread() {
+        Err(error) if guard_hook => {
+            let message = format!(
+                "BLOCKED by contextmink guard-hook: the guard cannot evaluate commands, so it blocks every tool call until this is fixed: {error:#}"
+            );
+            let _ = writeln!(std::io::stderr(), "{message}"); // guardrail: allow-ignore-result exit 2 must not depend on stderr
+            std::process::exit(GUARD_HOOK_EXIT_BLOCK);
+        }
+        result => result,
+    }
+}
+
+fn run_on_application_thread() -> Result<()> {
     #[cfg(windows)]
     {
         // The derived clap command graph is intentionally broad. Rust's
@@ -79,12 +112,7 @@ fn run_application() -> Result<()> {
         &args,
         &msys_arguments::MsysEnvironment::from_process(),
     ) {
-        if cli::selected_subcommand(&args) == Some("guard-hook") {
-            // The hook protocol treats only exit 2 as blocking; a rewritten
-            // hook argument must not silently disable the guard.
-            eprintln!("contextmink guard-hook: {refusal}");
-            std::process::exit(2);
-        }
+        // Under guard-hook, main turns this into a blocking exit.
         return Err(anyhow!(refusal));
     }
     let cli = parse_cli(&args);
@@ -194,10 +222,7 @@ fn run_application() -> Result<()> {
     let config = match load_context_config(cli.config.as_deref(), cli.no_config) {
         Ok(config) => config,
         Err(error) if matches!(cli.command, Command::GuardHook { .. }) => {
-            eprintln!(
-                "contextmink guard-hook: destructive-command policy could not be loaded: {error:#}"
-            );
-            std::process::exit(2);
+            return Err(error.context("destructive-command policy could not be loaded"));
         }
         Err(error) => return Err(error),
     };

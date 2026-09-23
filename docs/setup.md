@@ -58,11 +58,13 @@ an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
 A host-local `user-install.json` records the tool version, the installed skill
-and reference paths, and raw byte hashes of the installed executables. Setup
-writes the release's files at those paths, whatever they currently contain. The
-installed runtime refuses a missing receipt, a missing file, or an executable
-that differs from its receipt. Run repair or upgrade from an external release,
-not the installed executable. Installation preflights
+and reference paths, and raw byte hashes of the installed executables.
+Ownership is by path: setup writes the release's files at every owned path,
+whatever they currently contain, and `uninstall-user` removes every owned path
+without comparing content. The hashes exist because the installed runtime
+checks them before each run: it refuses a missing receipt, a missing file, or an
+executable that differs from its receipt. Run repair or upgrade from an external
+release, not the installed executable. Installation preflights
 all managed paths. On Windows, setup and removal also check existing executables
 that need replacement or removal for write access before changing any files,
 including during `--dry-run`. Close running tool processes when this check refuses.
@@ -71,8 +73,8 @@ preflight; this is not a crash-atomic multi-file transaction. An interrupted
 install must be repaired before the runtime can run.
 
 `uninstall-user --dry-run` previews removal. `uninstall-user` removes the
-receipt's skill and reference files, removes its executables while their bytes
-match the receipt, and retains the lifecycle receipt;
+receipt's skill, reference and executable paths without comparing their
+content, and retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -277,8 +279,11 @@ Adapt the installation to the project before copying generic policy:
    ownership of the additive `.gitignore` block or file it created. The skill
    target determines which launcher, skill, and reference paths the receipt
    owns. The ignored host-local `tools/contextmink/bin/runtime-install.json`
-   records raw SHA-256 identities for installed binaries, avoiding platform
-   bytes in the tracked receipt. Neither receipt claims
+   (`contextmink.runtime_install.v2`) records the binary paths this checkout
+   owns, without hashes, so a checkout shared between Windows and WSL keeps
+   the other platform's binary. Setup reads a v1 runtime receipt once and
+   rewrites it; an older or unknown one is refused until it is moved aside and
+   setup-project reruns. Neither receipt claims
    `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, or unrelated
    skills.
 
@@ -354,11 +359,12 @@ Windows PowerShell:
 
 The command requires `tools/contextmink/project-install.json`. It removes the
 skills, launchers, and integration reference that the receipt's skill target
-implies, host binaries whose raw hashes match
-`tools/contextmink/bin/runtime-install.json`, and an exact receipt-owned
-Contextmink `.gitignore` block, and prunes only empty Contextmink-owned
-directories. It refuses a receipt-owned binary whose bytes differ before any
-deletion and reports unreceipted runtime files as `preserve_unowned`. It
+implies, every host binary path that
+`tools/contextmink/bin/runtime-install.json` owns (without comparing content),
+and an exact receipt-owned Contextmink `.gitignore` block, and prunes only
+empty Contextmink-owned directories. It refuses a symlink or non-file at an
+owned path before any deletion and reports unreceipted runtime files as
+`preserve_unowned`. It
 preserves
 `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, harness settings, and unrelated
 skills; review those repository-owned files and remove any obsolete discovery
@@ -389,7 +395,14 @@ It preserves quoting and command boundaries, resolves Git's actual subcommand,
 binds protected-path rules to deletion operands, and parses Bash and PowerShell
 escaping according to the matcher that invoked it. It reads Claude's hook
 payload JSON on stdin and exits 2 only for a recognized destructive command.
-An explicit or discovered policy that cannot be loaded also exits 2; an
+Any failure before or during guard evaluation also exits 2: a policy that
+cannot be loaded, a failed personal-install self-check, a rewritten argument,
+or an internal error. While the personal install is broken, the hook blocks
+every command, harmless ones included, because it cannot vouch for any; rerun
+`setup-user` from a verified release to restore it. This needs an executable
+that starts: a missing or unloadable binary exits with the shell's own status,
+which the harness does not treat as a block, so remove the hook registration
+before `uninstall-user`. An
 unparseable hook-event payload still allows with a diagnostic so harness schema
 drift does not disable all shell use. The evaluator is a tripwire, not a shell
 interpreter: literal POSIX assignments such as `c=clean; git $c` are resolved,

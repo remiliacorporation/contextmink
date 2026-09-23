@@ -934,6 +934,11 @@ pub(crate) enum Command {
     },
     /// Evaluate an agent `PreToolUse` hook payload (JSON on stdin) against the
     /// destructive-command guard; exit 2 blocks the tool call.
+    ///
+    /// Any failure before or during evaluation also exits 2, including a
+    /// failed personal-install self-check: while the install is broken, every
+    /// command is blocked until setup-user repairs it. A missing or unloadable
+    /// executable cannot exit 2; remove the hook before uninstall-user.
     GuardHook {
         #[arg(
             long = "command-field",

@@ -11,7 +11,7 @@ use crate::user_installation::{
 };
 use anyhow::{Context, Result, bail};
 
-use crate::config::project_setup::receipt::managed_runtime_sha256 as sha256;
+use crate::digest::sha256;
 const TOOL: &str = "contextmink";
 const SKILL: &str = include_str!("../templates/skills/contextmink/SKILL.md");
 const BRIDGE_SKILL: &str = include_str!("../templates/skills/contextmink-bridge/SKILL.md");
@@ -199,27 +199,15 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
     for relative in selected_paths {
         let path = validate_path(&home, &relative)?;
         let existing = read_optional(&path)?;
-        let owned_hash = previous
-            .as_ref()
-            .and_then(|r| r.runtime_files.get(&relative));
+        // Ownership is by path: setup writes and uninstall removes every owned
+        // path whatever it contains. The runtime hashes in the receipt exist
+        // only for `verify_runtime`, which checks them before each run.
         let action = match (existing.as_ref(), wanted.get(&relative)) {
             (Some(old), Some(new)) if old == new => "unchanged",
             (Some(_), Some(_)) => "replace",
             (None, Some(_)) => "create",
             (None, None) => "absent",
-            // Removal: text is owned by path; an executable only while its
-            // bytes still match the receipt.
-            (Some(old), None) => {
-                if runtime_paths().contains(&relative)
-                    && !owned_hash.is_some_and(|hash| *hash == sha256(old))
-                {
-                    bail!(
-                        "personal runtime {} differs from its receipt; restore it or move it aside, then rerun uninstall-user",
-                        path.display()
-                    );
-                }
-                "remove"
-            }
+            (Some(_), None) => "remove",
         };
         #[cfg(windows)]
         if matches!(action, "replace" | "remove")

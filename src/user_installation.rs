@@ -1,5 +1,5 @@
 //! Receipt and integrity boundary shared by both personally installed executables.
-use crate::config::project_setup::receipt::managed_runtime_sha256 as sha256;
+use crate::digest::sha256;
 use anyhow::{Context, Result, bail};
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
@@ -12,8 +12,9 @@ pub(crate) const RECEIPT_SCHEMA: &str = "contextmink.user_install.v2";
 /// Read once so an upgrade or removal can rewrite it as the current schema.
 const PREVIOUS_RECEIPT_SCHEMA: &str = "contextmink.user_install.v1";
 
-/// Personal ownership: executables are bound to their raw-byte SHA-256, while
-/// release-managed skill and reference text is owned by path alone.
+/// Personal ownership is by path: setup writes and uninstall removes every
+/// owned path without comparing content. Executables also record their raw-byte
+/// SHA-256 because `verify_runtime` checks them before each run.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Receipt {
@@ -101,7 +102,7 @@ pub(crate) fn bridge_path() -> String {
     format!("{}/bin/contextmink-bridge.exe", personal_root())
 }
 
-/// Installed executables, which the receipt binds by content hash.
+/// Installed executables, whose hashes the runtime checks before each run.
 pub(crate) fn runtime_paths() -> Vec<String> {
     let mut paths = vec![binary_path()];
     if cfg!(windows) {
@@ -156,7 +157,9 @@ pub(crate) fn validate_path(home: &Path, relative: &str) -> Result<PathBuf> {
 
 /// A personal runtime refuses a torn or divergent installation before doing work.
 pub(crate) fn verify_runtime() -> Result<()> {
-    let exe = std::env::current_exe()?;
+    let exe = std::env::current_exe().with_context(|| {
+        format!("cannot resolve the running {TOOL} executable; run it by its installed path")
+    })?;
     let Some(root) = exe.parent().and_then(Path::parent) else {
         return Ok(());
     };
@@ -187,16 +190,20 @@ pub(crate) fn verify_runtime() -> Result<()> {
         )
     })?;
     let receipt = parse_receipt(&bytes)?;
+    let identity_differs = || {
+        format!(
+            "personal installation identity differs; run {TOOL} setup-user from a verified external release"
+        )
+    };
     let expected_root = receipt.home.join(personal_root());
     if !receipt.installed
         || receipt.schema != RECEIPT_SCHEMA
         || receipt.version != env!("CARGO_PKG_VERSION")
-        || fs::canonicalize(expected_root)? != fs::canonicalize(root)?
+        || fs::canonicalize(expected_root).with_context(identity_differs)?
+            != fs::canonicalize(root).with_context(identity_differs)?
         || !receipt.owns_current_paths()
     {
-        bail!(
-            "personal installation identity differs; run {TOOL} setup-user from a verified external release"
-        );
+        bail!(identity_differs());
     }
     for (relative, hash) in &receipt.runtime_files {
         let file = validate_path(&receipt.home, relative)?;

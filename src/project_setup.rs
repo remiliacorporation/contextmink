@@ -14,9 +14,9 @@ pub(crate) mod receipt;
 
 use receipt::{
     INSTALL_RECEIPT_PATH, MANAGED_RUNTIME_PATHS, RUNTIME_RECEIPT_PATH, build_install_receipt,
-    build_runtime_receipt, load_install_receipt, load_runtime_receipt, managed_runtime_sha256,
-    receipt_bytes, refuse_release_downgrade, refuse_runtime_release_downgrade,
-    runtime_receipt_bytes, same_managed_text, validate_managed_runtime_path,
+    build_runtime_receipt, load_install_receipt, load_runtime_receipt, receipt_bytes,
+    refuse_release_downgrade, refuse_runtime_release_downgrade, runtime_receipt_bytes,
+    same_managed_text, validate_managed_runtime_path,
 };
 
 const BASH_LAUNCHER: &[u8] = include_bytes!("../templates/scripts/contextmink");
@@ -412,41 +412,34 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         .filter(|file| file.ownership == SetupFileOwnership::ReleaseManagedRuntime)
         .map(|file| normalized_path(&file.relative_path))
         .collect::<HashSet<_>>();
+    // A receipt-owned binary this host does not install (the other platform's,
+    // in a checkout shared between hosts) stays owned while a file is there.
     let mut retained_runtime = Vec::new();
     let mut prior_runtime_paths = HashSet::new();
     if let Some(prior) = &prior_runtime_receipt {
-        for prior_file in &prior.managed_files {
-            prior_runtime_paths.insert(prior_file.path.clone());
-            if desired_runtime_paths.contains(&prior_file.path) {
+        for prior_path in &prior.managed_paths {
+            prior_runtime_paths.insert(prior_path.clone());
+            if desired_runtime_paths.contains(prior_path) {
                 continue;
             }
-            let relative = PathBuf::from(&prior_file.path);
+            let relative = PathBuf::from(prior_path);
             validate_managed_runtime_path(&relative)?;
             validate_destination(&root, &relative)?;
             let destination = root.join(&relative);
             if !destination.exists() {
                 continue;
             }
-            let existing = fs::read(&destination).with_context(|| {
-                format!("read retained managed runtime {}", destination.display())
-            })?;
-            if managed_runtime_sha256(&existing) == prior_file.sha256 {
-                retained_runtime.push(prior_file.clone());
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::Unchanged,
-                });
-            } else if request.dry_run {
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::ModifiedRefusal,
-                });
-            } else {
+            if !destination.is_file() {
                 return Err(anyhow!(
-                    "setup-project refuses modified receipt-owned runtime {}; restore or move it deliberately, then rerun setup-project",
+                    "setup-project cannot keep non-file receipt-owned runtime {}; move it aside deliberately, then rerun setup-project",
                     destination.display()
                 ));
             }
+            retained_runtime.push(prior_path.clone());
+            actions.push(SetupAction {
+                path: relative,
+                action: SetupActionKind::Unchanged,
+            });
         }
     }
     for relative in MANAGED_RUNTIME_PATHS {
@@ -671,7 +664,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         .any(|action| action.action == SetupActionKind::PreserveUnowned)
     {
         next_actions.push(
-            "Review each preserve_unowned runtime path; setup did not claim, replace, or remove bytes without a matching host receipt."
+            "Review each preserve_unowned runtime path; setup does not claim, replace, or remove a runtime path that runtime-install.json does not own."
                 .to_owned(),
         );
     }
@@ -744,9 +737,10 @@ pub(crate) fn uninstall_project(
 
     let mut runtime_receipt_paths = HashSet::new();
     if let Some(runtime_receipt) = &runtime_receipt {
-        for file in &runtime_receipt.managed_files {
-            runtime_receipt_paths.insert(file.path.clone());
-            let relative = PathBuf::from(&file.path);
+        // Owned by path: remove whatever regular file is at an owned path.
+        for owned in &runtime_receipt.managed_paths {
+            runtime_receipt_paths.insert(owned.clone());
+            let relative = PathBuf::from(owned);
             validate_managed_runtime_path(&relative)?;
             validate_destination(&root, &relative)?;
             let destination = root.join(&relative);
@@ -759,7 +753,7 @@ pub(crate) fn uninstall_project(
             }
             if !destination.is_file() {
                 return Err(anyhow!(
-                    "uninstall-project managed runtime is not a file: {}",
+                    "uninstall-project cannot remove non-file managed runtime {}; move it aside deliberately, then rerun uninstall-project",
                     destination.display()
                 ));
             }
@@ -772,25 +766,11 @@ pub(crate) fn uninstall_project(
                     destination.display()
                 ));
             }
-            let existing = fs::read(&destination)
-                .with_context(|| format!("read managed runtime {}", destination.display()))?;
-            if managed_runtime_sha256(&existing) == file.sha256 {
-                removable_paths.push(relative.clone());
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::RemoveManaged,
-                });
-            } else if request.dry_run {
-                actions.push(SetupAction {
-                    path: relative,
-                    action: SetupActionKind::ModifiedRefusal,
-                });
-            } else {
-                return Err(anyhow!(
-                    "uninstall-project refuses modified managed runtime {}; restore or move it deliberately, then rerun uninstall-project",
-                    destination.display()
-                ));
-            }
+            removable_paths.push(relative.clone());
+            actions.push(SetupAction {
+                path: relative,
+                action: SetupActionKind::RemoveManaged,
+            });
         }
         removable_paths.push(runtime_receipt_relative.to_path_buf());
         actions.push(SetupAction {
@@ -889,7 +869,7 @@ pub(crate) fn uninstall_project(
         .any(|action| action.action == SetupActionKind::PreserveUnowned)
     {
         next_actions.push(
-            "Review each preserve_unowned runtime path manually; uninstall-project retained it because no matching host receipt proved ownership."
+            "Review each preserve_unowned runtime path manually; uninstall-project retained it because runtime-install.json does not own that path."
                 .to_owned(),
         );
     }
@@ -1890,22 +1870,21 @@ mod tests {
     }
 
     #[test]
-    fn runtime_receipt_hashes_binary_bytes_and_blocks_modified_removal() {
+    fn uninstall_removes_a_divergent_binary() {
         let (project, binary) = fixture("runtime-receipt");
         setup_project(request(&project, &binary, false)).unwrap();
+        let written_receipt = fs::read_to_string(project.join(RUNTIME_RECEIPT_PATH)).unwrap();
+        assert!(!written_receipt.contains("sha256"));
         let runtime_receipt = load_runtime_receipt(&project.join(RUNTIME_RECEIPT_PATH))
             .unwrap()
             .unwrap();
-        assert!(!runtime_receipt.managed_files.is_empty());
-        for file in &runtime_receipt.managed_files {
-            let content = fs::read(project.join(&file.path)).unwrap();
-            assert_eq!(file.sha256, managed_runtime_sha256(&content));
-        }
-
-        let installed = project.join(format!(
+        let installed_relative = format!(
             "tools/contextmink/bin/contextmink{}",
             std::env::consts::EXE_SUFFIX
-        ));
+        );
+        assert!(runtime_receipt.managed_paths.contains(&installed_relative));
+
+        let installed = project.join(&installed_relative);
         fs::write(&installed, "modified runtime\n").unwrap();
         let dry_run = uninstall_project(UninstallProjectRequest {
             project_root: &project,
@@ -1913,28 +1892,57 @@ mod tests {
             dry_run: true,
         })
         .unwrap();
-        assert!(!dry_run.ready);
+        assert!(dry_run.ready);
         assert!(dry_run.actions.iter().any(|action| {
-            action.path == installed.strip_prefix(&project).unwrap()
-                && action.action == SetupActionKind::ModifiedRefusal
+            action.path == Path::new(&installed_relative)
+                && action.action == SetupActionKind::RemoveManaged
         }));
-        assert!(
-            uninstall_project(UninstallProjectRequest {
+        assert_eq!(fs::read(&installed).unwrap(), b"modified runtime\n");
+
+        let result = uninstall_project(UninstallProjectRequest {
+            project_root: &project,
+            running_binary: Some(&binary),
+            dry_run: false,
+        })
+        .unwrap();
+        assert!(result.ready);
+        assert!(!installed.exists());
+        assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
+        assert!(!project.join(RUNTIME_RECEIPT_PATH).exists());
+        cleanup(&project);
+    }
+
+    #[test]
+    fn uninstall_refuses_a_non_file_at_an_owned_runtime_path() {
+        let (project, binary) = fixture("runtime-non-file");
+        setup_project(request(&project, &binary, false)).unwrap();
+        let installed = project.join(format!(
+            "tools/contextmink/bin/contextmink{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        fs::remove_file(&installed).unwrap();
+        fs::create_dir(&installed).unwrap();
+        for dry_run in [true, false] {
+            let error = uninstall_project(UninstallProjectRequest {
                 project_root: &project,
                 running_binary: Some(&binary),
-                dry_run: false,
+                dry_run,
             })
             .unwrap_err()
-            .to_string()
-            .contains("modified managed runtime")
-        );
+            .to_string();
+            assert!(
+                error.contains("cannot remove non-file managed runtime"),
+                "{error}"
+            );
+        }
+        assert!(installed.is_dir());
         assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
         assert!(project.join(RUNTIME_RECEIPT_PATH).is_file());
         cleanup(&project);
     }
 
     #[test]
-    fn setup_retains_hash_matching_runtime_from_another_host() {
+    fn setup_keeps_and_uninstall_removes_the_other_hosts_owned_binary() {
         let (project, binary) = fixture("cross-host-runtime");
         setup_project(request(&project, &binary, false)).unwrap();
         let alternate = if std::env::consts::EXE_SUFFIX.is_empty() {
@@ -1947,32 +1955,75 @@ mod tests {
         let mut runtime_receipt = load_runtime_receipt(&runtime_receipt_path)
             .unwrap()
             .unwrap();
-        runtime_receipt
-            .managed_files
-            .push(receipt::ManagedFileReceipt {
-                path: alternate.to_owned(),
-                sha256: managed_runtime_sha256(b"alternate host binary\n"),
-            });
+        runtime_receipt.managed_paths.push(alternate.to_owned());
         fs::write(
             &runtime_receipt_path,
             runtime_receipt_bytes(&runtime_receipt).unwrap(),
         )
         .unwrap();
 
+        // The other host rebuilt its binary; ownership does not depend on bytes.
+        fs::write(project.join(alternate), "rebuilt alternate host binary\n").unwrap();
         setup_project(request(&project, &binary, false)).unwrap();
         let upgraded = load_runtime_receipt(&runtime_receipt_path)
             .unwrap()
             .unwrap();
-        assert!(
-            upgraded
-                .managed_files
-                .iter()
-                .any(|file| file.path == alternate)
-        );
+        assert!(upgraded.managed_paths.iter().any(|path| path == alternate));
         assert_eq!(
             fs::read(project.join(alternate)).unwrap(),
-            b"alternate host binary\n"
+            b"rebuilt alternate host binary\n"
         );
+
+        uninstall_project(UninstallProjectRequest {
+            project_root: &project,
+            running_binary: Some(&binary),
+            dry_run: false,
+        })
+        .unwrap();
+        assert!(!project.join(alternate).exists());
+        cleanup(&project);
+    }
+
+    #[test]
+    fn setup_rewrites_a_previous_runtime_receipt_and_drops_absent_paths() {
+        let (project, binary) = fixture("previous-runtime-receipt");
+        setup_project(request(&project, &binary, false)).unwrap();
+        let installed = format!(
+            "tools/contextmink/bin/contextmink{}",
+            std::env::consts::EXE_SUFFIX
+        );
+        let absent = if std::env::consts::EXE_SUFFIX.is_empty() {
+            "tools/contextmink/bin/contextmink.exe"
+        } else {
+            "tools/contextmink/bin/contextmink"
+        };
+        let runtime_receipt_path = project.join(RUNTIME_RECEIPT_PATH);
+        fs::write(
+            &runtime_receipt_path,
+            serde_json::json!({
+                "schema": "contextmink.runtime_install.v1",
+                "contextmink_version": env!("CARGO_PKG_VERSION"),
+                "managed_files": [
+                    {"path": installed, "sha256": "0".repeat(64)},
+                    {"path": absent, "sha256": "0".repeat(64)},
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let result = setup_project(request(&project, &binary, false)).unwrap();
+        assert!(result.actions.iter().any(|action| {
+            action.path == Path::new(RUNTIME_RECEIPT_PATH)
+                && action.action == SetupActionKind::Replace
+        }));
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(&runtime_receipt_path).unwrap()).unwrap();
+        assert_eq!(written["schema"], "contextmink.runtime_install.v2");
+        assert!(written.get("managed_files").is_none());
+        let owned = written["managed_paths"].as_array().unwrap();
+        assert!(owned.iter().any(|path| *path == installed.as_str()));
+        assert!(!owned.iter().any(|path| *path == absent));
         cleanup(&project);
     }
 
@@ -2001,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_preserves_runtime_without_hash_ownership() {
+    fn uninstall_preserves_runtime_without_receipt_ownership() {
         let (project, binary) = fixture("unowned-runtime");
         setup_project(request(&project, &binary, false)).unwrap();
         fs::remove_file(project.join(RUNTIME_RECEIPT_PATH)).unwrap();

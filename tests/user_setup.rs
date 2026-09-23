@@ -292,6 +292,64 @@ fn personal_setup_writes_release_text_and_owns_it_by_path() {
     assert!(!f.skill().exists());
 }
 
+/// Run the personally installed runtime as a Claude PreToolUse hook.
+fn personal_guard_hook(f: &Fixture, command: &str) -> Output {
+    use std::io::Write;
+    let mut child = Command::new(f.runtime())
+        .args(["guard-hook", "--no-config"])
+        .current_dir(&f.0)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            serde_json::json!({"tool_input": {"command": command}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn assert_hook_blocks_while_broken(f: &Fixture) {
+    // A broken install cannot vouch for any command, so the guard blocks
+    // harmless commands too; exit 1 would let the harness run them unguarded.
+    for command in ["git clean -x", "ls"] {
+        let hook = personal_guard_hook(f, command);
+        let stderr = String::from_utf8_lossy(&hook.stderr);
+        assert_eq!(hook.status.code(), Some(2), "{command}: {stderr}");
+        assert!(
+            stderr.contains("BLOCKED by contextmink guard-hook"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("setup-user"), "{stderr}");
+    }
+}
+
+#[test]
+fn guard_hook_blocks_every_command_while_the_personal_install_is_broken() {
+    let f = Fixture::new();
+    f.install();
+    assert_eq!(personal_guard_hook(&f, "ls").status.code(), Some(0));
+    let healthy = personal_guard_hook(&f, "git clean -x");
+    assert_eq!(healthy.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&healthy.stderr).contains("BLOCKED by contextmink guard-hook"));
+
+    fs::remove_file(f.skill()).unwrap();
+    assert_hook_blocks_while_broken(&f);
+
+    f.install();
+    let mut tampered = fs::read(f.runtime()).unwrap();
+    tampered.extend_from_slice(b"tampered");
+    fs::write(f.runtime(), tampered).unwrap();
+    assert_hook_blocks_while_broken(&f);
+}
+
 #[test]
 fn personal_runtime_divergence_and_missing_text_fail_closed() {
     let f = Fixture::new();
@@ -316,15 +374,26 @@ fn personal_runtime_divergence_and_missing_text_fail_closed() {
     }
     f.install();
 
+    // A tampered executable that still loads refuses to run: the receipt hash
+    // is checked before any work.
+    let mut tampered = fs::read(f.runtime()).unwrap();
+    tampered.extend_from_slice(b"tampered");
+    fs::write(f.runtime(), tampered).unwrap();
+    let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
+    assert!(!runtime.status.success());
+    assert!(String::from_utf8_lossy(&runtime.stderr).contains("differs from its receipt"));
+    assert!(runtime.stdout.is_empty());
+
+    // Ownership is by path: uninstall removes a divergent binary.
     fs::write(f.runtime(), b"divergent runtime").unwrap();
-    let before = snapshot(&f.0);
     let removal = f.run(&["uninstall-user"]);
-    assert!(!removal.status.success());
-    assert!(String::from_utf8_lossy(&removal.stderr).contains("differs from its receipt"));
-    assert_eq!(snapshot(&f.0), before);
-    f.install();
-    assert!(f.run(&["uninstall-user"]).status.success());
+    assert!(
+        removal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
     assert!(!f.runtime().exists());
+    assert!(!f.skill().exists());
 }
 
 #[test]

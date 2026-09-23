@@ -80,17 +80,18 @@ an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
 A host-local `user-install.json` records the tool version, the installed skill
-and reference paths, and raw byte hashes of the installed executables. Setup
-writes the release's files at those paths, whatever they currently contain. The
-installed runtime refuses a missing receipt, a missing file, or an executable
-that differs from its receipt. Run repair or upgrade from an external release,
-not the installed executable. Installation preflights
+and reference paths, and raw byte hashes of the installed executables.
+Ownership is by path: setup writes the release's files at every owned path,
+whatever they currently contain. The hashes exist because the installed runtime
+checks them before each run: it refuses a missing receipt, a missing file, or an
+executable that differs from its receipt. Run repair or upgrade from an external
+release, not the installed executable. Installation preflights
 all managed paths, but does not promise a crash-atomic multi-file transaction;
 an interrupted install must be repaired before the runtime can run.
 
 `uninstall-user --dry-run` previews removal. `uninstall-user` removes the
-receipt's skill and reference files, removes its executables while their bytes
-match the receipt, and retains the lifecycle receipt;
+receipt's skill, reference and executable paths without comparing their
+content, and retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -244,8 +245,13 @@ concrete choice instead of redetecting opportunistically. Launchers, skills,
 and the integration reference are written as the release ships them. An
 explicit target removes deselected skill files; an unreceipted file at a
 deselected Contextmink skill path makes the plan unready until it is resolved
-manually. The ignored `tools/contextmink/bin/runtime-install.json` records raw
-byte hashes of the host binaries this checkout installed. Dry-run JSON uses
+manually. The ignored `tools/contextmink/bin/runtime-install.json`
+(`contextmink.runtime_install.v2`) records the host binary paths this checkout
+owns, without hashes: nothing checks a project binary's content before it runs.
+The path list lets a checkout shared between Windows and WSL keep the other
+platform's binary. Setup reads a `contextmink.runtime_install.v1` receipt once
+and rewrites it; an older or unknown runtime receipt is refused until it is
+moved aside and setup-project reruns. Dry-run JSON uses
 `contextmink.project_setup.v3`, with `requested_skill_target`,
 `resolved_skill_target`, and `ready` fields. An existing
 `.contextmink.toml` is repository-owned: setup validates it with the real
@@ -276,8 +282,9 @@ project:
 ```
 
 Removal requires the ownership receipt. It removes the launchers, skills, and
-integration reference that the receipt's skill target implies, removes host
-binaries whose bytes match `runtime-install.json`, and preserves
+integration reference that the receipt's skill target implies, removes every
+host binary path `runtime-install.json` owns without comparing content, and
+preserves
 `.contextmink.toml`, `AGENTS.md`, `CLAUDE.md`, unrelated harness content, and
 any runtime file without proven ownership. Review those repository-owned or
 retained files afterward and remove them only when the project does not want
@@ -393,9 +400,9 @@ below is the short map.
   frozen `--skill-target` selection and `--dry-run`, and writes release-managed
   files as the release ships them.
 - `uninstall-project` — remove receipt-owned launchers, skills, integration
-  reference, and hash-matching host binaries while preserving repository-owned
-  configuration, guidance, and unowned runtime files. Supports `--dry-run` and
-  refuses a receipt-owned binary whose bytes differ from its receipt.
+  reference, and host binaries by path while preserving repository-owned
+  configuration, guidance, and unowned runtime files. Supports `--dry-run`;
+  refuses a symlink or non-file at an owned path.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
   positional DB argument. `--with-shadow-tables` and `--with-system-tables`
   include virtual-table shadow tables and `sqlite_*` tables.
@@ -573,8 +580,16 @@ successful outer workflow. Use `--receipt-out <file>` to write the full capture
   note instead of applying foreign config. Raw backslash
   paths such as `F:\repo\tools\contextmink.exe` are wrong inside a Bash hook:
   Bash treats the backslashes as escapes and tries to execute a collapsed path.
-  A discovered or explicit policy that cannot be loaded fails closed with exit
-  2. Unparseable hook-event payloads allow with a stderr note: the guard blocks recognized
+  Any failure before or during guard evaluation fails closed with exit 2: a
+  discovered or explicit policy that cannot be loaded, a failed
+  personal-install self-check, a rewritten argument, or an internal error.
+  While the personal install is broken, `guard-hook` blocks every command,
+  harmless ones included, because it cannot vouch for any; the stderr message
+  names the repair (rerun `setup-user` from a verified release).
+  This needs an executable that starts: a missing or unloadable binary exits
+  with the shell's own status, which the harness does not treat as a block, so
+  remove the hook registration before `uninstall-user`.
+  Unparseable hook-event payloads allow with a stderr note: the guard blocks recognized
   destructive commands, it does not validate harness payloads (fail-closed
   payload handling turns any schema drift into a total shell outage).
 - Broad scans cross nested Git repository roots by default, including tracked

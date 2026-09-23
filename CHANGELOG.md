@@ -13,8 +13,21 @@ All notable user-visible changes are documented here. Contextmink follows
   version, and `uninstall-project`/`uninstall-user` remove them, whether or
   not they were edited. Keep project-specific guidance in `AGENTS.md`,
   `CLAUDE.md` or `.contextmink.toml`, which setup never overwrites. Host
-  binaries are still identity-checked: uninstall refuses a binary that differs
-  from its runtime receipt.
+  binaries follow the same rule: setup writes and `uninstall-project`/
+  `uninstall-user` remove every owned binary path without comparing content.
+  The personally installed runtime still refuses to run when its binary
+  differs from `user-install.json`.
+- The project runtime receipt `tools/contextmink/bin/runtime-install.json` is
+  `contextmink.runtime_install.v2` and records owned binary paths only, no
+  hashes. The next `setup-project` rewrites a v1 runtime receipt; an older one
+  is refused: move it aside and rerun `setup-project`.
+- `guard-hook` fails closed on any failure before or during evaluation,
+  including a failed personal-install self-check (for example a deleted
+  personal skill or a tampered runtime): it exits 2 and blocks every command,
+  harmless ones included, until `setup-user` repairs the install. Claude Code
+  treats any other nonzero hook exit as non-blocking, so this protection needs
+  an executable that starts: remove the hook registration before
+  `uninstall-user`.
 - Project receipts are `contextmink.project_install.v3` and personal receipts
   `contextmink.user_install.v2`; neither records file hashes. The next
   `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.

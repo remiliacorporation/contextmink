@@ -51,7 +51,7 @@ pub(crate) fn command_guard_hook(
     let mut raw = String::new();
     std::io::stdin()
         .read_to_string(&mut raw)
-        .context("guard-hook: reading hook payload from stdin")?;
+        .context("cannot read the hook payload from stdin; register guard-hook as a harness command hook that pipes the event JSON (see `contextmink guard-hook-snippet`)")?;
     match evaluate_hook_payload_for_root(
         &raw,
         command_field,
