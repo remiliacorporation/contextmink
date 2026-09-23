@@ -224,7 +224,7 @@ pub fn user(binary: &Path) -> Result<()> {
     let result: Value = serde_json::from_str(&run(
         &runtime,
         &project,
-        &["--json", "files", ".", "--limit", "10"],
+        &["--json", "files", ".", "--show-files", "10"],
     )?)?;
     ensure!(
         result["scope_complete"] == true,

@@ -1875,7 +1875,7 @@ pub(crate) fn command_outline(
     max_line_chars: usize,
 ) -> Result<()> {
     if max_items == 0 {
-        return Err(anyhow!("outline --limit must be greater than zero"));
+        return Err(anyhow!("outline --show-items must be greater than zero"));
     }
     // Read before resolving the language so a missing/unreadable file reports
     // as such instead of as a heuristic gap.
@@ -1919,7 +1919,7 @@ pub(crate) fn command_outline(
     let total = rows.len();
     let shown = min(total, max_items);
     let truncated = shown < total;
-    let mut text_clamp = TextClamp::new(max_line_chars);
+    let mut text_clamp = TextClamp::new(max_line_chars, "--show-line-chars");
     let rendered_rows = rows
         .iter()
         .take(shown)
@@ -1931,7 +1931,7 @@ pub(crate) fn command_outline(
         ReceiptResult::new("items", total, false, shown),
     );
     if truncated {
-        receipt.add_cap(ReceiptCap::output("items", Some(max_items)));
+        receipt.add_cap(ReceiptCap::output("items", Some(max_items), "--show-items"));
     }
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("path", json!(display_path(file)));
@@ -1979,7 +1979,7 @@ pub(crate) fn command_outline(
         if truncated {
             writeln!(
                 stdout,
-                "[contextmink] capped outline at {max_items} items; filter with --contains or raise --limit."
+                "[contextmink] capped outline at {max_items} items; filter with --contains or raise --show-items."
             )?;
         }
         if !suspects.is_empty() {

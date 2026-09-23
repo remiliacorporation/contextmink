@@ -57,19 +57,33 @@ pub(crate) fn command_capture(
     argv: &[String],
 ) -> Result<()> {
     if max_lines == 0 {
-        return Err(anyhow!("capture --max-lines must be greater than zero"));
+        return Err(anyhow!("capture --show-lines must be greater than zero"));
     }
     if max_bytes == 0 {
-        return Err(anyhow!("capture --max-bytes must be greater than zero"));
+        return Err(anyhow!(
+            "capture --show-bytes-per-stream must be greater than zero"
+        ));
     }
     if max_line_chars == 0 {
         return Err(anyhow!(
-            "capture --max-line-chars must be greater than zero"
+            "capture --show-line-chars must be greater than zero"
         ));
     }
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| anyhow!("capture requires a command after --"))?;
+    // The child argv is trailing and accepts hyphen values, so a mistyped or
+    // removed capture flag would otherwise be executed as the program name.
+    if program.starts_with('-') {
+        return Err(
+            match crate::cli::renamed_flag_guidance("capture", program) {
+                Some(guidance) => anyhow!("capture {guidance}"),
+                None => anyhow!(
+                    "capture received `{program}` as the program to run; it is not a capture option (see `contextmink capture --help`). Place capture options before `--` and the command after it"
+                ),
+            },
+        );
+    }
     let expected_exit_codes = parse_expected_exit_codes(expect_exit)?;
 
     // Same blocking deny-list as contextmink-bridge: capture spawn
@@ -147,15 +161,23 @@ pub(crate) fn command_capture(
         ReceiptResult::new("lines", total, false, shown),
     );
     if stdout.line_truncated || stderr.line_truncated {
-        receipt.add_cap(ReceiptCap::output("lines", Some(max_lines)));
+        receipt.add_cap(ReceiptCap::output("lines", Some(max_lines), "--show-lines"));
     }
     if stdout.byte_truncated || stderr.byte_truncated {
-        receipt.add_cap(ReceiptCap::output("bytes_per_stream", Some(max_bytes)));
+        receipt.add_cap(ReceiptCap::output(
+            "bytes_per_stream",
+            Some(max_bytes),
+            "--show-bytes-per-stream",
+        ));
     }
     if stdout.char_truncated || stderr.char_truncated {
-        receipt.add_cap(ReceiptCap::output("line_characters", Some(max_line_chars)));
+        receipt.add_cap(ReceiptCap::output(
+            "line_characters",
+            Some(max_line_chars),
+            "--show-line-chars",
+        ));
     }
-    let mut argument_clamp = TextClamp::new(max_line_chars);
+    let mut argument_clamp = TextClamp::new(max_line_chars, "--show-line-chars");
     receipt.insert(
         "argv",
         json!(
@@ -177,6 +199,7 @@ pub(crate) fn command_capture(
         receipt.add_cap(ReceiptCap::output(
             "argument_characters",
             Some(max_line_chars),
+            "--show-line-chars",
         ));
     }
     receipt.insert("execution_mode", json!(execution_mode));

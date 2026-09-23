@@ -74,7 +74,7 @@ fn object_entries_keep_identity_shape_and_projection_limits() {
             "--entries",
             "--fields",
             "address,disassembly",
-            "--max-value-chars",
+            "--show-value-chars",
             "20",
         ],
     );
@@ -113,7 +113,7 @@ fn object_entries_keep_identity_shape_and_projection_limits() {
             "--at",
             "instructions",
             "--entries",
-            "--limit",
+            "--show-rows",
             "1",
         ],
     );
@@ -225,7 +225,7 @@ fn capped_capture_reports_finished_execution_without_replay_advice() {
         .unwrap();
         let output = run_contextmink_raw(
             &root,
-            &["capture", "--script", "--max-lines", "2", "--", "once.sh"],
+            &["capture", "--script", "--show-lines", "2", "--", "once.sh"],
         );
         assert_eq!(
             output.status.code(),
@@ -301,15 +301,15 @@ fn grep_reports_the_exhausted_control_and_widening_it_recovers_matches() {
             "matches.txt",
             "--pattern",
             "hit",
-            "--limit",
+            "--show-files",
             "20",
-            "--lines-per-file",
+            "--show-lines-per-file",
             "2",
         ],
     );
     assert_eq!(
         capped["output_cap_arguments"],
-        serde_json::json!(["--lines-per-file"])
+        serde_json::json!(["--show-lines-per-file"])
     );
     assert_eq!(capped["matching_lines_total"], 5);
     assert_eq!(capped["sample_lines_shown"], 2);
@@ -321,7 +321,7 @@ fn grep_reports_the_exhausted_control_and_widening_it_recovers_matches() {
             "matches.txt",
             "--pattern",
             "hit",
-            "--limit",
+            "--show-files",
             "20",
             capped["output_cap_arguments"][0].as_str().unwrap(),
             "5",
@@ -343,7 +343,7 @@ fn slice_remaining_ranges_reconstruct_the_requested_window_including_tail() {
     .unwrap();
     for selection in [vec!["--range", "2:9"], vec!["--tail", "8"]] {
         let args = [
-            &["--json", "slice", "pages.txt", "--max-lines", "3"][..],
+            &["--json", "slice", "pages.txt", "--line-ceiling", "3"][..],
             &selection,
         ]
         .concat();
@@ -366,7 +366,7 @@ fn slice_remaining_ranges_reconstruct_the_requested_window_including_tail() {
                     "--json",
                     "slice",
                     "pages.txt",
-                    "--max-lines",
+                    "--line-ceiling",
                     "3",
                     "--range",
                     range,
@@ -385,7 +385,7 @@ fn slice_remaining_ranges_reconstruct_the_requested_window_including_tail() {
     fs::write(file, "a line whose characters will be clipped\n").unwrap();
     let clipped = parse_json_output(
         &root,
-        &["--json", "slice", "pages.txt", "--max-line-chars", "8"],
+        &["--json", "slice", "pages.txt", "--show-line-chars", "8"],
     );
     assert_eq!(clipped["output_truncated"], true);
     assert!(
@@ -723,9 +723,9 @@ fn installed_launcher_preserves_json_pointer_selection() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "120",
-            "--max-line-chars",
+            "--show-line-chars",
             "1024",
             "--",
             launcher.to_str().unwrap(),
@@ -1093,7 +1093,7 @@ fn guard_check_explains_commands_without_spawning_them() {
 fn json_commands_share_receipt_envelope() {
     let root = fixture_root("json-envelope");
 
-    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
+    let files = parse_json_output(&root, &["--json", "files", ".", "--show-files", "1"]);
     assert_envelope(&files, "files", "files");
     assert_eq!(files["output_truncated"], true);
     assert_eq!(files["complete"], false);
@@ -1137,7 +1137,7 @@ fn files_filters_by_literal_path_terms() {
             "render",
             "--path-contains",
             "cgx",
-            "--limit",
+            "--show-files",
             "10",
         ],
     );
@@ -1213,13 +1213,16 @@ fn outline_maps_declarations_with_receipt_envelope() {
         "    fn cull_hidden(&mut self) {}"
     );
 
-    let capped = parse_json_output(&root, &["--json", "outline", "sample.rs", "--limit", "2"]);
+    let capped = parse_json_output(
+        &root,
+        &["--json", "outline", "sample.rs", "--show-items", "2"],
+    );
     assert_eq!(capped["output_truncated"], true);
     assert!(has_cap(&capped, "output", "items"));
     assert_eq!(result(&capped)["shown"], 2);
     assert_eq!(result(&capped)["total"], 5);
 
-    let human = run_contextmink(&root, &["outline", "sample.rs", "--limit", "2"]);
+    let human = run_contextmink(&root, &["outline", "sample.rs", "--show-items", "2"]);
     assert!(human.contains("[contextmink] outline path=sample.rs language=rust total_lines=15"));
     assert!(human.contains("3: pub struct Frame {"));
     assert!(human.contains("capped outline at 2 items"));
@@ -1283,7 +1286,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
 
     let outline = parse_json_output(
         &root,
-        &["--json", "outline", "long.rs", "--max-line-chars", "12"],
+        &["--json", "outline", "long.rs", "--show-line-chars", "12"],
     );
     assert!(
         outline["items"][0]["text"]
@@ -1309,7 +1312,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             "sample.txt",
             "--range",
             "1:1",
-            "--max-line-chars",
+            "--show-line-chars",
             "5",
         ],
     );
@@ -1322,7 +1325,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             "--json",
             "files",
             long_file.file_name().unwrap().to_str().unwrap(),
-            "--max-line-chars",
+            "--show-line-chars",
             "8",
         ],
     );
@@ -1337,7 +1340,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             long_dir.file_name().unwrap().to_str().unwrap(),
             "--depth",
             "1",
-            "--max-line-chars",
+            "--show-line-chars",
             "12",
         ],
     );
@@ -1356,7 +1359,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             long_dir.file_name().unwrap().to_str().unwrap(),
             "--depth",
             "1",
-            "--max-line-chars",
+            "--show-line-chars",
             "12",
         ],
     );
@@ -1380,7 +1383,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             "--pattern",
             "needle",
             long_file.file_name().unwrap().to_str().unwrap(),
-            "--max-line-chars",
+            "--show-line-chars",
             "10",
         ],
     );
@@ -1403,7 +1406,7 @@ fn payload_character_caps_are_shared_by_json_text_and_strict_mode() {
             "sample.txt",
             "--range",
             "1:1",
-            "--max-line-chars",
+            "--show-line-chars",
             "5",
         ],
     );
@@ -1429,9 +1432,9 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
             "--pattern",
             "needle",
             "many.txt",
-            "--lines-per-file",
+            "--show-lines-per-file",
             "1",
-            "--max-sample-lines",
+            "--show-lines",
             "10",
         ],
     );
@@ -1453,16 +1456,16 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
             "--pattern",
             "needle",
             "many.txt",
-            "--lines-per-file",
+            "--show-lines-per-file",
             "1",
-            "--max-sample-lines",
+            "--show-lines",
             "10",
         ],
     );
     assert!(human.status.success());
     let human_stdout = String::from_utf8(human.stdout).unwrap();
     assert!(human_stdout.contains("grep display was capped"));
-    assert!(human_stdout.contains("--lines-per-file"));
+    assert!(human_stdout.contains("--show-lines-per-file"));
     assert!(!human_stdout.contains("output or scan"));
 
     let retained_as_context = parse_json_output(
@@ -1473,11 +1476,11 @@ fn grep_reports_actual_per_file_sample_match_omissions() {
             "--pattern",
             "needle",
             "many.txt",
-            "--lines-per-file",
+            "--show-lines-per-file",
             "1",
             "--context",
             "2",
-            "--max-sample-lines",
+            "--show-lines",
             "10",
         ],
     );
@@ -1549,7 +1552,7 @@ fn capture_caps_child_stdout_and_reports_exit_status() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "1",
             "--",
             bin,
@@ -1590,7 +1593,7 @@ fn capture_keeps_head_and_tail_when_line_capped() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "2",
             "--",
             bin,
@@ -1629,9 +1632,9 @@ fn capture_contiguous_byte_segments_preserve_every_line() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "2000",
-            "--max-line-chars",
+            "--show-line-chars",
             "2000",
             "--",
             bin,
@@ -1640,9 +1643,9 @@ fn capture_contiguous_byte_segments_preserve_every_line() {
             "many-lines.txt",
             "--range",
             "1:400",
-            "--max-lines",
+            "--line-ceiling",
             "1000",
-            "--max-line-chars",
+            "--show-line-chars",
             "1000",
         ],
     );
@@ -1668,9 +1671,9 @@ fn capture_json_applies_the_line_character_cap_to_payload_text() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "10",
-            "--max-line-chars",
+            "--show-line-chars",
             "5",
             "--",
             bin,
@@ -1699,9 +1702,9 @@ fn capture_json_applies_the_character_cap_to_omission_markers() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "1",
-            "--max-line-chars",
+            "--show-line-chars",
             "10",
             "--",
             bin,
@@ -1729,11 +1732,11 @@ fn capture_byte_retention_does_not_claim_a_nonbinding_line_cap() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "100",
-            "--max-bytes",
+            "--show-bytes-per-stream",
             "100",
-            "--max-line-chars",
+            "--show-line-chars",
             "1000",
             "--",
             bin,
@@ -1822,7 +1825,7 @@ fn capture_uses_capture_receipt_shape() {
         &[
             "--json",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "1",
             "--",
             bin,
@@ -1869,7 +1872,7 @@ fn fail_if_truncated_exits_nonzero_after_receipt() {
 
     let output = run_contextmink_raw(
         &root,
-        &["--fail-if-truncated", "files", ".", "--limit", "1"],
+        &["--fail-if-truncated", "files", ".", "--show-files", "1"],
     );
     assert!(!output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -1887,7 +1890,7 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
 
     let strict = run_contextmink_raw(
         &root,
-        &["--fail-if-truncated", "files", ".", "--limit", "1"],
+        &["--fail-if-truncated", "files", ".", "--show-files", "1"],
     );
     assert!(!strict.status.success());
     let strict_stdout = String::from_utf8(strict.stdout).unwrap();
@@ -1895,7 +1898,13 @@ fn strict_flags_and_scan_guard_fail_after_receipt() {
 
     let display_capped = run_contextmink_raw(
         &root,
-        &["--require-complete-scope", "files", ".", "--limit", "1"],
+        &[
+            "--require-complete-scope",
+            "files",
+            ".",
+            "--show-files",
+            "1",
+        ],
     );
     assert!(display_capped.status.success());
     let display_stdout = String::from_utf8(display_capped.stdout).unwrap();
@@ -1964,7 +1973,7 @@ fn capture_child_exit_precedes_strict_truncation_status() {
             "--json",
             "--fail-if-truncated",
             "capture",
-            "--max-lines",
+            "--show-lines",
             "1",
             "--",
             bin,
@@ -2125,9 +2134,9 @@ fn capture_receipt_out_uses_the_same_bounded_long_line_text() {
         &root,
         &[
             "capture",
-            "--max-line-chars",
+            "--show-line-chars",
             "80",
-            "--max-bytes",
+            "--show-bytes-per-stream",
             "5000",
             "--receipt-out",
             receipt.to_str().unwrap(),
@@ -2139,7 +2148,7 @@ fn capture_receipt_out_uses_the_same_bounded_long_line_text() {
             "long.txt",
             "--range",
             "1:1",
-            "--max-line-chars",
+            "--show-line-chars",
             "2000",
         ],
     );
@@ -2164,7 +2173,7 @@ fn files_display_cap_preserves_exact_scope() {
     fs::write(root.join("extra_a.txt"), "a\n").unwrap();
     fs::write(root.join("extra_b.txt"), "b\n").unwrap();
 
-    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "2"]);
+    let files = parse_json_output(&root, &["--json", "files", ".", "--show-files", "2"]);
     assert_envelope(&files, "files", "files");
     assert_eq!(result(&files)["shown"], 2);
     assert_eq!(files["output_truncated"], true);
@@ -2187,7 +2196,14 @@ fn files_deduplicates_overlapping_root_spellings() {
     let absolute = root.to_string_lossy().into_owned();
     let files = parse_json_output(
         &root,
-        &["--json", "files", ".", absolute.as_str(), "--limit", "10"],
+        &[
+            "--json",
+            "files",
+            ".",
+            absolute.as_str(),
+            "--show-files",
+            "10",
+        ],
     );
 
     assert_eq!(result(&files)["total"], 3);
@@ -2205,7 +2221,13 @@ fn files_glob_matches_basename_inside_explicit_roots() {
     let files = parse_json_output(
         &root,
         &[
-            "--json", "files", "queue", "--glob", "*.jsonl", "--limit", "5",
+            "--json",
+            "files",
+            "queue",
+            "--glob",
+            "*.jsonl",
+            "--show-files",
+            "5",
         ],
     );
 
@@ -2249,7 +2271,7 @@ fn files_path_contains_matches_literal_decomp_ledger_name() {
             "decompilation_outputs",
             "--path-contains",
             "rename_ledger_wow11655_ext_shadow_quality_description_20260306_v1.jsonl",
-            "--limit",
+            "--show-files",
             "20",
         ],
     );
@@ -2301,7 +2323,7 @@ fn files_path_contains_composes_with_repeated_values_and_extension_filter() {
             "target",
             "--ext",
             "jsonl",
-            "--limit",
+            "--show-files",
             "5",
         ],
     );
@@ -2323,7 +2345,15 @@ fn files_ext_filters_without_shell_glob_patterns() {
     let files = parse_json_output(
         &root,
         &[
-            "--json", "files", "queue", "--ext", ".json", "--ext", "jsonl", "--limit", "5",
+            "--json",
+            "files",
+            "queue",
+            "--ext",
+            ".json",
+            "--ext",
+            "jsonl",
+            "--show-files",
+            "5",
         ],
     );
 
@@ -2372,7 +2402,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
     )
     .unwrap();
 
-    let broad = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    let broad = parse_json_output(&root, &["--json", "files", ".", "--show-files", "20"]);
     assert_envelope(&broad, "files", "files");
     let broad_files = broad["files"].as_array().unwrap();
     assert!(
@@ -2383,7 +2413,14 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
 
     let bypass = parse_json_output(
         &root,
-        &["--json", "files", ".", "--with-excluded", "--limit", "20"],
+        &[
+            "--json",
+            "files",
+            ".",
+            "--with-excluded",
+            "--show-files",
+            "20",
+        ],
     );
     assert_envelope(&bypass, "files", "files");
     assert!(
@@ -2396,7 +2433,7 @@ fn explicit_roots_inside_configured_excludes_are_honored() {
 
     let files = parse_json_output(
         &root,
-        &["--json", "files", "artifacts/notes", "--limit", "20"],
+        &["--json", "files", "artifacts/notes", "--show-files", "20"],
     );
     assert_envelope(&files, "files", "files");
     assert_eq!(result(&files)["shown"], 1);
@@ -2443,7 +2480,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
 
     // vendor/sqlite-tool is git-ignored but is itself a repo root: the
     // nested-repo supplement enters it and discloses the entry.
-    let without_flag = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    let without_flag = parse_json_output(&root, &["--json", "files", ".", "--show-files", "20"]);
     assert_envelope(&without_flag, "files", "files");
     let files_without_flag = without_flag["files"].as_array().unwrap();
     assert!(
@@ -2469,7 +2506,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "files",
             ".",
             "--skip-nested-repos",
-            "--limit",
+            "--show-files",
             "20",
         ],
     );
@@ -2496,7 +2533,7 @@ fn with_git_ignored_includes_gitignored_directories_without_disabling_exclude_gl
             "files",
             ".",
             "--with-git-ignored",
-            "--limit",
+            "--show-files",
             "20",
         ],
     );
@@ -2528,7 +2565,7 @@ fn tracked_submodule_style_repo_is_disclosed_and_skipped() {
     .unwrap();
     fs::write(nested.join("README.md"), "tracked submodule\n").unwrap();
 
-    let entered = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    let entered = parse_json_output(&root, &["--json", "files", ".", "--show-files", "20"]);
     assert_envelope(&entered, "files", "files");
     assert!(
         entered["files"].as_array().unwrap().iter().any(|path| path
@@ -2553,7 +2590,7 @@ fn tracked_submodule_style_repo_is_disclosed_and_skipped() {
             "files",
             ".",
             "--skip-nested-repos",
-            "--limit",
+            "--show-files",
             "20",
         ],
     );
@@ -2585,7 +2622,7 @@ fn nested_repo_supplement_is_deterministic_when_probe_is_parallel() {
 
     let expected = ["group/a-repo", "ignored/z-repo"];
     for _ in 0..4 {
-        let receipt = parse_json_output(&root, &["--json", "files", ".", "--limit", "200"]);
+        let receipt = parse_json_output(&root, &["--json", "files", ".", "--show-files", "200"]);
         let nested = receipt["nested_repos_entered_sample"]
             .as_array()
             .unwrap()
@@ -2606,7 +2643,7 @@ fn nested_repo_receipt_names_its_bounded_sample() {
         fs::write(repo.join("README.md"), "nested repository\n").unwrap();
     }
 
-    let receipt = parse_json_output(&root, &["--json", "files", ".", "--limit", "20"]);
+    let receipt = parse_json_output(&root, &["--json", "files", ".", "--show-files", "20"]);
     assert_eq!(receipt["nested_repos_entered_total"], 14);
     assert_eq!(
         receipt["nested_repos_entered_sample"]
@@ -2747,9 +2784,9 @@ fn grep_terms_accepts_canonical_limits() {
             "grep-terms",
             "--term",
             "alpha",
-            "--limit",
+            "--show-files",
             "1",
-            "--max-sample-lines",
+            "--show-lines",
             "1",
             "sample.txt",
         ],
@@ -2775,9 +2812,12 @@ fn grep_terms_accepts_canonical_limits() {
 
     let help = run_contextmink(&root, &["grep-terms", "--help"]);
     assert!(help.contains("--max-matching-files"));
-    assert!(help.contains("--limit"));
-    assert!(help.contains("--max-sample-lines"));
+    assert!(help.contains("--show-files"));
+    assert!(help.contains("--show-lines"));
+    assert!(help.contains("--show-lines-per-file"));
     assert!(help.contains("--any"));
+    assert!(!help.contains("--limit"));
+    assert!(!help.contains("--max-sample-lines"));
     assert!(!help.contains("--max-lines"));
     assert!(!help.contains("--mode"));
 }
@@ -2800,7 +2840,7 @@ fn grep_stops_content_scan_at_matching_file_cap() {
             "needle",
             "--max-matching-files",
             "2",
-            "--limit",
+            "--show-files",
             "2",
             "matches",
         ],
@@ -2855,7 +2895,7 @@ fn grep_marks_match_totals_lower_bound_when_content_file_scope_is_capped() {
             "1",
             "--max-matching-files",
             "10",
-            "--limit",
+            "--show-files",
             "10",
             "matches",
         ],
@@ -2884,9 +2924,9 @@ fn grep_json_honors_global_sample_cap() {
             "--pattern",
             "alpha",
             "sample.txt",
-            "--lines-per-file",
+            "--show-lines-per-file",
             "3",
-            "--max-sample-lines",
+            "--show-lines",
             "1",
         ],
     );
@@ -2971,15 +3011,23 @@ fn noncanonical_cli_forms_name_the_canonical_replacement() {
         ),
         (
             &["slice", "sample.txt", "--start-line", "2"],
-            "replace `--start-line` with `--start`",
+            "slice selects a window with `--range START:END` or `--tail N`",
         ),
         (
-            &["slice", "sample.txt", "--end-line", "3"],
-            "replace `--end-line` with `--end`",
+            &["slice", "sample.txt", "--lines", "3"],
+            "slice selects a window with `--range START:END` or `--tail N`",
         ),
         (
             &["outline", "sample.txt", "--max-items", "3"],
-            "replace `--max-items` with `--limit`",
+            "the displayed-row cap is `--show-items`; replace `--max-items`",
+        ),
+        (
+            &["grep", "--pattern", "x", "--limit", "3"],
+            "the displayed-file cap is `--show-files`; replace `--limit`",
+        ),
+        (
+            &["sqlite-schema", "a.db", "--include-shadow"],
+            "shadow tables are included with `--with-shadow-tables`",
         ),
     ];
 
@@ -3110,7 +3158,7 @@ fn json_select_projects_jsonl_rows_with_limit() {
             "addr",
             "--fields",
             "flags",
-            "--limit",
+            "--show-rows",
             "1",
         ],
     );
@@ -3132,7 +3180,7 @@ fn canonical_limits_cap_outputs() {
     let root = fixture_root("canonical-limits");
     fs::write(root.join("extra.txt"), "alpha\n").unwrap();
 
-    let files = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
+    let files = parse_json_output(&root, &["--json", "files", ".", "--show-files", "1"]);
     assert_envelope(&files, "files", "files");
     assert_eq!(result(&files)["shown"], 1);
     assert_eq!(files["output_truncated"], true);
@@ -3145,7 +3193,7 @@ fn canonical_limits_cap_outputs() {
             "sidecar.json",
             "--key-contains",
             "mode",
-            "--limit",
+            "--show-matches",
             "1",
         ],
     );
@@ -3170,7 +3218,7 @@ fn canonical_limits_cap_outputs() {
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
-            "--limit",
+            "--show-rows",
             "1",
         ],
     );
@@ -3188,7 +3236,7 @@ fn canonical_limits_cap_outputs() {
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
-            "--limit",
+            "--show-rows",
             "1",
             "--max-rows-scanned",
             "1",
@@ -3206,7 +3254,7 @@ fn canonical_limits_cap_outputs() {
             "limit.sqlite",
             "--sql",
             "SELECT * FROM rows ORDER BY id",
-            "--limit",
+            "--show-rows",
             "1",
             "--max-rows-scanned",
             "1",
@@ -3245,7 +3293,7 @@ fn sqlite_reads_query_from_file_and_caps_rows() {
             "sample.sqlite",
             "--sql-file",
             "query.sql",
-            "--limit",
+            "--show-rows",
             "1",
         ],
     );
@@ -3444,9 +3492,9 @@ fn sqlite_schema_reports_tables_columns_foreign_keys_and_indexes() {
             "--json",
             "sqlite-schema",
             "schema.sqlite",
-            "--max-tables",
+            "--show-tables",
             "1",
-            "--max-columns",
+            "--show-columns",
             "1",
         ],
     );
@@ -3460,15 +3508,7 @@ fn slice_past_eof_is_complete_when_every_available_line_is_shown() {
 
     let json = parse_json_output(
         &root,
-        &[
-            "--json",
-            "slice",
-            "sample.txt",
-            "--start",
-            "1",
-            "--end",
-            "260",
-        ],
+        &["--json", "slice", "sample.txt", "--range", "1:260"],
     );
     assert_envelope(&json, "slice", "lines");
     assert_eq!(result(&json)["shown"], 3);
@@ -3515,8 +3555,8 @@ fn slice_rejects_cross_mode_flags_instead_of_ignoring_them() {
             "0",
             "--chars",
             "5",
-            "--start",
-            "2",
+            "--range",
+            "2:3",
         ],
     );
     assert_eq!(output.status.code(), Some(2));
@@ -4050,7 +4090,7 @@ fn inspection_accepts_ordinary_long_windows_paths() {
     ] {
         let files = parse_json_output(
             &root,
-            &["--json", "files", path, "--max-line-chars", "1024"],
+            &["--json", "files", path, "--show-line-chars", "1024"],
         );
         assert_eq!(files["result"]["total"], 1, "{path}: {files}");
         assert_eq!(files["scope_complete"], true);
@@ -4081,7 +4121,7 @@ fn inspection_accepts_ordinary_long_windows_paths() {
                 path,
                 "--depth",
                 "1",
-                "--max-line-chars",
+                "--show-line-chars",
                 "1024",
             ],
         );
@@ -4094,7 +4134,7 @@ fn inspection_accepts_ordinary_long_windows_paths() {
 
     let capped = parse_json_output(
         &root,
-        &["--json", "files", absolute, "--max-line-chars", "80"],
+        &["--json", "files", absolute, "--show-line-chars", "80"],
     );
     assert_eq!(capped["result"]["total"], 1);
     assert_eq!(capped["scope_complete"], true);
@@ -4264,7 +4304,7 @@ fn config_typos_fail_fast() {
     )
     .unwrap();
 
-    let output = run_contextmink_raw(&root, &["files", ".", "--limit", "1"]);
+    let output = run_contextmink_raw(&root, &["files", ".", "--show-files", "1"]);
     assert!(!output.status.success());
     assert!(
         String::from_utf8(output.stderr)
@@ -4277,7 +4317,7 @@ fn config_typos_fail_fast() {
 fn receipts_carry_duration_ms() {
     let root = fixture_root("duration-ms");
 
-    let json = parse_json_output(&root, &["--json", "files", ".", "--limit", "1"]);
+    let json = parse_json_output(&root, &["--json", "files", ".", "--show-files", "1"]);
     assert!(json["duration_ms"].is_number());
 }
 
@@ -4296,7 +4336,10 @@ fn excludes_hold_for_absolute_scan_roots() {
     // path (or the command runs from a subdirectory), not only for
     // config-root-relative spellings.
     let absolute_root = root.to_string_lossy().replace('\\', "/");
-    let files = parse_json_output(&root, &["--json", "files", &absolute_root, "--limit", "50"]);
+    let files = parse_json_output(
+        &root,
+        &["--json", "files", &absolute_root, "--show-files", "50"],
+    );
     assert_envelope(&files, "files", "files");
     let listed = files["files"].as_array().unwrap();
     assert!(
@@ -4315,7 +4358,7 @@ fn excludes_hold_for_absolute_scan_roots() {
     let absolute_excluded = format!("{absolute_root}/artifacts");
     let explicit = parse_json_output(
         &root,
-        &["--json", "files", &absolute_excluded, "--limit", "10"],
+        &["--json", "files", &absolute_excluded, "--show-files", "10"],
     );
     assert_eq!(result(&explicit)["total"], 1);
     assert!(
@@ -4353,7 +4396,7 @@ fn ancestor_scan_scopes_repository_excludes_to_their_policy_root() {
             "files",
             &absolute_root,
             "--with-git-ignored",
-            "--limit",
+            "--show-files",
             "50",
         ],
     );
@@ -4410,7 +4453,7 @@ fn bare_config_filename_keeps_excludes_for_absolute_scan_roots() {
             ".contextmink.toml",
             "files",
             &absolute_root,
-            "--limit",
+            "--show-files",
             "50",
         ],
     );
@@ -4775,7 +4818,14 @@ fn files_quiet_suppresses_list_but_keeps_receipt() {
     let json = parse_json_output(
         &root,
         &[
-            "--json", "files", ".", "--ext", "rs", "--quiet", "--limit", "1",
+            "--json",
+            "files",
+            ".",
+            "--ext",
+            "rs",
+            "--quiet",
+            "--show-files",
+            "1",
         ],
     );
     assert_envelope(&json, "files", "files");
@@ -4906,7 +4956,7 @@ fn sqlite_schema_elides_table_detail_atomically() {
             "--json",
             "sqlite-schema",
             "sample.sqlite",
-            "--max-columns",
+            "--show-columns",
             "3",
         ],
     );
@@ -5101,4 +5151,94 @@ fn msys_rewritten_arguments_are_refused_before_work() {
     );
     assert_eq!(hook.status.code(), Some(2), "a hook refusal must block");
     assert!(String::from_utf8_lossy(&hook.stderr).contains("MSYS_NO_PATHCONV=1"));
+}
+
+#[test]
+fn capture_refuses_flag_like_programs_before_spawn() {
+    let root = fixture_root("capture-flag-like-program");
+    // Capture's trailing argv would otherwise execute a removed flag.
+    let removed = run_contextmink_raw(&root, &["capture", "--max-lines", "3", "--", "cargo"]);
+    assert_eq!(removed.status.code(), Some(1));
+    assert!(
+        removed.stdout.is_empty(),
+        "nothing may be spawned or receipted"
+    );
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("`--show-lines`"));
+    let unknown = run_contextmink_raw(&root, &["capture", "--bogus", "--", "cargo"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("not a capture option"));
+}
+
+#[test]
+fn output_cap_arguments_name_the_display_flag_for_every_command() {
+    let root = fixture_root("output-cap-arguments");
+    fs::write(root.join("long.txt"), "x\n".repeat(30)).unwrap();
+    for dir in ["a", "b"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+        fs::write(root.join(dir).join("f.txt"), "x\n").unwrap();
+    }
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["--json", "files", ".", "--show-files", "1"],
+            "--show-files",
+        ),
+        (&["--json", "dirs", ".", "--show-dirs", "1"], "--show-dirs"),
+        (
+            &["--json", "slice", "long.txt", "--line-ceiling", "5"],
+            "--line-ceiling",
+        ),
+        (
+            &[
+                "--json",
+                "slice",
+                "sample.txt",
+                "--range",
+                "1:1",
+                "--show-line-chars",
+                "4",
+            ],
+            "--show-line-chars",
+        ),
+        (
+            &[
+                "--json",
+                "json-select",
+                "sidecar.json",
+                "--at",
+                "/textures",
+                "--show-rows",
+                "1",
+            ],
+            "--show-rows",
+        ),
+        (
+            &[
+                "--json",
+                "json-find",
+                "sidecar.json",
+                "--key-contains",
+                "index",
+                "--show-matches",
+                "1",
+            ],
+            "--show-matches",
+        ),
+    ];
+    for (args, argument) in cases {
+        let output = run_contextmink_raw(&root, args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let json: Value =
+            serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{args:?}: {stdout}"));
+        assert_eq!(json["output_truncated"], true, "{args:?}");
+        assert_eq!(
+            json["output_cap_arguments"],
+            serde_json::json!([argument]),
+            "{args:?}"
+        );
+    }
+    let whole = parse_json_output(
+        &root,
+        &["--json", "slice", "long.txt", "--line-ceiling", "5"],
+    );
+    assert_eq!(whole["remaining_range"], "6:30");
 }

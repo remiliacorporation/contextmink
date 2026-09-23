@@ -221,7 +221,7 @@ fn trim_trailing_line_endings(value: &mut String) {
     }
 }
 
-pub(crate) fn parse_line_range(range: &str) -> Result<(usize, Option<usize>)> {
+pub(crate) fn parse_line_range(range: &str) -> Result<(usize, usize)> {
     let (start, end) = range
         .split_once(':')
         .ok_or_else(|| anyhow!("slice --range must use START:END line numbers"))?;
@@ -242,7 +242,7 @@ pub(crate) fn parse_line_range(range: &str) -> Result<(usize, Option<usize>)> {
             "slice --range end must be greater than or equal to start"
         ));
     }
-    Ok((start, Some(end)))
+    Ok((start, end))
 }
 
 #[cfg(test)]

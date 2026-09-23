@@ -12,7 +12,7 @@ use crate::cli::Cli;
 use crate::config::ContextConfig;
 use crate::encoding::read_required_text;
 use crate::files::display_path;
-use crate::json_commands::contains_any;
+use crate::json_commands::contains_all;
 use crate::json_input::{parse_json_text, parse_jsonl_text};
 use crate::output::{
     ClampedText, Receipt, ReceiptCap, ReceiptResult, clamp_text, clamp_text_with_status,
@@ -89,7 +89,7 @@ pub(crate) fn command_sqlite(
     max_value_chars: usize,
 ) -> Result<()> {
     if max_rows == 0 {
-        return Err(anyhow!("sqlite --limit must be greater than zero"));
+        return Err(anyhow!("sqlite --show-rows must be greater than zero"));
     }
     if max_rows_scanned == 0 {
         return Err(anyhow!(
@@ -98,7 +98,7 @@ pub(crate) fn command_sqlite(
     }
     if max_rows_scanned < max_rows {
         return Err(anyhow!(
-            "sqlite --max-rows-scanned must be greater than or equal to --limit"
+            "sqlite --max-rows-scanned must be greater than or equal to --show-rows"
         ));
     }
     if max_param_bytes == 0 {
@@ -108,7 +108,7 @@ pub(crate) fn command_sqlite(
     }
     if max_value_chars == 0 {
         return Err(anyhow!(
-            "sqlite --max-value-chars must be greater than zero"
+            "sqlite --show-value-chars must be greater than zero"
         ));
     }
     let sql = collect_single_text_source("sqlite SQL", sql, sql_file, false)?;
@@ -176,12 +176,13 @@ pub(crate) fn command_sqlite(
         receipt.add_cap(ReceiptCap::scope("rows_processed", Some(max_rows_scanned)));
     }
     if shown < total_seen {
-        receipt.add_cap(ReceiptCap::output("rows", Some(max_rows)));
+        receipt.add_cap(ReceiptCap::output("rows", Some(max_rows), "--show-rows"));
     }
     if value_characters_truncated {
         receipt.add_cap(ReceiptCap::output(
             "value_characters",
             Some(max_value_chars),
+            "--show-value-chars",
         ));
     }
     receipt.insert("db", json!(display_path(db)));
@@ -218,7 +219,7 @@ pub(crate) fn command_sqlite(
         } else if shown < total_seen {
             writeln!(
                 stdout,
-                "[contextmink] capped sqlite output at {max_rows} rows; increase --limit or narrow the query."
+                "[contextmink] capped sqlite output at {max_rows} rows; raise --show-rows or narrow the query."
             )?;
         }
         write_receipt_checked(cli, receipt)
@@ -504,8 +505,8 @@ pub(crate) fn command_sqlite_schema(
     db: &Path,
     requested_tables: &[String],
     name_contains: &[String],
-    include_shadow: bool,
-    include_system: bool,
+    with_shadow_tables: bool,
+    with_system_tables: bool,
     max_tables: usize,
     max_columns: usize,
     max_indexes: usize,
@@ -513,12 +514,12 @@ pub(crate) fn command_sqlite_schema(
 ) -> Result<()> {
     if max_tables == 0 {
         return Err(anyhow!(
-            "sqlite-schema --max-tables must be greater than zero"
+            "sqlite-schema --show-tables must be greater than zero"
         ));
     }
     if max_line_chars == 0 {
         return Err(anyhow!(
-            "sqlite-schema --max-line-chars must be greater than zero"
+            "sqlite-schema --show-line-chars must be greater than zero"
         ));
     }
     let conn = open_sqlite_readonly(db)?;
@@ -545,16 +546,16 @@ pub(crate) fn command_sqlite_schema(
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("failed to read sqlite schema rows")?;
     table_rows.retain(|(_, name, kind, _, _, _)| {
-        if !include_system && name.starts_with("sqlite_") {
+        if !with_system_tables && name.starts_with("sqlite_") {
             return false;
         }
-        if !include_shadow && kind == "shadow" {
+        if !with_shadow_tables && kind == "shadow" {
             return false;
         }
         if !requested.is_empty() && !requested.contains(name) {
             return false;
         }
-        if !name_contains.is_empty() && !contains_any(name, name_contains) {
+        if !name_contains.is_empty() && !contains_all(name, name_contains) {
             return false;
         }
         true
@@ -631,16 +632,32 @@ pub(crate) fn command_sqlite_schema(
         ReceiptResult::new("tables", total_tables, false, shown_tables),
     );
     if shown_tables < total_tables {
-        receipt.add_cap(ReceiptCap::output("tables", Some(max_tables)));
+        receipt.add_cap(ReceiptCap::output(
+            "tables",
+            Some(max_tables),
+            "--show-tables",
+        ));
     }
     if columns_truncated {
-        receipt.add_cap(ReceiptCap::output("columns", Some(max_columns)));
+        receipt.add_cap(ReceiptCap::output(
+            "columns",
+            Some(max_columns),
+            "--show-columns",
+        ));
     }
     if indexes_truncated {
-        receipt.add_cap(ReceiptCap::output("indexes", Some(max_indexes)));
+        receipt.add_cap(ReceiptCap::output(
+            "indexes",
+            Some(max_indexes),
+            "--show-indexes",
+        ));
     }
     if line_characters_truncated {
-        receipt.add_cap(ReceiptCap::output("line_characters", Some(max_line_chars)));
+        receipt.add_cap(ReceiptCap::output(
+            "line_characters",
+            Some(max_line_chars),
+            "--show-line-chars",
+        ));
     }
     receipt.insert("db", json!(display_path(db)));
     receipt.insert("columns_shown", json!(columns_shown));

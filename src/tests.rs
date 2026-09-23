@@ -161,6 +161,16 @@ fn cli_rejects_noncanonical_forms_and_duplicate_inputs() {
         vec!["contextmink", "grep-terms", "--term", "x", "--path", "src"],
         vec!["contextmink", "slice", "sample.txt", "--start-line", "2"],
         vec!["contextmink", "slice", "sample.txt", "--end-line", "3"],
+        vec!["contextmink", "slice", "sample.txt", "--end", "3"],
+        vec![
+            "contextmink",
+            "slice",
+            "sample.txt",
+            "--range",
+            "1:2",
+            "--tail",
+            "1",
+        ],
         vec![
             "contextmink",
             "sqlite",
@@ -193,10 +203,12 @@ fn cli_accepts_current_forms() {
         "--any",
         "--ext",
         "rs",
-        "--limit",
+        "--show-files",
         "2",
-        "--max-sample-lines",
+        "--show-lines",
         "3",
+        "--show-lines-per-file",
+        "1",
         "--max-matching-files",
         "4",
         ".",
@@ -208,7 +220,7 @@ fn cli_accepts_current_forms() {
         "sample.json",
         "--fields",
         "name,address",
-        "--limit",
+        "--show-rows",
         "2",
     ])
     .expect("parse current json-select form");
@@ -218,10 +230,128 @@ fn cli_accepts_current_forms() {
         "sample.sqlite",
         "--sql",
         "SELECT 1",
-        "--limit",
+        "--show-rows",
         "1",
     ])
     .expect("parse positional sqlite form");
-    Cli::try_parse_from(["contextmink", "sqlite-schema", "sample.sqlite"])
-        .expect("parse positional sqlite-schema form");
+    Cli::try_parse_from([
+        "contextmink",
+        "sqlite-schema",
+        "sample.sqlite",
+        "--with-shadow-tables",
+        "--with-system-tables",
+        "--show-tables",
+        "2",
+    ])
+    .expect("parse positional sqlite-schema form");
+    Cli::try_parse_from([
+        "contextmink",
+        "slice",
+        "a.txt",
+        "--range",
+        "2:4",
+        "--line-ceiling",
+        "9",
+    ])
+    .expect("parse slice range form");
+    Cli::try_parse_from(["contextmink", "slice", "a.txt", "--tail", "3"])
+        .expect("parse slice tail");
+    Cli::try_parse_from([
+        "contextmink",
+        "json-find",
+        "a.json",
+        "--pointer-contains",
+        "/a",
+        "--pointer-regex",
+        "b$",
+        "--show-matches",
+        "3",
+    ])
+    .expect("parse json-find pointer form");
+    Cli::try_parse_from([
+        "contextmink",
+        "capture",
+        "--show-lines",
+        "3",
+        "--show-bytes-per-stream",
+        "9",
+        "--show-line-chars",
+        "9",
+        "--",
+        "echo",
+    ])
+    .expect("parse capture display form");
+}
+
+#[test]
+fn removed_flag_spellings_are_refused_with_their_replacement() {
+    let cases: &[(&[&str], &str)] = &[
+        (&["files", "--limit", "1"], "--show-files"),
+        (&["grep", "--pattern", "x", "--limit", "1"], "--show-files"),
+        (
+            &["grep-terms", "--term", "x", "--lines-per-file", "1"],
+            "--show-lines-per-file",
+        ),
+        (
+            &["grep", "--pattern", "x", "--max-sample-lines", "1"],
+            "--show-lines",
+        ),
+        (&["dirs", "--limit", "1"], "--show-dirs"),
+        (&["outline", "a.rs", "--limit", "1"], "--show-items"),
+        (&["outline", "a.rs", "--max-items", "1"], "--show-items"),
+        (&["json-find", "a.json", "--limit", "1"], "--show-matches"),
+        (
+            &["json-find", "a.json", "--path-contains", "/a"],
+            "--pointer-contains",
+        ),
+        (
+            &["json-find", "a.json", "--path-regex", "a"],
+            "--pointer-regex",
+        ),
+        (&["json-select", "a.json", "--limit", "1"], "--show-rows"),
+        (
+            &["json-select", "a.json", "--max-value-chars", "1"],
+            "--show-value-chars",
+        ),
+        (&["sqlite", "a.db", "--limit", "1"], "--show-rows"),
+        (
+            &["sqlite-schema", "a.db", "--include-shadow"],
+            "--with-shadow-tables",
+        ),
+        (
+            &["sqlite-schema", "a.db", "--include-system"],
+            "--with-system-tables",
+        ),
+        (
+            &["sqlite-schema", "a.db", "--max-columns", "1"],
+            "--show-columns",
+        ),
+        (&["slice", "a.txt", "--max-lines", "1"], "--line-ceiling"),
+        (
+            &["slice", "a.txt", "--max-line-chars", "1"],
+            "--show-line-chars",
+        ),
+        (&["slice", "a.txt", "--start", "2"], "--range START:END"),
+        (&["slice", "a.txt", "--lines", "2"], "--range START:END"),
+    ];
+    for (args, replacement) in cases {
+        let argv = std::iter::once("contextmink")
+            .chain(args.iter().copied())
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        assert!(Cli::try_parse_from(&argv).is_err(), "{args:?} still parses");
+        let guidance = cli::noncanonical_form_guidance(&argv)
+            .unwrap_or_else(|| panic!("no replacement guidance for {args:?}"));
+        assert!(guidance.contains(replacement), "{args:?}: {guidance}");
+    }
+    // Capture's trailing argv absorbs unknown leading flags; the command
+    // refuses them before spawn with the same replacement table.
+    assert!(
+        cli::renamed_flag_guidance("capture", "--max-lines")
+            .is_some_and(|guidance| guidance.contains("--show-lines"))
+    );
+    assert!(
+        cli::renamed_flag_guidance("capture", "--max-bytes=9")
+            .is_some_and(|guidance| guidance.contains("--show-bytes-per-stream"))
+    );
 }

@@ -112,7 +112,7 @@ clipped search can support the wrong conclusion. Contextmink keeps the search
 bounded and makes the limitation part of the result:
 
 ```text
-$ scripts/contextmink grep --pattern 'render_chunk' src tests --limit 8
+$ scripts/contextmink grep --pattern 'render_chunk' src tests --show-files 8
 [contextmink] grep pattern="render_chunk"
 matching_files_total=11 matching_lines_total=37
 ...
@@ -155,22 +155,22 @@ search:
 
 ```bash
 # 1. Learn the shape without printing the tree.
-scripts/contextmink dirs crates --depth 2 --limit 40
+scripts/contextmink dirs crates --depth 2 --show-dirs 40
 
 # 2. Enumerate or search a bounded candidate set.
-scripts/contextmink files crates --path-contains render --ext rs --limit 20
-scripts/contextmink grep --pattern 'render_chunk' crates --ext rs --limit 8
+scripts/contextmink files crates --path-contains render --ext rs --show-files 20
+scripts/contextmink grep --pattern 'render_chunk' crates --ext rs --show-files 8
 
 # 3. Map one relevant file, then read only the useful region.
 scripts/contextmink outline crates/render/src/lib.rs --contains render -i
 scripts/contextmink slice crates/render/src/lib.rs --range 120:190
 
 # 4. Project structured evidence instead of serializing all of it.
-scripts/contextmink json-select queue.jsonl --fields addr,name --limit 20
-scripts/contextmink sqlite evidence.sqlite --sql-file query.sql --limit 20
+scripts/contextmink json-select queue.jsonl --fields addr,name --show-rows 20
+scripts/contextmink sqlite evidence.sqlite --sql-file query.sql --show-rows 20
 
 # 5. Bound a command whose output cardinality is not yet known.
-scripts/contextmink capture --max-lines 40 -- some-tool --diagnose
+scripts/contextmink capture --show-lines 40 -- some-tool --diagnose
 ```
 
 Humans can read the normal output. Agents and automation can add `--json` and
@@ -190,7 +190,7 @@ Download the archive for your platform from
 unpack it, and put `contextmink` on `PATH` or run it in place:
 
 ```bash
-contextmink files . --limit 20
+contextmink files . --show-files 20
 ```
 
 Archives cover Windows x64, macOS Intel, macOS ARM, and Linux x64, with
@@ -285,7 +285,7 @@ project no longer wants them.
 After integration, verify from the repository root:
 
 ```bash
-scripts/contextmink --json files . --limit 1
+scripts/contextmink --json files . --show-files 1
 scripts/contextmink --json guard-check -- git clean
 ```
 
@@ -308,16 +308,18 @@ below is the short map.
 - `files` — list candidate files. `--glob`, `--path-contains`, and `--ext` filter;
   configured excludes apply to broad scans, while explicit paths bypass them.
   Enumeration deduplicates physical file identity (including hard links,
-  symlinks, junctions, case aliases, and overlapping roots); `--limit` caps
-  only retained/displayed paths.
+  symlinks, junctions, case aliases, and overlapping roots); `--show-files`
+  caps only retained/displayed paths.
   `--quiet` suppresses the path payload, sets `result.shown` to zero, and keeps
   exact totals and scope caps. Deliberate quiet suppression is not output
   truncation.
 - `grep` — bounded match summary for a regex or `--literal` pattern. Supply
   exactly one pattern source with `--pattern PATTERN` or `--pattern-file FILE`;
   every positional argument is a search path. `--glob`/`--ext` narrow, `-i`,
-  `--context N`, `--limit`, `--max-sample-lines`, `--max-matching-files`,
-  `--max-content-files`, and optional deterministic `--max-content-bytes`.
+  `--context N`, display caps `--show-files`, `--show-lines-per-file`,
+  `--show-lines`, and `--show-line-chars`, and scope caps
+  `--max-matching-files`, `--max-content-files`, `--max-file-bytes`, and
+  optional deterministic `--max-content-bytes`.
   `--quiet` suppresses per-file match content and file lists, reports zero
   shown/sample rows, and emits only the receipt. Exact totals and scope caps
   remain; sample/output caps that would apply only to suppressed payload do not.
@@ -343,9 +345,14 @@ below is the short map.
   `--tail N`, or `--char-start OFFSET --chars COUNT` for a complete requested
   character window from a very long single-line file. Line-mode and
   character-mode flags are mutually exclusive rather than silently ignored.
-  Defaults to a 120-line window with a 220-line ceiling; receipts report
-  `encoding` and `total_lines`.
-- `json-find` — locate JSON values by key, path, or summarized value. It uses
+  Without `--range` or `--tail` it reads from line 1; `--line-ceiling`
+  (default 220) bounds every line window, and a longer window reports the
+  omitted remainder as `remaining_range`. Receipts report `encoding` and
+  `total_lines`.
+- `json-find` — locate JSON values by key (`--key-contains`, `--key-regex`),
+  JSON Pointer (`--pointer-contains`, `--pointer-regex`), or summarized value
+  (`--value-contains`). Repeated `--*-contains` filters must all hold, as in
+  every Contextmink command; use the matching `--*-regex` for alternatives. It uses
   the same strict JSON/JSONL input contract and materialization bound as
   `json-select`. Match paths and path filters use [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901.html):
   `/items/0/name`, with `~0` for a tilde and `~1` for a slash in a key.
@@ -389,7 +396,8 @@ below is the short map.
   configuration, guidance, and unowned runtime files. Supports `--dry-run` and
   refuses modified receipt-owned files.
 - `sqlite-schema` — tables, columns, indexes, and foreign keys of the
-  positional DB argument.
+  positional DB argument. `--with-shadow-tables` and `--with-system-tables`
+  include virtual-table shadow tables and `sqlite_*` tables.
 - `capture` — execute non-interactive argv with child stdin closed and print
   stdout/stderr within one combined line
   budget and a per-stream byte budget, with the exit status. Truncation keeps
@@ -432,26 +440,26 @@ bounds. Receipt strictness flags fail immediately on commands that do not emit
 ## Examples
 
 ```bash
-scripts/contextmink dirs crates --depth 2 --limit 40
-scripts/contextmink files specs --ext json --limit 20
-scripts/contextmink files crates --path-contains render --path-contains tests --limit 20
-scripts/contextmink files vendor --with-git-ignored --limit 20
-scripts/contextmink grep --pattern render_chunk src --ext rs --context 2 --limit 8
-scripts/contextmink grep --pattern 'render::chunk' src tests --limit 8
-scripts/contextmink grep --pattern-file pattern.txt src tests --limit 8
-scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --max-sample-lines 12
+scripts/contextmink dirs crates --depth 2 --show-dirs 40
+scripts/contextmink files specs --ext json --show-files 20
+scripts/contextmink files crates --path-contains render --path-contains tests --show-files 20
+scripts/contextmink files vendor --with-git-ignored --show-files 20
+scripts/contextmink grep --pattern render_chunk src --ext rs --context 2 --show-files 8
+scripts/contextmink grep --pattern 'render::chunk' src tests --show-files 8
+scripts/contextmink grep --pattern-file pattern.txt src tests --show-files 8
+scripts/contextmink grep-terms --term "--flag-like" --term panic --any src --show-lines 12
 scripts/contextmink outline src/renderer.rs --contains cull -i
 scripts/contextmink outline notes/pseudocode.h --prefix '// PART'
-scripts/contextmink outline capture_sidecar.json --limit 30
+scripts/contextmink outline capture_sidecar.json --show-items 30
 scripts/contextmink slice src/main.rs --range 120:180
 scripts/contextmink slice build.log --tail 40
-scripts/contextmink json-select queue.jsonl --fields addr --where-contains name=Cache --limit 10
+scripts/contextmink json-select queue.jsonl --fields addr --where-contains name=Cache --show-rows 10
 scripts/contextmink json-select capture_sidecar.json --at entries --keys
-scripts/contextmink sqlite state.sqlite --sql-file query.sql --limit 20
+scripts/contextmink sqlite state.sqlite --sql-file query.sql --show-rows 20
 scripts/contextmink sqlite state.sqlite --sql-file join.sql --jsonl-param queue=queue.jsonl
 # join.sql: SELECT t.name FROM json_each(:queue) q JOIN targets t ON t.addr = hexint(q.value ->> '$.addr')
-scripts/contextmink sqlite-schema state.sqlite --name-contains user --max-tables 8
-scripts/contextmink capture --max-lines 40 -- some-tool --compact-target query
+scripts/contextmink sqlite-schema state.sqlite --name-contains user --show-tables 8
+scripts/contextmink capture --show-lines 40 -- some-tool --compact-target query
 scripts/contextmink hook-snippet
 ```
 
@@ -487,9 +495,11 @@ stdout.
 
 Search receipts use `result.unit: "matching_files"` and add
 `matching_lines_total`, candidate/content admission telemetry, and skip
-counts. When display caps are reached, `output_cap_arguments` names only the
-exhausted controls: for example, `--lines-per-file` rather than `--limit` when
-matches within a displayed file were omitted. Narrow the query before raising
+counts. Every receipt with an output cap carries `output_cap_arguments`, naming
+only the exhausted display controls: for example, `--show-lines-per-file`
+rather than `--show-files` when matches within a displayed file were omitted.
+Display caps are spelled `--show-*` (slice's window bound is `--line-ceiling`);
+`--max-*` flags bound inspected scope or admitted input. Narrow the query before raising
 the corresponding control. Line slices report `remaining_range` when the
 requested window exceeds the line cap; pass it to `slice FILE --range ...` to
 continue. It does not recover character-clipped text or promise a file snapshot.

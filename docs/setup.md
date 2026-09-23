@@ -172,7 +172,7 @@ This installs `contextmink` on `PATH` instead of vendoring it per repository:
 3. Verify:
 
    ```bash
-   contextmink files . --limit 20
+   contextmink files . --show-files 20
    ```
 
 The binary can use a repository-local `.contextmink.toml`; it searches upward
@@ -290,7 +290,7 @@ Adapt the installation to the project before copying generic policy:
    directory:
 
    ```bash
-   scripts/contextmink --json files . --limit 1
+   scripts/contextmink --json files . --show-files 1
    scripts/contextmink --json guard-check -- git clean
    ```
 
@@ -559,8 +559,8 @@ copy of the Rust crate:
 6. Verify the integration from the target repository root:
 
    ```bash
-   scripts/contextmink files . --limit 20
-   scripts/contextmink grep --pattern contextmink . --limit 5
+   scripts/contextmink files . --show-files 20
+   scripts/contextmink grep --pattern contextmink . --show-files 5
    ```
 
    The first source-backed run may build the release binary. Build output is
@@ -575,7 +575,7 @@ the host:
 
 ```bash
 cargo install --path .
-contextmink files . --limit 20
+contextmink files . --show-files 20
 ```
 
 ## Config Template

@@ -77,39 +77,41 @@ pub(crate) fn command_json_find(
     file: &Path,
     key_contains: &[String],
     key_regex: Option<&str>,
-    path_contains: &[String],
-    path_regex: Option<&str>,
+    pointer_contains: &[String],
+    pointer_regex: Option<&str>,
     value_contains: &[String],
     max: usize,
     max_value_chars: usize,
     max_document_bytes: u64,
 ) -> Result<()> {
     if max == 0 {
-        return Err(anyhow!("json-find --limit must be greater than zero"));
+        return Err(anyhow!(
+            "json-find --show-matches must be greater than zero"
+        ));
     }
     if max_value_chars == 0 {
         return Err(anyhow!(
-            "json-find --max-value-chars must be greater than zero"
+            "json-find --show-value-chars must be greater than zero"
         ));
     }
     if key_contains.is_empty()
         && key_regex.is_none()
-        && path_contains.is_empty()
-        && path_regex.is_none()
+        && pointer_contains.is_empty()
+        && pointer_regex.is_none()
         && value_contains.is_empty()
     {
         return Err(anyhow!(
-            "json-find requires --key-contains, --key-regex, --path-contains, --path-regex, or --value-contains"
+            "json-find requires --key-contains, --key-regex, --pointer-contains, --pointer-regex, or --value-contains"
         ));
     }
     let key_re = key_regex
         .map(Regex::new)
         .transpose()
         .context("invalid key regex")?;
-    let path_re = path_regex
+    let pointer_re = pointer_regex
         .map(Regex::new)
         .transpose()
-        .context("invalid path regex")?;
+        .context("invalid --pointer-regex")?;
     let mut rows = Vec::new();
     let mut value_characters_truncated = false;
     let mut total_matches = 0usize;
@@ -120,18 +122,18 @@ pub(crate) fn command_json_find(
             {
                 return;
             }
-            if !key_contains.is_empty() && !key.is_some_and(|key| contains_any(key, key_contains)) {
+            if !key_contains.is_empty() && !key.is_some_and(|key| contains_all(key, key_contains)) {
                 return;
             }
-            if let Some(path_re) = &path_re
-                && !path_re.is_match(path)
+            if let Some(pointer_re) = &pointer_re
+                && !pointer_re.is_match(path)
             {
                 return;
             }
-            if !path_contains.is_empty() && !contains_any(path, path_contains) {
+            if !pointer_contains.is_empty() && !contains_all(path, pointer_contains) {
                 return;
             }
-            if !value_contains.is_empty() && !contains_any(&json_search_text(value), value_contains)
+            if !value_contains.is_empty() && !contains_all(&json_search_text(value), value_contains)
             {
                 return;
             }
@@ -167,12 +169,13 @@ pub(crate) fn command_json_find(
         ReceiptResult::new("matches", total_matches, false, shown),
     );
     if truncated {
-        receipt.add_cap(ReceiptCap::output("matches", Some(max)));
+        receipt.add_cap(ReceiptCap::output("matches", Some(max), "--show-matches"));
     }
     if value_characters_truncated {
         receipt.add_cap(ReceiptCap::output(
             "value_characters",
             Some(max_value_chars),
+            "--show-value-chars",
         ));
     }
     receipt.insert("path", json!(display_path(file)));
@@ -253,11 +256,11 @@ pub(crate) fn command_json_select(
     max_document_bytes: u64,
 ) -> Result<()> {
     if max == 0 {
-        return Err(anyhow!("json-select --limit must be greater than zero"));
+        return Err(anyhow!("json-select --show-rows must be greater than zero"));
     }
     if max_value_chars == 0 {
         return Err(anyhow!(
-            "json-select --max-value-chars must be greater than zero"
+            "json-select --show-value-chars must be greater than zero"
         ));
     }
     let at = at.map(str::to_owned);
@@ -464,12 +467,13 @@ pub(crate) fn command_json_select(
         ReceiptResult::new("rows", rows_matched, false, shown),
     );
     if truncated {
-        receipt.add_cap(ReceiptCap::output("rows", Some(max)));
+        receipt.add_cap(ReceiptCap::output("rows", Some(max), "--show-rows"));
     }
     if value_characters_truncated {
         receipt.add_cap(ReceiptCap::output(
             "value_characters",
             Some(max_value_chars),
+            "--show-value-chars",
         ));
     }
     receipt.insert("path", json!(display_path(file)));
@@ -650,7 +654,7 @@ fn render_json_select_keys(
         ReceiptResult::new("keys", total, false, shown),
     );
     if truncated {
-        receipt.add_cap(ReceiptCap::output("keys", Some(max)));
+        receipt.add_cap(ReceiptCap::output("keys", Some(max), "--show-rows"));
     }
     receipt.insert("path", json!(display_path(file)));
     receipt.insert("at", json!(at));
@@ -727,7 +731,7 @@ fn render_json_select_keys(
         if truncated {
             writeln!(
                 stdout,
-                "[contextmink] capped keys at {max}; raise --limit or filter rows."
+                "[contextmink] capped keys at {max}; raise --show-rows or filter rows."
             )?;
         }
         write_receipt_checked(cli, receipt)
@@ -903,8 +907,9 @@ fn walk_json<'a>(
     }
 }
 
-pub(crate) fn contains_any(value: &str, needles: &[String]) -> bool {
-    needles.iter().any(|needle| value.contains(needle))
+/// Repeated `--*-contains` filters are conjunctive across Contextmink.
+pub(crate) fn contains_all(value: &str, needles: &[String]) -> bool {
+    needles.iter().all(|needle| value.contains(needle))
 }
 
 fn value_summary(value: &Value, max_chars: usize) -> ClampedText {

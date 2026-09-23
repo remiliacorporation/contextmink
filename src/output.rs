@@ -69,6 +69,9 @@ pub(crate) struct ReceiptCap {
     dimension: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<u64>,
+    /// The display flag that raises this output cap; scope caps have none.
+    #[serde(skip)]
+    argument: Option<&'static str>,
 }
 
 impl ReceiptCap {
@@ -79,6 +82,7 @@ impl ReceiptCap {
             limit: limit.map(|value| {
                 u64::try_from(value).expect("usize fits into u64 on supported targets")
             }),
+            argument: None,
         }
     }
 
@@ -87,16 +91,24 @@ impl ReceiptCap {
             boundary: ReceiptCapBoundary::Scope,
             dimension,
             limit: Some(limit),
+            argument: None,
         }
     }
 
-    pub(crate) fn output(dimension: &'static str, limit: Option<usize>) -> Self {
+    /// An output cap always names the `--show-*` style flag that controls it,
+    /// so `output_cap_arguments` cannot drift from the caps it summarizes.
+    pub(crate) fn output(
+        dimension: &'static str,
+        limit: Option<usize>,
+        argument: &'static str,
+    ) -> Self {
         Self {
             boundary: ReceiptCapBoundary::Output,
             dimension,
             limit: limit.map(|value| {
                 u64::try_from(value).expect("usize fits into u64 on supported targets")
             }),
+            argument: Some(argument),
         }
     }
 }
@@ -105,13 +117,15 @@ impl ReceiptCap {
 /// from the same clamped values, then project this telemetry into the receipt.
 pub(crate) struct TextClamp {
     max_chars: usize,
+    argument: &'static str,
     truncated: bool,
 }
 
 impl TextClamp {
-    pub(crate) fn new(max_chars: usize) -> Self {
+    pub(crate) fn new(max_chars: usize, argument: &'static str) -> Self {
         Self {
             max_chars,
+            argument,
             truncated: false,
         }
     }
@@ -132,7 +146,11 @@ impl TextClamp {
 
     pub(crate) fn add_receipt_cap(&self, receipt: &mut Receipt) {
         if self.truncated {
-            receipt.add_cap(ReceiptCap::output("line_characters", Some(self.max_chars)));
+            receipt.add_cap(ReceiptCap::output(
+                "line_characters",
+                Some(self.max_chars),
+                self.argument,
+            ));
         }
     }
 }
@@ -210,6 +228,7 @@ impl Receipt {
                     | "output_truncated"
                     | "complete"
                     | "caps"
+                    | "output_cap_arguments"
                     | "result"
             ),
             "receipt extension field collides with the typed envelope: {key}"
@@ -233,24 +252,17 @@ impl Receipt {
             .any(|cap| cap.boundary == ReceiptCapBoundary::Output)
     }
 
-    /// Name only the display controls actually exhausted by this grep. Raising
-    /// the file limit cannot restore lines omitted within a displayed file.
-    pub(crate) fn grep_output_cap_arguments(&self) -> Vec<&'static str> {
-        self.caps
-            .iter()
-            .filter_map(|cap| {
-                if cap.boundary != ReceiptCapBoundary::Output {
-                    return None;
-                }
-                match cap.dimension {
-                    "matching_files" => Some("--limit"),
-                    "sample_matching_lines_per_file" => Some("--lines-per-file"),
-                    "sample_lines" => Some("--max-sample-lines"),
-                    "line_characters" => Some("--max-line-chars"),
-                    _ => None,
-                }
-            })
-            .collect()
+    /// Name only the display controls actually exhausted. Raising another
+    /// control (for example the file count when lines within a displayed file
+    /// were omitted) cannot restore the omitted payload.
+    pub(crate) fn output_cap_arguments(&self) -> Vec<&'static str> {
+        let mut arguments = Vec::new();
+        for argument in self.caps.iter().filter_map(|cap| cap.argument) {
+            if !arguments.contains(&argument) {
+                arguments.push(argument);
+            }
+        }
+        arguments
     }
 
     pub(crate) fn into_value(self) -> Value {
@@ -270,10 +282,10 @@ impl Receipt {
         );
         map.insert("caps".to_string(), json!(self.caps));
         map.insert("result".to_string(), json!(self.result));
-        if matches!(self.command.as_str(), "grep" | "grep-terms") && output_truncated {
+        if output_truncated {
             map.insert(
                 "output_cap_arguments".to_owned(),
-                json!(self.grep_output_cap_arguments()),
+                json!(self.output_cap_arguments()),
             );
         }
         for (key, value) in self.fields {

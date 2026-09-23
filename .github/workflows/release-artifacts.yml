@@ -236,7 +236,7 @@ jobs:
           test -d "${bundle}/templates"
           test "$("${bundle}/bin/${{ matrix.binary_name }}" --version)" = "contextmink ${{ steps.names.outputs.version }}"
           "${bundle}/bin/${{ matrix.binary_name }}" --help > /tmp/contextmink-help.txt
-          "${bundle}/bin/${{ matrix.binary_name }}" files src --limit 1 > /tmp/contextmink-smoke.txt
+          "${bundle}/bin/${{ matrix.binary_name }}" files src --show-files 1 > /tmp/contextmink-smoke.txt
           grep -q "CONTEXTMINK_RECEIPT" /tmp/contextmink-smoke.txt
           test -f "${archive}"
           test -f "${archive}.sha256"
@@ -288,8 +288,8 @@ jobs:
           test -f "${project}/.agents/skills/contextmink/SKILL.md"
           test ! -e "${project}/.claude/skills/contextmink/SKILL.md"
           printf 'fixture\n' > "${project}/nested/work/fixture.txt"
-          (cd "${project}" && scripts/contextmink --json files . --limit 1) > "${verify_root}/root-smoke.json"
-          (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --limit 1) > "${verify_root}/nested-smoke.json"
+          (cd "${project}" && scripts/contextmink --json files . --show-files 1) > "${verify_root}/root-smoke.json"
+          (cd "${project}/nested/work" && ../../scripts/contextmink --json files . --show-files 1) > "${verify_root}/nested-smoke.json"
           grep -Eq '"profile"[[:space:]]*:[[:space:]]*"integration-project"' "${verify_root}/root-smoke.json"
           grep -Eq '"profile"[[:space:]]*:[[:space:]]*"integration-project"' "${verify_root}/nested-smoke.json"
           grep -Eq '"schema"[[:space:]]*:[[:space:]]*"contextmink.receipt.v2"' "${verify_root}/root-smoke.json"
@@ -364,7 +364,7 @@ jobs:
           cargo run --locked --quiet --example release_tools -- verify-user $binary
           if ($LASTEXITCODE -ne 0) { throw "personal install smoke failed" }
           & $binary --help | Out-File -Encoding utf8 "$env:TEMP/contextmink-help.txt"
-          & $binary files src --limit 1 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
+          & $binary files src --show-files 1 | Tee-Object -FilePath "$env:TEMP/contextmink-smoke.txt"
           if (!(Select-String -Path "$env:TEMP/contextmink-smoke.txt" -Pattern "CONTEXTMINK_RECEIPT")) {
             throw "smoke output missing receipt"
           }
@@ -431,7 +431,7 @@ jobs:
           $projectBridge = "$projectBin/contextmink-bridge.exe"
           Push-Location $project
           try {
-            $rootSmoke = (& $projectBinary --json files . --limit 1 | Out-String) | ConvertFrom-Json
+            $rootSmoke = (& $projectBinary --json files . --show-files 1 | Out-String) | ConvertFrom-Json
             $guardSmoke = (& $projectBinary --json guard-check -- git clean | Out-String) | ConvertFrom-Json
             $hookSmoke = (& $projectBinary --json hook-snippet --binary $projectBinary --guard-config "$project/.contextmink.toml" | Out-String) | ConvertFrom-Json
             $captureSmoke = (& $projectBinary --json capture -- $projectBinary --version | Out-String) | ConvertFrom-Json
@@ -450,7 +450,7 @@ jobs:
           }
           Push-Location "$project/nested/work"
           try {
-            $nestedSmoke = (& $projectBridge --script scripts/contextmink --json files . --limit 1 | Out-String) | ConvertFrom-Json
+            $nestedSmoke = (& $projectBridge --script scripts/contextmink --json files . --show-files 1 | Out-String) | ConvertFrom-Json
           } finally {
             Pop-Location
           }

@@ -127,7 +127,7 @@ pub(crate) fn command_files(
     max_selected_files: usize,
 ) -> Result<()> {
     if max_selected_files == 0 {
-        return Err(anyhow!("files --limit must be greater than zero"));
+        return Err(anyhow!("files --show-files must be greater than zero"));
     }
     let collected = collect_files(
         paths,
@@ -145,7 +145,7 @@ pub(crate) fn command_files(
     )?;
     let files = collected.files;
     let shown = if quiet { 0 } else { min(files.len(), max) };
-    let mut text_clamp = TextClamp::new(max_line_chars);
+    let mut text_clamp = TextClamp::new(max_line_chars, "--show-line-chars");
     let rendered_files = files
         .iter()
         .take(shown)
@@ -160,10 +160,14 @@ pub(crate) fn command_files(
     // `max_selected_files`, so the result total remains exact. The retained output
     // is capped, not the scope that was counted.
     if collected.selection_capped && !quiet {
-        receipt.add_cap(ReceiptCap::output("paths", Some(max_selected_files)));
+        receipt.add_cap(ReceiptCap::output(
+            "paths",
+            Some(max_selected_files),
+            "--show-files",
+        ));
     }
     if !quiet && shown < files.len() {
-        receipt.add_cap(ReceiptCap::output("files", Some(max)));
+        receipt.add_cap(ReceiptCap::output("files", Some(max), "--show-files"));
     }
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("candidate_files_selected", json!(files.len()));
@@ -291,7 +295,7 @@ pub(crate) fn command_dirs(
     let counts = directories.into_values().collect::<BTreeMap<_, _>>();
     let total_dirs = counts.len();
     let shown = min(total_dirs, max);
-    let mut text_clamp = TextClamp::new(max_line_chars);
+    let mut text_clamp = TextClamp::new(max_line_chars, "--show-line-chars");
     let rendered_dirs = counts
         .iter()
         .take(shown)
@@ -315,7 +319,7 @@ pub(crate) fn command_dirs(
         receipt.add_cap(ReceiptCap::scope("files_counted", Some(max_files_counted)));
     }
     if shown < total_dirs {
-        receipt.add_cap(ReceiptCap::output("dirs", Some(max)));
+        receipt.add_cap(ReceiptCap::output("dirs", Some(max), "--show-dirs"));
     }
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("depth", json!(depth));
@@ -568,7 +572,7 @@ pub(crate) fn command_grep_with_matcher(
             emitted_sample_text_truncated |= sample.text_truncated;
         }
     }
-    let mut text_clamp = TextClamp::new(caps.max_line_chars);
+    let mut text_clamp = TextClamp::new(caps.max_line_chars, "--show-line-chars");
     let rendered_pattern = text_clamp.clamp(&matcher.label());
     let rendered_paths = matches
         .iter()
@@ -609,18 +613,24 @@ pub(crate) fn command_grep_with_matcher(
         receipt.add_cap(ReceiptCap::scope_bytes("file_bytes", caps.max_file_bytes));
     }
     if !quiet && files_shown < matches.len() {
-        receipt.add_cap(ReceiptCap::output("matching_files", Some(caps.max_files)));
+        receipt.add_cap(ReceiptCap::output(
+            "matching_files",
+            Some(caps.max_files),
+            "--show-files",
+        ));
     }
     if !quiet && sample_lines_capped {
         receipt.add_cap(ReceiptCap::output(
             "sample_lines",
             Some(caps.max_sample_lines),
+            "--show-lines",
         ));
     }
     if !quiet && sample_matching_lines_omitted > 0 {
         receipt.add_cap(ReceiptCap::output(
             "sample_matching_lines_per_file",
             Some(caps.lines_per_file),
+            "--show-lines-per-file",
         ));
     }
     text_clamp.record_truncated(emitted_sample_text_truncated);
@@ -729,7 +739,7 @@ pub(crate) fn command_grep_with_matcher(
                         if !quiet {
                             writeln!(
                                 stdout,
-                                "[contextmink] capped sample lines at {}; narrow the query or raise --max-sample-lines only when every sample is needed.",
+                                "[contextmink] capped sample lines at {}; narrow the query or raise --show-lines only when every sample is needed.",
                                 caps.max_sample_lines
                             )?;
                         }
@@ -757,7 +767,7 @@ pub(crate) fn command_grep_with_matcher(
             writeln!(
                 stdout,
                 "[contextmink] grep display was capped; narrow the query or adjust only the exhausted display controls: {}.",
-                receipt.grep_output_cap_arguments().join(", ")
+                receipt.output_cap_arguments().join(", ")
             )?;
         }
         write_receipt_checked(cli, receipt)
@@ -831,7 +841,7 @@ fn plan_slice_window(
     max_lines: usize,
 ) -> Result<SliceWindowPlan> {
     if max_lines == 0 {
-        return Err(anyhow!("slice --max-lines must be greater than zero"));
+        return Err(anyhow!("slice --line-ceiling must be greater than zero"));
     }
     match request {
         SliceWindowRequest::Inclusive { start, end } => {
@@ -880,10 +890,7 @@ pub(crate) fn command_slice(
     config: &ContextConfig,
     file: &Path,
     range: Option<&str>,
-    start: usize,
-    end: Option<usize>,
     tail: Option<usize>,
-    lines: usize,
     max_lines: usize,
     max_line_chars: usize,
     char_start: Option<usize>,
@@ -897,37 +904,23 @@ pub(crate) fn command_slice(
         }
         return command_slice_chars(cli, config, file, char_start, chars);
     }
-    let request = if let Some(tail) = tail {
-        if range.is_some() || start != 1 || end.is_some() {
+    let request = match (range, tail) {
+        (Some(_), Some(_)) => {
             return Err(anyhow!(
-                "slice --tail cannot be combined with --range, --start, or --end"
+                "slice accepts either --range START:END or --tail N, not both"
             ));
         }
-        SliceWindowRequest::Tail { lines: tail }
-    } else {
-        let (start, end) = if let Some(range) = range {
-            if start != 1 || end.is_some() {
-                return Err(anyhow!(
-                    "slice --range cannot be combined with --start or --end"
-                ));
-            }
-            parse_line_range(range)?
-        } else {
-            (start, end)
-        };
-        if lines == 0 {
-            return Err(anyhow!("slice --lines must be greater than zero"));
+        (None, Some(tail)) => SliceWindowRequest::Tail { lines: tail },
+        (Some(range), None) => {
+            let (start, end) = parse_line_range(range)?;
+            SliceWindowRequest::Inclusive { start, end }
         }
-        let requested_end = match end {
-            Some(end) => end,
-            None => start
-                .checked_add(lines - 1)
-                .ok_or_else(|| anyhow!("slice line window exceeds supported line numbers"))?,
-        };
-        SliceWindowRequest::Inclusive {
-            start,
-            end: requested_end,
-        }
+        // No window names the whole file; --line-ceiling bounds the output and
+        // a longer file reports the omitted remainder as remaining_range.
+        (None, None) => SliceWindowRequest::Inclusive {
+            start: 1,
+            end: usize::MAX,
+        },
     };
     // Validate zero and inverted windows before paying for a whole-file pass.
     plan_slice_window(0, request, max_lines)?;
@@ -941,7 +934,7 @@ pub(crate) fn command_slice(
     let mut rendered = VecDeque::with_capacity(retained_lines);
     let mut total_lines = 0usize;
     let mut suspects = crate::encoding::EncodingSuspects::default();
-    let mut text_clamp = TextClamp::new(max_line_chars);
+    let mut text_clamp = TextClamp::new(max_line_chars, "--show-line-chars");
     let visited = crate::encoding::visit_file_lines(file, u64::MAX, |line_number, line| {
         total_lines = line_number;
         suspects.merge(crate::encoding::scan_encoding_suspects_from_line(
@@ -996,7 +989,11 @@ pub(crate) fn command_slice(
         ReceiptResult::new("lines", total_lines, false, shown),
     );
     if plan.output_truncated {
-        receipt.add_cap(ReceiptCap::output("lines", Some(max_lines)));
+        receipt.add_cap(ReceiptCap::output(
+            "lines",
+            Some(max_lines),
+            "--line-ceiling",
+        ));
     }
     text_clamp.add_receipt_cap(&mut receipt);
     receipt.insert("path", json!(display_path(file)));

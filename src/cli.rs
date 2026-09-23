@@ -93,17 +93,143 @@ pub(crate) fn noncanonical_form_guidance(args: &[OsString]) -> Option<&'static s
             "grep requires an explicit pattern; use `contextmink grep --pattern <PATTERN> <PATH>...` or `--pattern-file <FILE> <PATH>...`",
         );
     }
-    if command == "slice" && flag_present("--start-line") {
-        return Some("slice uses `--start <LINE>`; replace `--start-line` with `--start`");
+    if command == "slice"
+        && ["--start", "--end", "--lines", "--start-line", "--end-line"]
+            .into_iter()
+            .any(flag_present)
+    {
+        return Some(
+            "slice selects a window with `--range START:END` or `--tail N`; without either it reads from line 1 up to `--line-ceiling` lines",
+        );
     }
-    if command == "slice" && flag_present("--end-line") {
-        return Some("slice uses `--end <LINE>`; replace `--end-line` with `--end`");
-    }
-    if command == "outline" && flag_present("--max-items") {
-        return Some("outline uses `--limit <COUNT>`; replace `--max-items` with `--limit`");
-    }
-    None
+    RENAMED_FLAGS
+        .iter()
+        .find(|(commands, old, _)| commands.contains(&command) && flag_present(old))
+        .map(|(_, _, guidance)| *guidance)
 }
+
+/// Replacement guidance for one removed flag spelling of `command`.
+pub(crate) fn renamed_flag_guidance(command: &str, flag: &str) -> Option<&'static str> {
+    let flag = flag.split_once('=').map_or(flag, |(name, _)| name);
+    RENAMED_FLAGS
+        .iter()
+        .find(|(commands, old, _)| commands.contains(&command) && *old == flag)
+        .map(|(_, _, guidance)| *guidance)
+}
+
+/// Removed flag spellings and the refusal that names their replacement.
+/// Display caps are `--show-*`; `--max-*` names only scope or admission caps.
+const RENAMED_FLAGS: &[(&[&str], &str, &str)] = &[
+    (
+        &["files", "grep", "grep-terms"],
+        "--limit",
+        "the displayed-file cap is `--show-files`; replace `--limit`",
+    ),
+    (
+        &["dirs"],
+        "--limit",
+        "the displayed-directory cap is `--show-dirs`; replace `--limit`",
+    ),
+    (
+        &["outline"],
+        "--limit",
+        "the displayed-row cap is `--show-items`; replace `--limit`",
+    ),
+    (
+        &["outline"],
+        "--max-items",
+        "the displayed-row cap is `--show-items`; replace `--max-items`",
+    ),
+    (
+        &["json-find"],
+        "--limit",
+        "the displayed-match cap is `--show-matches`; replace `--limit`",
+    ),
+    (
+        &["json-select", "sqlite"],
+        "--limit",
+        "the displayed-row cap is `--show-rows`; replace `--limit`",
+    ),
+    (
+        &["grep", "grep-terms"],
+        "--lines-per-file",
+        "the per-file sample cap is `--show-lines-per-file`; replace `--lines-per-file`",
+    ),
+    (
+        &["grep", "grep-terms"],
+        "--max-sample-lines",
+        "the total sample-line cap is `--show-lines`; replace `--max-sample-lines`",
+    ),
+    (
+        &["capture"],
+        "--max-lines",
+        "the displayed-line cap is `--show-lines`; replace `--max-lines`",
+    ),
+    (
+        &["capture"],
+        "--max-bytes",
+        "the per-stream retention cap is `--show-bytes-per-stream`; replace `--max-bytes`",
+    ),
+    (
+        &["slice"],
+        "--max-lines",
+        "the slice line ceiling is `--line-ceiling`; replace `--max-lines`",
+    ),
+    (
+        &[
+            "files",
+            "dirs",
+            "grep",
+            "grep-terms",
+            "slice",
+            "outline",
+            "sqlite-schema",
+            "capture",
+        ],
+        "--max-line-chars",
+        "the per-line character cap is `--show-line-chars`; replace `--max-line-chars`",
+    ),
+    (
+        &["json-find", "json-select", "sqlite"],
+        "--max-value-chars",
+        "the per-value character cap is `--show-value-chars`; replace `--max-value-chars`",
+    ),
+    (
+        &["sqlite-schema"],
+        "--max-tables",
+        "the displayed-table cap is `--show-tables`; replace `--max-tables`",
+    ),
+    (
+        &["sqlite-schema"],
+        "--max-columns",
+        "the displayed-column cap is `--show-columns`; replace `--max-columns`",
+    ),
+    (
+        &["sqlite-schema"],
+        "--max-indexes",
+        "the displayed-index cap is `--show-indexes`; replace `--max-indexes`",
+    ),
+    (
+        &["sqlite-schema"],
+        "--include-shadow",
+        "shadow tables are included with `--with-shadow-tables`; replace `--include-shadow`",
+    ),
+    (
+        &["sqlite-schema"],
+        "--include-system",
+        "system tables are included with `--with-system-tables`; replace `--include-system`",
+    ),
+    (
+        &["json-find"],
+        "--path-contains",
+        "JSON Pointer filters are `--pointer-contains`; replace `--path-contains`",
+    ),
+    (
+        &["json-find"],
+        "--path-regex",
+        "JSON Pointer filters are `--pointer-regex`; replace `--path-regex`",
+    ),
+];
 
 pub(crate) fn selected_subcommand(args: &[OsString]) -> Option<&str> {
     let mut index = 1;
@@ -166,13 +292,13 @@ pub(crate) enum Command {
         )]
         quiet: bool,
         #[arg(long, default_value_t = 80, help = "Maximum paths to print")]
-        limit: usize,
+        show_files: usize,
         #[arg(
             long,
             default_value_t = 220,
             help = "Maximum characters per printed path"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
     },
     /// Summarize directories with bounded recursive file counts.
     Dirs {
@@ -200,13 +326,13 @@ pub(crate) enum Command {
         )]
         skip_nested_repos: bool,
         #[arg(long, default_value_t = 60, help = "Maximum directories to print")]
-        limit: usize,
+        show_dirs: usize,
         #[arg(
             long,
             default_value_t = 220,
             help = "Maximum characters per complete printed directory row"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
         #[arg(
             long,
             default_value_t = 50_000,
@@ -289,25 +415,25 @@ pub(crate) enum Command {
         )]
         max_matching_files: usize,
         #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
-        limit: usize,
+        show_files: usize,
         #[arg(
             long,
             default_value_t = 3,
             help = "Maximum sample lines per matching file"
         )]
-        lines_per_file: usize,
+        show_lines_per_file: usize,
         #[arg(
-            long = "max-sample-lines",
+            long = "show-lines",
             default_value_t = 36,
             help = "Maximum matching and context sample lines to print across all files"
         )]
-        max_sample_lines: usize,
+        show_lines: usize,
         #[arg(
             long,
             default_value_t = 220,
             help = "Maximum characters per sample line"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
         #[arg(
             long,
             default_value_t = 20_000,
@@ -323,7 +449,7 @@ pub(crate) enum Command {
         #[arg(
             long,
             value_name = "BYTES",
-            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection"
+            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection [default: no byte cap]"
         )]
         max_content_bytes: Option<u64>,
     },
@@ -368,7 +494,10 @@ pub(crate) enum Command {
             help = "Context lines to print around each sample match line"
         )]
         context: usize,
-        #[arg(value_name = "PATH", help = "Files or directories to search")]
+        #[arg(
+            value_name = "PATH",
+            help = "Files or directories to search; defaults to the current directory"
+        )]
         paths: Vec<PathBuf>,
         #[arg(
             long = "with-excluded",
@@ -397,25 +526,25 @@ pub(crate) enum Command {
         )]
         max_matching_files: usize,
         #[arg(long, default_value_t = 12, help = "Maximum matching files to print")]
-        limit: usize,
+        show_files: usize,
         #[arg(
             long,
             default_value_t = 3,
             help = "Maximum sample lines per matching file"
         )]
-        lines_per_file: usize,
+        show_lines_per_file: usize,
         #[arg(
-            long = "max-sample-lines",
+            long = "show-lines",
             default_value_t = 36,
             help = "Maximum matching and context sample lines to print across all files"
         )]
-        max_sample_lines: usize,
+        show_lines: usize,
         #[arg(
             long,
             default_value_t = 220,
             help = "Maximum characters per sample line"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
         #[arg(
             long,
             default_value_t = 20_000,
@@ -431,7 +560,7 @@ pub(crate) enum Command {
         #[arg(
             long,
             value_name = "BYTES",
-            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection"
+            help = "Maximum cumulative candidate bytes admitted for deterministic content inspection [default: no byte cap]"
         )]
         max_content_bytes: Option<u64>,
     },
@@ -439,12 +568,13 @@ pub(crate) enum Command {
     Slice {
         #[arg(value_name = "FILE", help = "Text file to slice")]
         file: PathBuf,
-        #[arg(long, help = "One-based inclusive line range START:END")]
+        #[arg(
+            long,
+            value_name = "START:END",
+            conflicts_with = "tail",
+            help = "One-based inclusive line window; without --range or --tail, slice reads from line 1 up to --line-ceiling lines"
+        )]
         range: Option<String>,
-        #[arg(long, default_value_t = 1, help = "First one-based line to print")]
-        start: usize,
-        #[arg(long, help = "Last one-based line to print")]
-        end: Option<usize>,
         #[arg(
             long,
             value_name = "N",
@@ -453,32 +583,24 @@ pub(crate) enum Command {
         tail: Option<usize>,
         #[arg(
             long,
-            default_value_t = 120,
-            help = "Line count when --end/--range is omitted"
-        )]
-        lines: usize,
-        #[arg(
-            long,
+            value_name = "LINES",
             default_value_t = 220,
-            help = "Maximum lines to print even if the range is larger"
+            help = "Most lines printed for any window; a larger window is capped and the receipt names remaining_range"
         )]
-        max_lines: usize,
+        line_ceiling: usize,
         #[arg(
             long,
             default_value_t = 240,
             help = "Maximum characters per source-line text field"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
         #[arg(
             long,
             conflicts_with_all = [
                 "range",
-                "start",
-                "end",
                 "tail",
-                "lines",
-                "max_lines",
-                "max_line_chars"
+                "line_ceiling",
+                "show_line_chars"
             ],
             help = "Zero-based character offset for character-window mode"
         )]
@@ -532,39 +654,52 @@ pub(crate) enum Command {
         )]
         ignore_case: bool,
         #[arg(long, default_value_t = 120, help = "Maximum outline rows to print")]
-        limit: usize,
+        show_items: usize,
         #[arg(
             long,
             default_value_t = 220,
             help = "Maximum characters per declaration text field"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
     },
     /// Find JSON values by key, path, or summarized value predicates.
     JsonFind {
         #[arg(value_name = "FILE", help = "JSON or JSONL file to inspect")]
         file: PathBuf,
-        #[arg(long, help = "Match object keys containing this text")]
+        #[arg(
+            long,
+            value_name = "TEXT",
+            help = "Match object keys containing this text; repeatable, all must hold (use --key-regex for alternatives)"
+        )]
         key_contains: Vec<String>,
-        #[arg(long, help = "Match object keys with this regex")]
+        #[arg(long, value_name = "REGEX", help = "Match object keys with this regex")]
         key_regex: Option<String>,
         #[arg(
             long,
-            help = "Match JSON Pointers containing this text (for example /items/0/name)"
+            value_name = "TEXT",
+            help = "Match JSON Pointers containing this text (for example /items/0/name); repeatable, all must hold (use --pointer-regex for alternatives)"
         )]
-        path_contains: Vec<String>,
-        #[arg(long, help = "Match JSON Pointers with this regex")]
-        path_regex: Option<String>,
-        #[arg(long, help = "Match summarized values containing this text")]
+        pointer_contains: Vec<String>,
+        #[arg(
+            long,
+            value_name = "REGEX",
+            help = "Match JSON Pointers with this regex"
+        )]
+        pointer_regex: Option<String>,
+        #[arg(
+            long,
+            value_name = "TEXT",
+            help = "Match summarized values containing this text; repeatable, all must hold"
+        )]
         value_contains: Vec<String>,
         #[arg(long, default_value_t = 40, help = "Maximum matches to print")]
-        limit: usize,
+        show_matches: usize,
         #[arg(
             long,
             default_value_t = 260,
             help = "Maximum characters per summarized value"
         )]
-        max_value_chars: usize,
+        show_value_chars: usize,
         #[arg(
             long,
             default_value_t = crate::json_input::DEFAULT_MAX_JSON_DOCUMENT_BYTES,
@@ -611,14 +746,18 @@ pub(crate) enum Command {
             help = "Only keep rows whose field value contains TEXT; repeatable, all must hold"
         )]
         where_contains: Vec<String>,
-        #[arg(long, default_value_t = 40, help = "Maximum rows to print")]
-        limit: usize,
+        #[arg(
+            long,
+            default_value_t = 40,
+            help = "Maximum rows (or --keys entries) to print"
+        )]
+        show_rows: usize,
         #[arg(
             long,
             default_value_t = 260,
             help = "Maximum characters per projected value"
         )]
-        max_value_chars: usize,
+        show_value_chars: usize,
         #[arg(
             long,
             default_value_t = crate::json_input::DEFAULT_MAX_JSON_DOCUMENT_BYTES,
@@ -657,7 +796,7 @@ pub(crate) enum Command {
         )]
         max_param_bytes: u64,
         #[arg(long, default_value_t = 40, help = "Maximum rows to print")]
-        limit: usize,
+        show_rows: usize,
         #[arg(
             long,
             default_value_t = 5000,
@@ -675,7 +814,7 @@ pub(crate) enum Command {
             default_value_t = 260,
             help = "Maximum characters per cell value"
         )]
-        max_value_chars: usize,
+        show_value_chars: usize,
     },
     /// Summarize `SQLite` tables, columns, indexes, and foreign keys.
     #[command(name = "sqlite-schema")]
@@ -691,33 +830,33 @@ pub(crate) enum Command {
         #[arg(
             long = "name-contains",
             value_name = "TEXT",
-            help = "Only summarize tables whose names contain this text"
+            help = "Only summarize tables whose names contain this text; repeatable, all must hold"
         )]
         name_contains: Vec<String>,
-        #[arg(long, help = "Include SQLite shadow tables")]
-        include_shadow: bool,
-        #[arg(long, help = "Include SQLite system tables")]
-        include_system: bool,
+        #[arg(long, help = "Include virtual-table shadow tables")]
+        with_shadow_tables: bool,
+        #[arg(long, help = "Include sqlite_* system tables")]
+        with_system_tables: bool,
         #[arg(long, default_value_t = 40, help = "Maximum tables to print")]
-        max_tables: usize,
+        show_tables: usize,
         #[arg(
             long,
             default_value_t = 160,
             help = "Maximum columns to print across all tables"
         )]
-        max_columns: usize,
+        show_columns: usize,
         #[arg(
             long,
             default_value_t = 120,
             help = "Maximum indexes to print across all tables"
         )]
-        max_indexes: usize,
+        show_indexes: usize,
         #[arg(
             long,
             default_value_t = 320,
             help = "Maximum characters per printed schema line"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
     },
     /// Install personal skills and a native runtime without changing consuming projects.
     #[command(
@@ -788,19 +927,19 @@ pub(crate) enum Command {
             default_value_t = 80,
             help = "Maximum stdout plus stderr lines to print"
         )]
-        max_lines: usize,
+        show_lines: usize,
         #[arg(
             long,
             default_value_t = 24_000,
-            help = "Maximum bytes to retain per stream"
+            help = "Maximum bytes retained per stream (split between its head and tail)"
         )]
-        max_bytes: usize,
+        show_bytes_per_stream: usize,
         #[arg(
             long,
             default_value_t = 260,
             help = "Maximum characters per printed output line"
         )]
-        max_line_chars: usize,
+        show_line_chars: usize,
         #[arg(
             long,
             help = "Execute the first argv item as an explicit Bash script; direct mode also recognizes shebang files by their leading #! line"
