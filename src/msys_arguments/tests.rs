@@ -16,6 +16,7 @@ fn git_bash() -> MsysEnvironment {
             r"C:\Users\Agent\bin;C:\Fake Git\mingw64\bin;C:\Fake Git\usr\bin;C:\Windows\system32"
                 .into(),
         ),
+        parent_image: Some(r"C:\Fake Git\usr\bin\bash.exe".to_owned()),
     }
 }
 
@@ -86,6 +87,7 @@ fn explicit_conversion_opt_out_or_non_msys_host_disables_the_check() {
 fn only_drive_qualified_usr_bin_entries_define_roots() {
     let environment = MsysEnvironment {
         path: Some("/usr/bin;relative/usr/bin;D:/msys64/usr/bin/".into()),
+        parent_image: Some("D:/msys64/usr/bin/sh.exe".to_owned()),
         ..git_bash()
     };
     assert_eq!(environment.roots(), vec!["D:/msys64/".to_owned()]);
@@ -94,4 +96,44 @@ fn only_drive_qualified_usr_bin_entries_define_roots() {
         None
     );
     assert!(rewritten_argument_refusal(&argv(&["files", "D:/msys64/etc"]), &environment).is_some());
+}
+
+#[test]
+fn native_shell_that_inherited_the_msys_environment_is_not_refused() {
+    // PowerShell or cmd launched from Git Bash keeps MSYSTEM and the MSYS PATH
+    // entries but performs no argument conversion.
+    let args = argv(&["files", "C:/Program Files/Git/mingw64/etc/gitconfig"]);
+    let inherited = |parent: Option<&str>| MsysEnvironment {
+        path: Some(r"C:\Windows\system32;C:\Program Files\Git\usr\bin".into()),
+        parent_image: parent.map(str::to_owned),
+        ..git_bash()
+    };
+    for parent in [
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        r"C:\Windows\System32\cmd.exe",
+        r"C:\Program Files\Git\mingw64\bin\git.exe",
+        r"C:\Program Files\Git\usr\bin\nested\tool.exe",
+    ] {
+        assert_eq!(
+            rewritten_argument_refusal(&args, &inherited(Some(parent))),
+            None,
+            "{parent}"
+        );
+    }
+    assert_eq!(rewritten_argument_refusal(&args, &inherited(None)), None);
+}
+
+#[test]
+fn msys_parent_in_bin_or_usr_bin_is_refused_without_a_powershell_remedy() {
+    let args = argv(&["files", "C:/Fake Git/mingw64/etc/gitconfig"]);
+    for parent in [r"C:\Fake Git\usr\bin\bash.exe", "c:/fake git/bin/sh.exe"] {
+        let environment = MsysEnvironment {
+            parent_image: Some(parent.to_owned()),
+            ..git_bash()
+        };
+        let refusal = rewritten_argument_refusal(&args, &environment)
+            .unwrap_or_else(|| panic!("expected refusal under {parent}"));
+        assert!(refusal.contains("MSYS_NO_PATHCONV=1"));
+        assert!(!refusal.contains("PowerShell"), "{refusal}");
+    }
 }

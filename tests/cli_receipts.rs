@@ -5115,83 +5115,137 @@ fn slice_and_outline_flag_encoding_suspects_only_when_found() {
     );
 }
 
-fn run_under_fake_git_bash(
+/// Run `program` with an MSYS-looking environment whose root is `msys_root`.
+fn run_with_msys_environment(
+    program: &std::path::Path,
     root: &PathBuf,
+    msys_root: &std::path::Path,
     args: &[&str],
-    stdin: &str,
     opt_out: bool,
 ) -> std::process::Output {
-    let mut path = std::ffi::OsString::from(r"C:\Fake Git\usr\bin;");
+    let mut path = msys_root.join("usr").join("bin").into_os_string();
+    path.push(";");
     path.push(std::env::var_os("PATH").unwrap_or_default());
-    let mut command = Command::new(env!("CARGO_BIN_EXE_contextmink"));
+    let mut command = Command::new(program);
     command
         .current_dir(root)
         .args(args)
         .env("MSYSTEM", "MINGW64")
         .env("PATH", path)
         .env_remove("MSYS_NO_PATHCONV")
-        .env_remove("MSYS2_ARG_CONV_EXCL")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .env_remove("MSYS2_ARG_CONV_EXCL");
     if opt_out {
         command.env("MSYS_NO_PATHCONV", "1");
     }
-    let mut child = command.spawn().unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
-    child.wait_with_output().unwrap()
+    command.output().unwrap()
 }
 
 #[test]
-fn msys_rewritten_arguments_are_refused_before_work() {
-    let root = fixture_root("msys-rewrite");
-    let rewritten = [
-        "grep",
-        "--pattern",
-        "C:/Fake Git/skills/contextmink",
-        "--literal",
-        ".",
-    ];
-    let refused = run_under_fake_git_bash(&root, &rewritten, "", false);
-    assert!(!refused.status.success());
-    assert!(refused.stdout.is_empty(), "no receipt may be emitted");
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("MSYS_NO_PATHCONV=1"), "{stderr}");
-    assert!(stderr.contains("`/skills/contextmink`"), "{stderr}");
-
-    let opted_out = run_under_fake_git_bash(&root, &rewritten, "", true);
-    assert!(
-        opted_out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&opted_out.stderr)
-    );
-    assert!(String::from_utf8_lossy(&opted_out.stdout).contains("CONTEXTMINK_RECEIPT "));
-
-    let ordinary = run_under_fake_git_bash(
+fn native_parent_with_inherited_msys_environment_is_not_refused() {
+    // A native shell (here: the test harness) that inherited MSYSTEM and the
+    // MSYS PATH entry performs no argument conversion; a root-prefixed
+    // argument is an explicit Windows path and must be honored.
+    let root = fixture_root("msys-inherited-env");
+    let msys_root = PathBuf::from(r"C:\Fake Git");
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_contextmink"));
+    let output = run_with_msys_environment(
+        bin,
         &root,
-        &["--json", "json-select", "sidecar.json", "--at", "/nested"],
-        "",
+        &msys_root,
+        &[
+            "grep",
+            "--pattern",
+            "C:/Fake Git/mingw64/etc/gitconfig",
+            "--literal",
+            "sample.txt",
+        ],
         false,
     );
-    assert!(
-        ordinary.status.success(),
-        "{}",
-        String::from_utf8_lossy(&ordinary.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("MSYS_NO_PATHCONV"), "{stderr}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("CONTEXTMINK_RECEIPT "));
+}
 
-    let hook = run_under_fake_git_bash(
-        &root,
-        &["guard-hook", "--expected-root", "C:/Fake Git/project"],
-        r#"{"tool_input":{"command":"echo ok"}}"#,
+#[cfg(windows)]
+#[test]
+fn msys_parent_rewritten_arguments_are_refused_before_work() {
+    // The immediate parent must be an image under <root>/usr/bin. A copy of
+    // contextmink placed there acts as that parent through `capture`, so the
+    // refusal is proven without a Git installation.
+    let root = fixture_root("msys-parent");
+    let msys_root = root.join("Fake MSYS");
+    let usr_bin = msys_root.join("usr").join("bin");
+    fs::create_dir_all(&usr_bin).unwrap();
+    let parent = usr_bin.join("contextmink.exe");
+    fs::copy(env!("CARGO_BIN_EXE_contextmink"), &parent).unwrap();
+    let real = env!("CARGO_BIN_EXE_contextmink");
+    let rewritten_root = msys_root.to_string_lossy().replace('\\', "/");
+    let pattern = format!("{rewritten_root}/skills/contextmink");
+    let expected_root = format!("{rewritten_root}/project");
+
+    let captured = |args: &[&str], opt_out: bool| -> Value {
+        let mut argv = vec![
+            "--json",
+            "capture",
+            "--show-lines",
+            "50",
+            "--show-line-chars",
+            "4000",
+            "--",
+        ];
+        argv.extend_from_slice(args);
+        let output = run_with_msys_environment(&parent, &root, &msys_root, &argv, opt_out);
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "capture receipt\nstdout:{}\nstderr:{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    };
+
+    let refused = captured(
+        &[real, "grep", "--pattern", &pattern, "--literal", "."],
         false,
     );
-    assert_eq!(hook.status.code(), Some(2), "a hook refusal must block");
-    assert!(String::from_utf8_lossy(&hook.stderr).contains("MSYS_NO_PATHCONV=1"));
+    assert_eq!(refused["child_exit_code"], 1, "{refused}");
+    let text = refused.to_string();
+    assert!(text.contains("MSYS_NO_PATHCONV=1"), "{text}");
+    assert!(text.contains("`/skills/contextmink`"), "{text}");
+    assert!(
+        !text.contains("CONTEXTMINK_RECEIPT"),
+        "no inner receipt may be emitted"
+    );
+    assert!(!text.contains("PowerShell"), "{text}");
+
+    let opted_out = captured(
+        &[real, "grep", "--pattern", &pattern, "--literal", "."],
+        true,
+    );
+    assert_eq!(opted_out["child_exit_code"], 0, "{opted_out}");
+
+    let ordinary = captured(
+        &[
+            real,
+            "--json",
+            "json-select",
+            "sidecar.json",
+            "--at",
+            "/nested",
+        ],
+        false,
+    );
+    assert_eq!(ordinary["child_exit_code"], 0, "{ordinary}");
+
+    let hook = captured(
+        &[real, "guard-hook", "--expected-root", &expected_root],
+        false,
+    );
+    assert_eq!(
+        hook["child_exit_code"], 2,
+        "a hook refusal must block: {hook}"
+    );
+    assert!(hook.to_string().contains("MSYS_NO_PATHCONV=1"));
 }
 
 #[test]

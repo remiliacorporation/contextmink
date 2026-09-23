@@ -25,9 +25,10 @@ upgrade:
 
 ### Added
 
-- The native executable refuses to run under Git Bash/MSYS when an argument, or
-  the value of a `--flag=value` argument, starts with the MSYS installation root
-  (for example `C:/Program Files/Git/`). The
+- When launched directly by a Git Bash/MSYS program, the native executable
+  refuses an argument, or the value of a `--flag=value` argument, that starts
+  with the MSYS installation root (for example `C:/Program Files/Git/`). Native
+  shells that merely inherited the MSYS environment are not affected. The
   refusal names `MSYS_NO_PATHCONV=1` as the fix. Previously a rewritten pattern
   such as `/skills/contextmink` silently searched for a Windows path and
   reported a complete-scope no-match. `guard-hook` exits 2 on this refusal.
