@@ -21,14 +21,10 @@ Those belong to the owning help, documentation, or skill. Keep `AGENTS.md` and
 ## Hard Rules
 
 - Never run `git clean` in this repository. `state/` and release binaries are
-  ignored; sweeping ignored paths can destroy the Papertiger authority and
-  local dogfood artifacts. Delete only exact reviewed paths.
-- Mutate `state/papertiger.sqlite` only through the receipt-selected Papertiger
-  binary. If it is missing where prior work clearly existed, stop instead of
-  initializing replacement state. `papertiger init` is the only migration path.
-- Set `PAPERTIGER_ACTOR` to a concise provenance label before planner mutations.
-  Task numbers are authority-local and never belong in commits, changelogs,
-  release notes, or pull requests.
+  ignored; sweeping ignored paths can destroy local planning databases and
+  dogfood artifacts. Delete only exact reviewed paths.
+- Planning task numbers never belong in commits, changelogs, release notes, or
+  pull requests.
 - Preserve unrelated worktree changes. Contextmink is the source authority;
   vendor only a verified committed source revision into another repository.
 - Fail closed. A missing input, invalid policy, incomplete evidence scope, child
@@ -95,7 +91,6 @@ and `cargo package` into separate target directories:
 scripts/verify_source.sh
 # Windows native harness:
 target/release/contextmink-bridge.exe --script scripts/verify_source.sh
-tools/papertiger/bin/papertiger[.exe] audit
 ```
 
 For cross-platform or release work, also run `scripts/cross_check.sh` and the
