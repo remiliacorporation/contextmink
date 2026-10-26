@@ -49,6 +49,7 @@ jobs:
           name: release-notes-contextmink-${{ inputs.artifact_version }}
           path: ${{ runner.temp }}/release_body.md
           if-no-files-found: error
+          retention-days: 1
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -482,6 +483,8 @@ jobs:
             dist/${{ steps.names.outputs.archive }}
             dist/${{ steps.names.outputs.archive }}.sha256
           if-no-files-found: error
+          # Only publish-release in this run needs the archives; the GitHub Release keeps them.
+          retention-days: 1
 
   publish-release:
     if: inputs.create_release
